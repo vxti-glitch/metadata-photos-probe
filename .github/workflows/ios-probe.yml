@@ -1,0 +1,135 @@
+name: iOS feasibility probe
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      signed_export:
+        description: Export a signed IPA using the ios-signing environment
+        type: boolean
+        default: false
+      export_method:
+        description: Match the supplied manual provisioning profile
+        type: choice
+        options: [release-testing, debugging, app-store-connect]
+        default: release-testing
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-probe-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Test and compile native probe
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      # Optional repository variable: /Applications/Xcode_<version>.app/Contents/Developer.
+      # A bad selection fails rather than silently selecting a different SDK.
+      PROBE_DEVELOPER_DIR: ${{ vars.PROBE_DEVELOPER_DIR }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Select configured Xcode if specified
+        shell: bash
+        run: |
+          if [[ -n "$PROBE_DEVELOPER_DIR" ]]; then
+            [[ -d "$PROBE_DEVELOPER_DIR" ]] || { printf '%s\n' 'Configured Xcode does not exist on this runner.' >&2; exit 1; }
+            printf 'DEVELOPER_DIR=%s\n' "$PROBE_DEVELOPER_DIR" >> "$GITHUB_ENV"
+          fi
+      - name: Run package tests, simulator tests and unsigned device archive
+        shell: bash
+        run: bash scripts/build-macos.sh
+      - name: Package exact source revision
+        if: success()
+        shell: bash
+        run: |
+          git archive --format=zip --output=build/MetadataPhotosProbe-source.zip HEAD
+          python3 scripts/build-manifest.py --mode unsigned
+      - name: Upload unsigned build and evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: probe-unsigned-${{ github.run_number }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            build/evidence/
+            build/*.zip
+            build/*.ipa
+            build/SimulatorTests.xcresult/
+      - name: Upload generated controlled fixtures independently
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: probe-controlled-fixtures-${{ github.run_number }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: build/MetadataPhotosProbe-ControlledFixtures.zip
+
+  sign:
+    name: Manually signed IPA export
+    needs: verify
+    if: github.event_name == 'workflow_dispatch' && inputs.signed_export
+    runs-on: macos-15
+    timeout-minutes: 35
+    environment: ios-signing
+    env:
+      PROBE_DEVELOPER_DIR: ${{ vars.PROBE_DEVELOPER_DIR }}
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      BUNDLE_IDENTIFIER: ${{ vars.BUNDLE_IDENTIFIER }}
+      EXPORT_METHOD: ${{ inputs.export_method }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Require private signing repository and configured Xcode
+        env:
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        shell: bash
+        run: |
+          [[ "$REPOSITORY_PRIVATE" == true ]] || { printf '%s\n' 'Keep signing and device-profile artifacts in a private repository.' >&2; exit 1; }
+          if [[ -n "$PROBE_DEVELOPER_DIR" ]]; then
+            [[ -d "$PROBE_DEVELOPER_DIR" ]] || exit 1
+            printf 'DEVELOPER_DIR=%s\n' "$PROBE_DEVELOPER_DIR" >> "$GITHUB_ENV"
+          fi
+      - name: Generate project and record actual signing toolchain
+        shell: bash
+        run: |
+          mkdir -p build/evidence
+          xcodebuild -version > build/evidence/toolchain.txt
+          xcodebuild -showsdks >> build/evidence/toolchain.txt
+          bash scripts/bootstrap-macos.sh
+      - name: Archive, export and verify signed IPA
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
+        shell: bash
+        run: bash scripts/sign-macos.sh
+      - name: Upload verified signed output
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: probe-signed-${{ inputs.export_method }}-${{ github.run_number }}
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            build/signed/*.ipa
+            build/evidence/
+      - name: Upload diagnostics when signing fails
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: probe-signing-failure-${{ github.run_number }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: build/evidence/
