@@ -96,7 +96,57 @@ final class ProbeCoreTests: XCTestCase {
         XCTAssertEqual(try WholeFileDigest.sha256(source), originalHash)
         let compressed = result.integrity.checks.first { $0.name == "JPEG compressed scans and coding segments" }
         XCTAssertEqual(compressed?.status, .passed)
+        XCTAssertFalse(result.integrity.checks.contains { $0.status == .failed }, "Dated baseline must retain all independently inspected non-target metadata")
         XCTAssertNotEqual(result.integrity.status, .verified, "Opaque metadata is still explicitly unqualified")
+    }
+
+    func testAPP13RestorationPreservesOpaqueOriginalPayloadAndAllScans() throws {
+        let source = folder.appendingPathComponent("source.jpg"), output = folder.appendingPathComponent("output.jpg")
+        let sourceBytes = syntheticJPEG(exif: "source", pixel: 3)
+        let outputBytes = syntheticJPEG(exif: "edited", pixel: 3)
+        func withAPP13(_ bytes: Data, _ payload: Data) -> Data {
+            let length = payload.count + 2
+            let segment = Data([0xff, 0xed, UInt8(length >> 8), UInt8(length & 255)]) + payload
+            return Data(bytes.prefix(2)) + segment + Data(bytes.dropFirst(2))
+        }
+        let opaque = Data([0, 1, 0xff, 0xda, 2, 3]) + Data("unknown opaque Photoshop/IPTC data".utf8)
+        try withAPP13(sourceBytes, opaque).write(to: source)
+        try withAPP13(outputBytes, Data("reconciled unwanted extra IPTC".utf8)).write(to: output)
+        let sourceHash = try WholeFileDigest.sha256(source)
+        let before = try JPEGInventory.read(source)
+        try JPEGMetadataPreserver.restoreOriginalAPP13(source: source, output: output)
+        let after = try JPEGInventory.read(output)
+        XCTAssertEqual(before.applicationSignatures, after.applicationSignatures)
+        XCTAssertEqual(before.codingSignatures, after.codingSignatures)
+        XCTAssertEqual(after.scanCount, 2)
+        XCTAssertEqual(try WholeFileDigest.sha256(source), sourceHash)
+        XCTAssertFalse(try Data(contentsOf: output).range(of: opaque) == nil)
+    }
+
+    func testAPP13RestorationRejectsMalformedInputAndCleansTemporaryFile() throws {
+        let source = folder.appendingPathComponent("source.jpg"), output = folder.appendingPathComponent("output.jpg")
+        try syntheticJPEG(exif: "source", pixel: 3).write(to: source)
+        let malformed = Data([0xff, 0xd8, 0xff, 0xed, 0, 10, 1])
+        try malformed.write(to: output)
+        XCTAssertThrowsError(try JPEGMetadataPreserver.restoreOriginalAPP13(source: source, output: output))
+        XCTAssertEqual(try Data(contentsOf: output), malformed, "Failed staging must not replace even the engine output")
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: folder.path).contains { $0.hasPrefix(".app13-") })
+        XCTAssertThrowsError(try JPEGMetadataPreserver.restoreOriginalAPP13(source: source, output: source))
+    }
+
+    func testAPP13RestorationBoundsLeadingSegmentCount() throws {
+        let source = folder.appendingPathComponent("source.jpg"), output = folder.appendingPathComponent("output.jpg")
+        var oversized = Data([0xff, 0xd8])
+        for _ in 0..<10_001 { oversized.append(contentsOf: [0xff, 0xed, 0, 2]) }
+        oversized.append(syntheticJPEG(exif: "source", pixel: 3).dropFirst(2))
+        try oversized.write(to: source)
+        let control = syntheticJPEG(exif: "output", pixel: 3)
+        try control.write(to: output)
+        do {
+            try JPEGMetadataPreserver.restoreOriginalAPP13(source: source, output: output)
+            XCTFail("Excessive leading segment count was accepted")
+        } catch ProbeError.unsupported { }
+        XCTAssertEqual(try Data(contentsOf: output), control)
     }
 
     func testJPEGApplicationLossRemainsBlockedWithoutMislabelingRecompression() async throws {

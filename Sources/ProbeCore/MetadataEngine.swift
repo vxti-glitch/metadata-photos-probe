@@ -107,6 +107,9 @@ public enum MetadataEngine {
             throw ProbeError.writeFailed(detail)
         }
         // CopyImageSource completes the file itself. Do not call Finalize after it.
+        if type as String == UTType.jpeg.identifier {
+            try JPEGMetadataPreserver.restoreOriginalAPP13(source: source, output: output)
+        }
     }
 
     private static func writeVideo(source: URL, output: URL, kind: MediaKind, patch: CameraPatch) async throws {

@@ -189,6 +189,10 @@ public enum MediaIntegrity {
                 }
                 guard reader.status == .completed else { throw reader.error ?? ProbeError.malformed("Compressed reader did not complete") }
             } catch { reader.cancelReading(); throw error }
+            if (track.mediaType == .video || track.mediaType == .audio), payloadBytes == 0,
+               CMTimeCompare(range.duration, .zero) > 0 {
+                throw ProbeError.unsupported("Track \(track.trackID) has positive duration but zero independently accessible encoded bytes (\(emptyMarkers) empty markers). Encoded preservation cannot be certified.")
+            }
             update("total \(count)")
             fingerprints.append(TrackFingerprint(hash: digest.finalize().map { String(format: "%02x", $0) }.joined(), payloadBytes: payloadBytes, sampleBuffers: count, emptyMarkers: emptyMarkers))
         }
