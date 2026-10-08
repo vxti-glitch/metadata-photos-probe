@@ -1,7 +1,7 @@
 name: metadata_editor
 description: "On-device metadata editing with a native Swift media engine."
 publish_to: 'none'
-version: 0.3.0+4
+version: 0.4.0+5
 
 environment:
   sdk: ^3.13.5
@@ -17,3 +17,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/camera_profiles.json

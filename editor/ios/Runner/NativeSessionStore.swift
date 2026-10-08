@@ -11,7 +11,9 @@ enum NativeMediaError: Error {
 struct NativeProcessing: Codable, Sendable {
     let id: UUID
     let createdAt: Date
-    let patch: CameraPatch
+    let patch: CameraPatch?
+    var metadataPatch: MetadataPatch? = nil
+    var outputDisplayName: String? = nil
     let outputName: String
     let outputInspection: MediaInspection
     let integrity: IntegrityComparison
@@ -37,11 +39,17 @@ struct NativeSession: Codable, Sendable {
             "origin": origin, "createdAt": NativeJSON.timestamp(createdAt),
             "inspection": try NativeJSON.object(inspection), "details": details, "notes": notes]
         if let processing {
-            map["processing"] = ["id": processing.id.uuidString,
+            let patchObject: Any
+            if let patch = processing.metadataPatch { patchObject = try NativeJSON.object(patch) }
+            else if let patch = processing.patch { patchObject = try NativeJSON.object(patch) }
+            else { throw NativeMediaError.storage }
+            var processed: [String: Any] = ["id": processing.id.uuidString,
                 "createdAt": NativeJSON.timestamp(processing.createdAt),
-                "patch": try NativeJSON.object(processing.patch),
+                "patch": patchObject,
                 "outputInspection": try NativeJSON.object(processing.outputInspection),
                 "integrity": try NativeJSON.object(processing.integrity)]
+            if let name = processing.outputDisplayName { processed["outputDisplayName"] = name }
+            map["processing"] = processed
         }
         if let previewPath { map["previewPath"] = previewPath }
         return map
@@ -83,6 +91,7 @@ actor NativeSessionStore {
     private let previewRoot: URL
     private let mediaSizeLimit: Int64
     private let processOperation: @Sendable (URL, URL, CameraPatch) async throws -> ProcessingResult
+    private let metadataProcessOperation: @Sendable (URL, URL, MetadataPatch) async throws -> ProcessingResult
     private var loaded = false
     private var sessions: [NativeSession] = []
     private var qualifiedComparisons = [QualificationKey: IntegrityComparison]()
@@ -92,11 +101,14 @@ actor NativeSessionStore {
     init(root: URL, previewRoot: URL? = nil, mediaSizeLimit: Int64 = NativeSessionStore.maximumMediaBytes,
          processOperation: @escaping @Sendable (URL, URL, CameraPatch) async throws -> ProcessingResult = {
         try await MetadataEngine.process(source: $0, output: $1, patch: $2)
+    }, metadataProcessOperation: @escaping @Sendable (URL, URL, MetadataPatch) async throws -> ProcessingResult = {
+        try await MetadataEngine.processMetadataPatch(source: $0, output: $1, patch: $2)
     }) {
         self.root = root.standardizedFileURL.resolvingSymlinksInPath()
         self.previewRoot = (previewRoot ?? root.deletingLastPathComponent().appendingPathComponent("NativeMediaPreviews", isDirectory: true))
             .standardizedFileURL.resolvingSymlinksInPath()
         self.processOperation = processOperation
+        self.metadataProcessOperation = metadataProcessOperation
         self.mediaSizeLimit = max(1, min(mediaSizeLimit, Self.maximumMediaBytes))
     }
 
@@ -205,11 +217,20 @@ actor NativeSessionStore {
     }
 
     func process(sessionID: UUID, patch: CameraPatch) async throws -> NativeSession {
+        try patch.validate()
+        return try await processInternal(sessionID: sessionID, cameraPatch: patch, metadataPatch: nil)
+    }
+
+    func processMetadata(sessionID: UUID, patch: MetadataPatch) async throws -> NativeSession {
+        try patch.validate()
+        return try await processInternal(sessionID: sessionID, cameraPatch: nil, metadataPatch: patch)
+    }
+
+    private func processInternal(sessionID: UUID, cameraPatch: CameraPatch?, metadataPatch: MetadataPatch?) async throws -> NativeSession {
         try load()
         guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else { throw NativeMediaError.notFound }
-        try patch.validate()
         let original = sessions[index]
-        guard original.inspection.kind.isImage || patch.lens == nil else { throw NativeMediaError.invalidArgument }
+        guard original.inspection.kind.isImage || cameraPatch?.lens == nil else { throw NativeMediaError.invalidArgument }
         let source = try ownedFile(sessionID, name: original.sourceName)
         guard try WholeFileDigest.sha256(source) == original.sourceSHA256 else { throw NativeMediaError.processing }
         // Persist the loss of active output before starting. If processing fails
@@ -223,18 +244,25 @@ actor NativeSessionStore {
         var replacement = sessions
         replacement[index] = pending
         try persist(replacement)
-        for prior in discardedHistory { try? removeFile(sessionID, name: prior.outputName) }
+        for prior in discardedHistory {
+            try? removeFile(sessionID, name: prior.outputName)
+            if let name = prior.outputDisplayName { try? removeExport(name) }
+        }
         let processingID = UUID()
         let outputName = "output-\(processingID.uuidString).\(source.pathExtension)"
         let output = try confinedFile(sessionID, name: outputName)
         var committed = false
         defer { if !committed { try? removeFile(sessionID, name: outputName) } }
-        let result = try await processOperation(source, output, patch)
+        let result: ProcessingResult
+        if let metadataPatch { result = try await metadataProcessOperation(source, output, metadataPatch) }
+        else if let cameraPatch { result = try await processOperation(source, output, cameraPatch) }
+        else { throw NativeMediaError.invalidArgument }
         try Task.checkCancellation()
         try Self.requireRegularFile(output, maximumBytes: mediaSizeLimit)
         guard try WholeFileDigest.sha256(source) == original.sourceSHA256,
               result.integrity.status != .mismatch else { throw NativeMediaError.processing }
-        let processing = NativeProcessing(id: processingID, createdAt: Date(), patch: patch,
+        let processing = NativeProcessing(id: processingID, createdAt: Date(), patch: cameraPatch,
+            metadataPatch: metadataPatch, outputDisplayName: try nextOutputDisplayName(extension: source.pathExtension),
             outputName: outputName, outputInspection: result.outputInspection, integrity: result.integrity,
             outputSHA256: try WholeFileDigest.sha256(output))
         try FileManager.default.setAttributes([.posixPermissions: 0o400], ofItemAtPath: output.path)
@@ -251,7 +279,10 @@ actor NativeSessionStore {
         try persist(replacement)
         committed = true
         qualifiedComparisons[QualificationKey(session: sessionID, processing: processingID)] = result.integrity
-        for prior in discarded { try? removeFile(sessionID, name: prior.outputName) }
+        for prior in discarded {
+            try? removeFile(sessionID, name: prior.outputName)
+            if let name = prior.outputDisplayName { try? removeExport(name) }
+        }
         return final
     }
 
@@ -278,16 +309,22 @@ actor NativeSessionStore {
             // A recovered JSON report is not proof. Reinspect the real immutable
             // media and recompute the canonical comparison once per launch.
             let inspection = try await MetadataEngine.inspect(url)
-            guard inspection.kind == session.inspection.kind,
-                  inspection.metadata["make"] == output.patch.make,
-                  inspection.metadata["model"] == output.patch.model,
-                  output.patch.lens == nil || inspection.metadata["lens"] == output.patch.lens else { throw NativeMediaError.processing }
-            comparison = try await MediaIntegrity.compare(source: source, output: url, patch: output.patch)
+            guard inspection.kind == session.inspection.kind else { throw NativeMediaError.processing }
+            if let patch = output.metadataPatch {
+                try patch.validateReadback(inspection)
+                comparison = try await MediaIntegrity.compareMetadata(source: source, output: url, patch: patch)
+            } else if let patch = output.patch {
+                guard inspection.metadata["make"] == patch.make,
+                      inspection.metadata["model"] == patch.model,
+                      patch.lens == nil || inspection.metadata["lens"] == patch.lens else { throw NativeMediaError.processing }
+                comparison = try await MediaIntegrity.compare(source: source, output: url, patch: patch)
+            } else { throw NativeMediaError.processing }
             try Task.checkCancellation()
             if let index = sessions.firstIndex(where: { $0.id == sessionID }) {
                 var replacement = sessions
                 replacement[index].processing = NativeProcessing(id: output.id, createdAt: output.createdAt,
-                    patch: output.patch, outputName: output.outputName, outputInspection: inspection,
+                    patch: output.patch, metadataPatch: output.metadataPatch, outputDisplayName: output.outputDisplayName,
+                    outputName: output.outputName, outputInspection: inspection,
                     integrity: comparison, outputSHA256: output.outputSHA256)
                 try persist(replacement)
             }
@@ -303,13 +340,169 @@ actor NativeSessionStore {
         return url
     }
 
+    /// Internal names remain UUID-bound; only qualified exports get consumer names.
+    func exportCopyURL(sessionID: UUID, processingID: UUID, acknowledgeIncomplete: Bool) async throws -> URL {
+        let source = try await exportURL(sessionID: sessionID, processingID: processingID, acknowledgeIncomplete: acknowledgeIncomplete)
+        guard let output = sessions.first(where: { $0.id == sessionID })?.processing,
+              output.id == processingID else { throw NativeMediaError.notFound }
+        let name: String
+        if let saved = output.outputDisplayName { name = saved }
+        else {
+            name = try nextOutputDisplayName(extension: source.pathExtension)
+            guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else { throw NativeMediaError.notFound }
+            var replacement = sessions; replacement[index].processing?.outputDisplayName = name
+            try persist(replacement)
+        }
+        try Self.validateOutputDisplayName(name)
+        let folder = try exportsDirectory()
+        let target = folder.appendingPathComponent(name)
+        guard NativeFileSystem.samePath(target.resolvingSymlinksInPath(), target) else { throw NativeMediaError.storage }
+        if FileManager.default.fileExists(atPath: target.path) {
+            try Self.requireRegularFile(target, maximumBytes: mediaSizeLimit)
+            guard try WholeFileDigest.sha256(target) == output.outputSHA256 else { throw NativeMediaError.storage }
+        } else {
+            // Same-volume hard link avoids retaining another complete 4 GiB copy.
+            // Both app-owned names are immutable; Files exports its own copy.
+            try FileManager.default.linkItem(at: source, to: target)
+        }
+        return target
+    }
+
+    func verifyOriginal(sessionID: UUID, processingID: UUID, providerURL: URL) async throws -> [String: Any] {
+        let expected = try await exportURL(sessionID: sessionID, processingID: processingID, acknowledgeIncomplete: true)
+        let expectedHash = try WholeFileDigest.sha256(expected)
+        let expectedBytes = try expected.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        let scoped = providerURL.startAccessingSecurityScopedResource()
+        defer { if scoped { providerURL.stopAccessingSecurityScopedResource() } }
+        var coordinationError: NSError?, readError: Error?
+        var actualHash = "", actualBytes = 0
+        NSFileCoordinator().coordinate(readingItemAt: providerURL, options: [], error: &coordinationError) { url in
+            do {
+                try Self.requireRegularFile(url, maximumBytes: mediaSizeLimit)
+                actualHash = try WholeFileDigest.sha256(url)
+                actualBytes = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            } catch { readError = error }
+        }
+        guard coordinationError == nil, readError == nil else { throw NativeMediaError.storage }
+        try Task.checkCancellation()
+        return ["exactMatch": expectedHash == actualHash && expectedBytes == actualBytes,
+            "expectedSHA256": expectedHash, "actualSHA256": actualHash,
+            "expectedBytes": expectedBytes, "actualBytes": actualBytes]
+    }
+
+    func loadEditorState() throws -> [String: Any] {
+        try load()
+        let url = root.appendingPathComponent("editor-state.json")
+        guard FileManager.default.fileExists(atPath: url.path) else { return [:] }
+        try Self.requireRegularFile(url, maximumBytes: 262_144)
+        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url))
+        guard let state = object as? [String: Any] else { throw NativeMediaError.storage }
+        try Self.validateEditorState(state)
+        return state
+    }
+
+    func saveEditorState(_ state: [String: Any]) throws {
+        try load(); try Self.validateEditorState(state)
+        let url = root.appendingPathComponent("editor-state.json")
+        if FileManager.default.fileExists(atPath: url.path) { try Self.requireRegularFile(url, maximumBytes: 262_144) }
+        let data = try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys])
+        guard data.count <= 262_144 else { throw NativeMediaError.invalidArgument }
+        try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+    }
+
+    static func validateEditorState(_ value: Any, depth: Int = 0) throws {
+        guard depth <= 12 else { throw NativeMediaError.invalidArgument }
+        if let map = value as? [String: Any] {
+            guard map.count <= 256 else { throw NativeMediaError.invalidArgument }
+            for (key, child) in map {
+                guard key.utf8.count <= 128 else { throw NativeMediaError.invalidArgument }
+                try validateEditorState(child, depth: depth + 1)
+            }
+        } else if let list = value as? [Any] {
+            guard list.count <= 500 else { throw NativeMediaError.invalidArgument }
+            for child in list { try validateEditorState(child, depth: depth + 1) }
+        } else if let text = value as? String {
+            guard text.utf8.count <= 8192 else { throw NativeMediaError.invalidArgument }
+        } else if let number = value as? NSNumber {
+            guard number.doubleValue.isFinite else { throw NativeMediaError.invalidArgument }
+        } else if !(value is NSNull) { throw NativeMediaError.invalidArgument }
+    }
+
+    func presetExportURL(_ preset: [String: Any]) throws -> URL {
+        try load(); try Self.validatePreset(preset)
+        let url = try exportsDirectory().appendingPathComponent("Metadata-Preset.json")
+        if FileManager.default.fileExists(atPath: url.path) { try Self.requireRegularFile(url, maximumBytes: 32_768) }
+        try JSONSerialization.data(withJSONObject: preset, options: [.prettyPrinted, .sortedKeys])
+            .write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        return url
+    }
+
+    static func validatePreset(_ preset: [String: Any]) throws {
+        try validateEditorState(preset)
+        guard preset["schemaVersion"] as? Int == 1,
+              let id = preset["id"] as? String, UUID(uuidString: id) != nil,
+              let name = preset["name"] as? String, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              name.utf8.count <= 128, let raw = preset["patch"] as? [String: Any] else { throw NativeMediaError.invalidArgument }
+        let bytes = try JSONSerialization.data(withJSONObject: raw)
+        guard bytes.count <= 16_384 else { throw NativeMediaError.invalidArgument }
+        try JSONDecoder().decode(MetadataPatch.self, from: bytes).validate()
+    }
+
+    private func exportsDirectory() throws -> URL {
+        let folder = root.appendingPathComponent("Exports", isDirectory: true).standardizedFileURL
+        guard NativeFileSystem.isDescendant(folder, of: root),
+              NativeFileSystem.samePath(folder.resolvingSymlinksInPath(), folder) else { throw NativeMediaError.storage }
+        if !FileManager.default.fileExists(atPath: folder.path) {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false,
+                attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
+        }
+        let values = try folder.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard values.isDirectory == true, values.isSymbolicLink != true else { throw NativeMediaError.storage }
+        return folder
+    }
+
+    private func nextOutputDisplayName(extension ext: String) throws -> String {
+        let safe = try allowedExtension(ext).uppercased()
+        var used = Set(sessions.flatMap { $0.history + ($0.processing.map { [$0] } ?? []) }.compactMap(\.outputDisplayName))
+        let folder = try exportsDirectory()
+        let names = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+        guard names.count <= 1200 else { throw NativeMediaError.storage }
+        used.formUnion(names)
+        let start = Int.random(in: 1000...9999)
+        for offset in 0..<9000 {
+            let digits = 1000 + (start - 1000 + offset) % 9000
+            let name = "IMG_\(digits).\(safe)"
+            if !used.contains(name) { return name }
+        }
+        throw NativeMediaError.storage
+    }
+
+    static func validateOutputDisplayName(_ name: String) throws {
+        guard name.range(of: "^IMG_[0-9]{4}\\.(JPG|JPEG|HEIC|HEIF|PNG|MP4|MOV)$", options: .regularExpression) != nil else {
+            throw NativeMediaError.storage
+        }
+    }
+
+    private func removeExports() throws {
+        let folder = try exportsDirectory()
+        let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+        guard files.count <= 1200 else { throw NativeMediaError.storage }
+        for file in files {
+            if file.lastPathComponent != "Metadata-Preset.json" { try Self.validateOutputDisplayName(file.lastPathComponent) }
+            try Self.requireRegularFile(file, maximumBytes: Int64.max, minimumBytes: 0)
+        }
+        for file in files { try FileManager.default.removeItem(at: file) }
+    }
+
     func delete(_ id: UUID) throws {
         try load()
         try recoverOrphans()
-        guard sessions.contains(where: { $0.id == id }) else { throw NativeMediaError.notFound }
+        guard let session = sessions.first(where: { $0.id == id }) else { throw NativeMediaError.notFound }
+        let names = (session.history + (session.processing.map { [$0] } ?? [])).compactMap(\.outputDisplayName)
         try persist(sessions.filter { $0.id != id })
         try removeDirectory(id)
         try removePreview(id)
+        for name in names { try removeExport(name) }
     }
 
     func clear() throws {
@@ -320,6 +513,7 @@ actor NativeSessionStore {
         let identifiers = sessions.map(\.id)
         try persist([])
         for id in identifiers { try removeDirectory(id); try removePreview(id) }
+        try removeExports()
     }
 
     private func load() throws {
@@ -348,6 +542,9 @@ actor NativeSessionStore {
                 _ = try ownedFile(session.id, name: session.sourceName)
                 if let previewName = session.previewName { _ = try confinedPreview(session.id, name: previewName) }
                 for processing in session.history + (session.processing.map { [$0] } ?? []) {
+                    guard (processing.patch != nil) != (processing.metadataPatch != nil) else { throw NativeMediaError.storage }
+                    if let patch = processing.metadataPatch { try patch.validate() }
+                    if let name = processing.outputDisplayName { try Self.validateOutputDisplayName(name) }
                     _ = try ownedFile(session.id, name: processing.outputName)
                     guard processing.outputName.hasPrefix("output-\(processing.id.uuidString).") else { throw NativeMediaError.storage }
                 }
@@ -457,6 +654,23 @@ actor NativeSessionStore {
                   preview.lastPathComponent == "\(id.uuidString).png" else { continue }
             try removePreview(id)
         }
+        // Remove stale consumer links left by replacement/interrupted deletion.
+        let exports = try exportsDirectory()
+        let files = try FileManager.default.contentsOfDirectory(at: exports, includingPropertiesForKeys: nil)
+        guard files.count <= 1200 else { throw NativeMediaError.storage }
+        let retainedNames = Set(sessions.flatMap { $0.history + ($0.processing.map { [$0] } ?? []) }.compactMap(\.outputDisplayName))
+        for file in files where file.lastPathComponent != "Metadata-Preset.json" && !retainedNames.contains(file.lastPathComponent) {
+            try removeExport(file.lastPathComponent)
+        }
+    }
+
+    private func removeExport(_ name: String) throws {
+        try Self.validateOutputDisplayName(name)
+        let file = try exportsDirectory().appendingPathComponent(name)
+        if FileManager.default.fileExists(atPath: file.path) {
+            try Self.requireRegularFile(file, maximumBytes: Int64.max, minimumBytes: 0)
+            try FileManager.default.removeItem(at: file)
+        }
     }
 
     private func confinedPreview(_ id: UUID, name: String) throws -> URL {
@@ -474,7 +688,7 @@ actor NativeSessionStore {
 
     private func allowedExtension(_ value: String) throws -> String {
         let ext = value.lowercased()
-        guard ["jpg", "jpeg", "heic", "heif", "mp4", "mov"].contains(ext) else { throw NativeMediaError.unsupported("Choose a JPEG, HEIC, MP4 or MOV file.") }
+        guard ["jpg", "jpeg", "heic", "heif", "png", "mp4", "mov"].contains(ext) else { throw NativeMediaError.unsupported("Choose a JPEG, HEIC, PNG, MP4 or MOV file.") }
         return ext
     }
 
@@ -553,7 +767,7 @@ enum NativeReadableMetadata {
         return true
     }
     static func details(_ url: URL, inspection: MediaInspection) -> [String: String] {
-        var details = inspection.metadata.filter { ["make", "model", "lens"].contains($0.key) }
+        var details = inspection.metadata
         guard inspection.kind.isImage,
               let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any] else { return details }

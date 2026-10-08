@@ -290,6 +290,34 @@ final class ProbeCoreTests: XCTestCase {
         XCTAssertFalse(result.integrity.checks.contains { $0.status == .failed })
         XCTAssertEqual(result.integrity.status, .incomplete)
     }
+    func testCompleteJPEGAndHEICFieldEditingWithoutRecompression() async throws {
+        for kind in [MediaKind.jpeg, .heic, .png] {
+            let source = folder.appendingPathComponent("full-source.\(kind.rawValue)"), output = folder.appendingPathComponent("full-output.\(kind.rawValue)")
+            try makeImage(source, type: kind == .jpeg ? UTType.jpeg.identifier : kind == .heic ? UTType.heic.identifier : UTType.png.identifier, orientation: 6)
+            let original = try WholeFileDigest.sha256(source)
+            let patch = MetadataPatch(values: ["make": .string("Apple"), "model": .string("Full camera"), "lensMake": .string("Apple"), "lensModel": .string("Full lens 6.765mm f/1.78"), "iso": .number(800), "exposureTime": .number(1.0 / 120), "fNumber": .number(1.78), "exposureCompensation": .number(-0.5), "focalLength": .number(6.765), "focalLength35mm": .number(24), "meteringMode": .number(5), "flash": .number(16), "software": .string("17.5.1"), "hostComputer": .string("iPhone"), "dateTimeOriginal": .string("2026:04:05 06:07:08"), "createDate": .string("2026:04:05 06:07:08"), "modifyDate": .string("2026:04:05 06:07:08"), "offsetTime": .string("-04:00"), "offsetTimeOriginal": .string("-04:00"), "offsetTimeDigitized": .string("-04:00"), "latitude": .number(-12.5), "longitude": .number(44.25), "altitude": .number(-10.2), "imageDirection": .number(120.55)])
+            let result = try await MetadataEngine.processMetadataPatch(source: source, output: output, patch: patch)
+            try patch.validateReadback(result.outputInspection)
+            XCTAssertEqual(result.outputInspection.kind, kind); XCTAssertEqual(result.outputInspection.structure, result.sourceInspection.structure)
+            XCTAssertFalse(result.integrity.checks.contains { $0.status == .failed }, "\(kind): \(result.integrity.checks)")
+            XCTAssertEqual(try WholeFileDigest.sha256(source), original)
+        }
+    }
+    func testMovieFullProfileLensLocationDatesAndSelectedRemovalPreserveSamples() async throws {
+        for kind in [MediaKind.mp4, .mov] {
+            let source = folder.appendingPathComponent("full-video.\(kind.rawValue)"), output = folder.appendingPathComponent("full-edited.\(kind.rawValue)"), removed = folder.appendingPathComponent("full-removed.\(kind.rawValue)")
+            try await makeVideo(source, kind: kind)
+            let values: [String: MetadataValue] = ["make": .string("Apple"), "model": .string("iPhone 15 Pro Max"), "software": .string("17.5.1"), "lensModel": .string("Main Camera - 24 mm f/1.78"), "focalLength35mm": .number(24), "latitude": .number(-12.5), "longitude": .number(44.25), "altitude": .number(-10.2), "dateTimeOriginal": .string("2026-04-05T06:07:08-04:00"), "movieCreateDate": .string("2026-04-05T06:07:08-04:00"), "movieModifyDate": .string("2026-04-05T06:07:08-04:00"), "trackCreateDate": .string("2026-04-05T06:07:08-04:00"), "trackModifyDate": .string("2026-04-05T06:07:08-04:00"), "mediaCreateDate": .string("2026-04-05T06:07:08-04:00"), "mediaModifyDate": .string("2026-04-05T06:07:08-04:00")]
+            var allValues = values
+            allValues["iso"] = .number(800); allValues["exposureTime"] = .number(1.0 / 120); allValues["fNumber"] = .number(1.78)
+            let result = try await MetadataEngine.processMetadataPatch(source: source, output: output, patch: MetadataPatch(values: allValues))
+            XCTAssertTrue(result.integrity.checks.contains { $0.name.contains("compressed data") && $0.status == .passed })
+            let removal = MetadataPatch(removals: ["lensModel", "latitude", "longitude", "altitude", "software", "trackCreateDate"])
+            let deleted = try await MetadataEngine.processMetadataPatch(source: output, output: removed, patch: removal)
+            for key in removal.removals { XCTAssertNil(deleted.outputInspection.metadata[key]) }
+            XCTAssertEqual(deleted.outputInspection.metadata["model"], "iPhone 15 Pro Max")
+        }
+    }
 
     private func syntheticJPEG(exif: String, pixel: UInt8) -> Data {
         func segment(_ marker: UInt8, _ payload: Data) -> Data {

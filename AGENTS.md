@@ -2,7 +2,7 @@
 
 The existing native Swift/SwiftUI feasibility probe remains a preserved diagnostic application. The user has now authorized the main application with a Flutter interface and a Swift media engine, and the owner accepted manual Files/Safari/iCloud export. Build the editor additively under `editor/`; retain the canonical Swift engine and its tests. The parent planning research and docs/SPECIFICATION.md remain relevant; the latest user architecture/workflow instruction supersedes their SwiftUI production-interface recommendation.
 
-- Preserve the probe's scope. The first editor milestone is single-file import, inspection, qualified editing, integrity review and Files export/recovery. Presets, randomization, bulk and broader field/removal support remain later planned milestones; accounts and live Zlarp integration require a concrete owner contract.
+- Preserve the probe's scope. The user has confirmed full script-derived metadata editing, selected removal, researched phone/camera profiles, configurable randomization, saved presets, bulk processing, IMG_#### filenames and a minimal interface. Implement these additively in the Flutter editor and canonical Swift engine; the original single-file milestone restriction is superseded. Accounts and live Zlarp integration still require a concrete owner contract.
 - Use public Apple APIs. Do not manipulate Photos databases or app-origin attribution.
 - Treat embedded metadata, compressed/presentation integrity, and actual Photos UI/attribution as distinct evidence.
 - Never infer attribution absence from PHAsset.sourceType or a successful save.

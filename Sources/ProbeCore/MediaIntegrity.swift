@@ -41,6 +41,9 @@ public enum MediaIntegrity {
                     "Compare ICC, JFIF, comments and all other non-target APP payloads. Source markers: \(markerLabels(original.applicationSignatures)); output: \(markerLabels(edited.applicationSignatures)).")
                 limitations += Array(Set(original.limitations + edited.limitations)).sorted()
                 limitations.append("Opaque EXIF maker notes and XMP fields not exposed by ImageIO are not fully qualified; this result cannot certify arbitrary originals.")
+            } else if before.kind == .png && after.kind == .png {
+                check("PNG compressed pixels and non-target chunks", try StillContainerMetadata.pngFingerprint(source) == StillContainerMetadata.pngFingerprint(output),
+                    "Hash every PNG chunk except the deliberately edited eXIf chunk. IDAT, alpha, palette, profile and presentation bytes remain exact.")
             } else {
                 do {
                     let original = try HEICMetadataWriter.inventory(source), edited = try HEICMetadataWriter.inventory(output)
@@ -75,6 +78,125 @@ public enum MediaIntegrity {
         let status: IntegrityStatus = checks.contains { $0.status == .failed } ? .mismatch : (limitations.isEmpty ? .verified : .incomplete)
         return IntegrityComparison(status: status, checks: checks, limitations: limitations)
     }
+    /// Reuses independent encoded-media checks, replacing only the legacy
+    /// three-field metadata checks with the exact typed target set.
+    public static func compareMetadata(source: URL, output: URL, patch: MetadataPatch) async throws -> IntegrityComparison {
+        try patch.validate()
+        let before = try await MetadataEngine.inspect(source), after = try await MetadataEngine.inspect(output)
+        let baseline = try await compare(source: source, output: output)
+        let excluded = Set(["retained embedded metadata", "exposed embedded location", "ImageIO exposed non-target properties"])
+        var checks = baseline.checks.filter { !excluded.contains($0.name) }
+        do { try patch.validateReadback(after); checks.append(IntegrityCheck(name: "requested metadata", status: .passed, detail: "Every selected value and removal was independently read back.")) }
+        catch { checks.append(IntegrityCheck(name: "requested metadata", status: .failed, detail: error.localizedDescription)) }
+        var keys = patch.targetedKeys
+        if keys.contains("lensModel") { keys.insert("lens") }
+        for (key, raw) in VideoMetadataFields.keys.merging(VideoMetadataFields.trackKeys, uniquingKeysWith: { a, _ in a }) where keys.contains(key) { keys.insert(raw); keys.insert("mdta/" + raw) }
+        if !keys.isDisjoint(with: VideoMetadataFields.gpsKeys) {
+            keys.formUnion(VideoMetadataFields.gpsKeys); keys.insert(VideoMetadataFields.locationKey); keys.insert("mdta/" + VideoMetadataFields.locationKey)
+        }
+        for (key, alias) in [("movieCreateDate", "createDate"), ("movieModifyDate", "modifyDate")] where keys.contains(key) || keys.contains(alias) { keys.insert(key); keys.insert(alias) }
+        let retained = before.metadata.filter { !keys.contains($0.key) } == after.metadata.filter { !keys.contains($0.key) }
+        checks.append(IntegrityCheck(name: "retained embedded metadata", status: retained ? .passed : .failed, detail: "Compare all exposed non-target metadata keys; exclude only selected fields and their documented aliases."))
+        if patch.targetedKeys.isDisjoint(with: Set(["latitude", "longitude", "altitude", "imageDirection"])) {
+            checks.append(IntegrityCheck(name: "exposed embedded location", status: before.location == after.location ? .passed : .failed, detail: "Unedited embedded location remains unchanged."))
+        }
+        if before.kind.isImage {
+            let matches = try retainedImageProperties(source, metadataPatch: patch) == retainedImageProperties(output, metadataPatch: patch)
+            checks.append(IntegrityCheck(name: "ImageIO non-target properties", status: matches ? .passed : .failed, detail: "Exclude exact TIFF/EXIF/GPS target property paths; compare all other exposed properties."))
+            checks += try imageTargetReadback(output, patch: patch)
+        } else {
+            checks += try await videoTargetReadback(output, patch: patch)
+        }
+        let limitations = baseline.limitations.filter { !$0.contains("Unreferenced original Exif bytes remain") }
+        return IntegrityComparison(status: checks.contains(where: { $0.status == .failed }) ? .mismatch : (limitations.isEmpty && !checks.contains(where: { $0.status == .notChecked }) ? .verified : .incomplete), checks: checks, limitations: limitations)
+    }
+    private static func videoTargetReadback(_ url: URL, patch: MetadataPatch) async throws -> [IntegrityCheck] {
+        let asset = AVURLAsset(url: url)
+        var checks = [IntegrityCheck]()
+        var movieItems = [AVMetadataItem]()
+        for format in try await asset.load(.availableMetadataFormats) { movieItems += try await asset.loadMetadata(for: format) }
+        let tracks = (try await asset.load(.tracks)).filter { $0.mediaType == .video }
+        var trackItems = [[AVMetadataItem]]()
+        for track in tracks {
+            var items = [AVMetadataItem]()
+            for format in try await track.load(.availableMetadataFormats) { items += try await track.loadMetadata(for: format) }
+            trackItems.append(items)
+        }
+        for (key, atom) in VideoMetadataFields.keys.merging(VideoMetadataFields.trackKeys, uniquingKeysWith: { a, _ in a }) where patch.targetedKeys.contains(key) {
+            let collections = VideoMetadataFields.trackKeys[key] == nil ? [movieItems] : trackItems
+            guard !collections.isEmpty else { checks.append(IntegrityCheck(name: "AVFoundation target \(key)", status: .failed, detail: "No video track is available for target readback.")); continue }
+            var matches = true
+            for collection in collections {
+                let found = collection.filter { $0.identifier?.rawValue == "mdta/" + atom || $0.identifier?.rawValue == atom || ($0.key as? String) == atom }
+                if let target = patch.values[key] {
+                    guard !found.isEmpty else { matches = false; continue }
+                    for item in found {
+                        guard let value = try await item.load(.stringValue) else { matches = false; continue }
+                        if let n = target.number {
+                            let scalar = Double(value.hasPrefix("F") ? String(value.dropFirst()) : value)
+                            if scalar == nil || abs(scalar! - n) > MetadataPatch.numericTolerance(for: key, value: n) { matches = false }
+                        } else if value != target.text { matches = false }
+                    }
+                } else if !found.isEmpty { matches = false }
+            }
+            checks.append(IntegrityCheck(name: "AVFoundation target \(key)", status: matches ? .passed : .failed, detail: "Read selected UTF-8 camera values from the correct movie/video-track key space with AVFoundation."))
+        }
+        return checks
+    }
+    /// Independent ImageIO tag mapping deliberately does not share the TIFF tag
+    /// registry or parser used by the writer. Numeric tolerances reflect the
+    /// rational quantization of the typed writer, not approximate file quality.
+    private static func imageTargetReadback(_ url: URL, patch: MetadataPatch) throws -> [IntegrityCheck] {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary), let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any] else { throw ProbeError.readbackFailed("ImageIO cannot read edited image") }
+        let tiff = properties[kCGImagePropertyTIFFDictionary as String] as? [String: Any] ?? [:], exif = properties[kCGImagePropertyExifDictionary as String] as? [String: Any] ?? [:], gps = properties[kCGImagePropertyGPSDictionary as String] as? [String: Any] ?? [:]
+        let tiffNames = ["make": "Make", "model": "Model", "software": "Software", "modifyDate": "DateTime", "description": "ImageDescription", "artist": "Artist", "copyright": "Copyright"]
+        let exifNames = ["lensMake": "LensMake", "lensModel": "LensModel", "iso": "ISOSpeedRatings", "exposureTime": "ExposureTime", "fNumber": "FNumber", "exposureCompensation": "ExposureBiasValue", "focalLength": "FocalLength", "focalLength35mm": "FocalLenIn35mmFilm", "meteringMode": "MeteringMode", "flash": "Flash", "dateTimeOriginal": "DateTimeOriginal", "createDate": "DateTimeDigitized", "offsetTime": "OffsetTime", "offsetTimeOriginal": "OffsetTimeOriginal", "offsetTimeDigitized": "OffsetTimeDigitized"]
+        var checks = [IntegrityCheck]()
+        for key in patch.targetedKeys.sorted() {
+            var actual: Any?
+            if let name = tiffNames[key] { actual = tiff[name] }
+            else if let name = exifNames[key] { actual = exif[name] }
+            else if let name = ["latitude": "Latitude", "longitude": "Longitude", "altitude": "Altitude", "imageDirection": "ImgDirection"][key] {
+                actual = gps[name]
+                if let value = actual as? NSNumber {
+                    let negative = key == "latitude" ? gps["LatitudeRef"] as? String == "S" : key == "longitude" ? gps["LongitudeRef"] as? String == "W" : key == "altitude" ? (gps["AltitudeRef"] as? NSNumber)?.intValue == 1 : false
+                    actual = NSNumber(value: negative ? -value.doubleValue : value.doubleValue)
+                }
+            } else {
+                checks.append(IntegrityCheck(name: "ImageIO target \(key)", status: .notChecked, detail: "This field is read back by the bounded TIFF reader; ImageIO does not expose its public tag in the supported mapping.")); continue
+            }
+            var matches = false
+            if let target = patch.values[key] {
+                if let number = target.number {
+                    if let array = actual as? [NSNumber] { actual = array.first }
+                    if let actual = actual as? NSNumber { matches = abs(actual.doubleValue - number) <= MetadataPatch.numericTolerance(for: key, value: number) }
+                } else if let actual = actual as? String {
+                    matches = key.lowercased().contains("date") ? actual == (try MetadataPatch.exifDate(target.text)) : actual == target.text
+                }
+            } else { matches = actual == nil }
+            checks.append(IntegrityCheck(name: "ImageIO target \(key)", status: matches ? .passed : .failed, detail: "Read the selected field through Apple's independent image metadata reader."))
+        }
+        return checks
+    }
+    private static func retainedImageProperties(_ url: URL, metadataPatch: MetadataPatch) throws -> String {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil), var properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any] else { throw ProbeError.malformed("No image properties") }
+        let tiffKeys = ["make": "Make", "model": "Model", "software": "Software", "hostComputer": "HostComputer", "modifyDate": "DateTime", "description": "ImageDescription", "artist": "Artist", "copyright": "Copyright", "title": "XPTitle", "keywords": "XPKeywords"]
+        let exifKeys = ["lensMake": "LensMake", "lensModel": "LensModel", "iso": "ISOSpeedRatings", "exposureTime": "ExposureTime", "fNumber": "FNumber", "exposureCompensation": "ExposureBiasValue", "focalLength": "FocalLength", "focalLength35mm": "FocalLenIn35mmFilm", "meteringMode": "MeteringMode", "flash": "Flash", "dateTimeOriginal": "DateTimeOriginal", "createDate": "DateTimeDigitized", "offsetTime": "OffsetTime", "offsetTimeOriginal": "OffsetTimeOriginal", "offsetTimeDigitized": "OffsetTimeDigitized"]
+        let gpsKeys = ["latitude": ["Latitude", "LatitudeRef"], "longitude": ["Longitude", "LongitudeRef"], "altitude": ["Altitude", "AltitudeRef"], "imageDirection": ["ImgDirection", "ImgDirectionRef"]]
+        for (dictionaryKey, mapping) in [(kCGImagePropertyTIFFDictionary as String, tiffKeys), (kCGImagePropertyExifDictionary as String, exifKeys)] {
+            if var dictionary = properties[dictionaryKey] as? [String: Any] {
+                for key in metadataPatch.targetedKeys { if let name = mapping[key] { dictionary.removeValue(forKey: name) } }
+                if dictionary.isEmpty { properties.removeValue(forKey: dictionaryKey) } else { properties[dictionaryKey] = dictionary }
+            }
+        }
+        if var gps = properties[kCGImagePropertyGPSDictionary as String] as? [String: Any] {
+            for key in metadataPatch.targetedKeys { for name in gpsKeys[key] ?? [] { gps.removeValue(forKey: name) } }
+            // Introduced GPSVersionID identifies the schema, not capture data.
+            if !metadataPatch.targetedKeys.isDisjoint(with: Set(gpsKeys.keys)) { gps.removeValue(forKey: "Version") }
+            if gps.isEmpty { properties.removeValue(forKey: kCGImagePropertyGPSDictionary as String) } else { properties[kCGImagePropertyGPSDictionary as String] = gps }
+        }
+        return canonicalValue(properties)
+    }
 
     static func videoStructureChecks(source: MediaInspection, output: MediaInspection) -> [IntegrityCheck] {
         let tracksMatch = source.structure["tracks"] == output.structure["tracks"] &&
@@ -98,7 +220,7 @@ public enum MediaIntegrity {
         for key in ["make", "model", AVMetadataIdentifier.quickTimeMetadataMake.rawValue, AVMetadataIdentifier.quickTimeMetadataModel.rawValue] {
             retained.removeValue(forKey: key)
         }
-        if patch.lens != nil { retained.removeValue(forKey: "lens") }
+        if patch.lens != nil { retained.removeValue(forKey: "lens"); retained.removeValue(forKey: "lensModel") }
         return retained
     }
 

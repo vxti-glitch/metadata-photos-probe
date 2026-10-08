@@ -15,6 +15,7 @@ public enum MetadataEngine {
             let kind: MediaKind
             if type == UTType.jpeg.identifier { kind = .jpeg }
             else if type == UTType.heic.identifier { kind = .heic }
+            else if type == UTType.png.identifier { kind = .png }
             else { throw ProbeError.unsupported("Image type \(type)") }
             guard CGImageSourceGetCount(source) == 1 else { throw ProbeError.unsupported("Multi-image source is outside the controlled-fixture gate") }
             guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any] else { throw ProbeError.malformed("ImageIO properties unavailable") }
@@ -24,6 +25,11 @@ public enum MetadataEngine {
             metadata["make"] = tiff[kCGImagePropertyTIFFMake as String] as? String
             metadata["model"] = tiff[kCGImagePropertyTIFFModel as String] as? String
             metadata["lens"] = exif[kCGImagePropertyExifLensModel as String] as? String
+            // A separate bounded TIFF reader exposes the complete supported field
+            // set; ImageIO independently supplies presentation/location evidence.
+            if let full = try? StillContainerMetadata.metadata(url, kind: kind) {
+                metadata.merge(full, uniquingKeysWith: { _, new in new }); metadata["lens"] = metadata["lensModel"] ?? metadata["lens"]
+            }
             var structure = [String: String]()
             for (label, key) in [("width", kCGImagePropertyPixelWidth), ("height", kCGImagePropertyPixelHeight), ("orientation", kCGImagePropertyOrientation), ("depth", kCGImagePropertyDepth), ("colorModel", kCGImagePropertyColorModel), ("profile", kCGImagePropertyProfileName)] {
                 structure[label] = properties[key as String].map { String(describing: $0) }
@@ -32,7 +38,8 @@ public enum MetadataEngine {
             structure["containerType"] = type
             var notes = ["Embedded metadata only; Photos display and source attribution require physical-device observation."]
             if kind == .jpeg { _ = try JPEGInventory.read(url) }
-            else { _ = try BoxInventory.read(url); notes.append("HEIC item graph/auxiliary/HDR preservation is not fully qualified.") }
+            else if kind == .heic { _ = try BoxInventory.read(url); notes.append("HEIC item graph/auxiliary/HDR preservation is not fully qualified.") }
+            else { _ = try StillContainerMetadata.layout(url, kind: .png) }
             return MediaInspection(kind: kind, byteCount: size, metadata: metadata, notes: notes, structure: structure,
                 location: EmbeddedLocationEvidence.image(gps: properties[kCGImagePropertyGPSDictionary as String] as? [String: Any]))
         }
@@ -57,10 +64,28 @@ public enum MetadataEngine {
                 if item.identifier == .quickTimeMetadataModel { metadata["model"] = value }
             }
         }
+        if let full = try? VideoMetadataWriter.inspect(url) { metadata.merge(full, uniquingKeysWith: { _, new in new }); metadata["lens"] = metadata["lensModel"] }
         return MediaInspection(kind: kind, byteCount: size, metadata: metadata,
             notes: ["QuickTime camera fields are embedded tags; whether Photos shows them is unverified.", "Metadata-only container rewriting and sample checks do not certify every HDR or opaque-track semantic."],
             structure: ["duration": canonicalTime(duration), "tracks": String(tracks.count), "trackTypes": tracks.map { $0.mediaType.rawValue }.joined(separator: ","), "boxes": inventory.types.joined(separator: ","), "metadataFormats": metadataFormats.map { $0.rawValue }.joined(separator: ",")],
             location: EmbeddedLocationEvidence.video(metadata: metadata))
+    }
+    public static func processMetadataPatch(source: URL, output: URL, patch: MetadataPatch) async throws -> ProcessingResult {
+        try patch.validate()
+        guard source.standardizedFileURL.resolvingSymlinksInPath() != output.standardizedFileURL.resolvingSymlinksInPath() else { throw ProbeError.sameFile }
+        guard !FileManager.default.fileExists(atPath: output.path) else { throw ProbeError.outputExists }
+        let before = try await inspect(source)
+        guard patch.targetedKeys.isSubset(of: Set(MetadataPatch.supportedKeys(for: before.kind))) else { throw ProbeError.unsupported("One or more selected fields are unavailable for this format") }
+        var completed = false; defer { if !completed { try? FileManager.default.removeItem(at: output) } }
+        if patch.targetedKeys.isEmpty { try FileManager.default.copyItem(at: source, to: output) }
+        else if before.kind.isImage { try StillContainerMetadata.write(source: source, output: output, kind: before.kind, patch: patch) }
+        else { _ = try await VideoMetadataWriter.write(source: source, output: output, patch: patch) }
+        let after = try await inspect(output)
+        try patch.validateReadback(after)
+        let integrity = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: patch)
+        guard integrity.status != .mismatch else { throw ProbeError.writeFailed("Media or non-target metadata integrity check failed") }
+        completed = true
+        return ProcessingResult(outputURL: output, sourceInspection: before, outputInspection: after, integrity: integrity)
     }
 
     public static func process(source: URL, output: URL, patch: CameraPatch) async throws -> ProcessingResult {

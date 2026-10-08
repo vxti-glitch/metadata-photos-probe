@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:metadata_editor/media_bridge.dart';
 import 'package:metadata_editor/media_models.dart';
+import 'package:metadata_editor/metadata_patch.dart';
 
 const sourceId = '00000000-0000-4000-8000-000000000001';
 const outputId = '00000000-0000-4000-8000-000000000002';
@@ -113,9 +114,9 @@ class FakeMediaBridge implements MediaBridge {
   @override
   Future<MediaCapabilities> capabilities() async {
     if (startupError != null) throw startupError!;
-    return const MediaCapabilities(
-      ['jpeg', 'heic', 'mp4', 'mov'],
-      ['make', 'model', 'lens'],
+    return MediaCapabilities(
+      ['jpeg', 'heic', 'png', 'mp4', 'mov'],
+      metadataFields.map((f) => f.key).toList(),
       'provisional',
     );
   }
@@ -196,6 +197,93 @@ class FakeMediaBridge implements MediaBridge {
     if (clearAfterCommitError != null) throw clearAfterCommitError!;
   }
 
+  Map<String, Object?> editorState = {};
+  List<MediaSession>? batchImportResult;
+  Object? stateSaveError;
+  Completer<void>? metadataLease;
+  @override
+  Future<Map<String, Object?>> loadEditorState() async => editorState;
+  @override
+  Future<void> saveEditorState(Map<String, Object?> state) async {
+    if (stateSaveError != null) throw stateSaveError!;
+    editorState = state;
+  }
+
+  @override
+  Future<BatchImport> importBatch({required bool photos}) async {
+    if (batchImportResult == null) {
+      final one = await importMedia(photos: photos);
+      return BatchImport(one == null ? [] : [one], [], one == null);
+    }
+    sessions = [
+      ...batchImportResult!,
+      ...sessions.where((s) => !batchImportResult!.any((b) => b.id == s.id)),
+    ];
+    return BatchImport(batchImportResult!, [], false);
+  }
+
+  @override
+  Future<MediaSession> processMetadata(
+    String sessionId,
+    MetadataPatch patch,
+  ) async {
+    processes++;
+    if (metadataLease != null) await metadataLease!.future;
+    if (processError != null) {
+      sessions = sessions
+          .map((s) => s.id == sessionId ? s.withoutOutput() : s)
+          .toList();
+      throw processError!;
+    }
+    final source = sessions.firstWhere((s) => s.id == sessionId);
+    final result = MediaSession(
+      id: source.id,
+      displayName: source.displayName,
+      origin: source.origin,
+      createdAt: source.createdAt,
+      inspection: source.inspection,
+      notes: [],
+      processing: Processing(
+        id: nextProcessingId,
+        createdAt: DateTime.utc(2026),
+        patch: const CameraPatch(make: '', model: ''),
+        metadataPatch: patch,
+        outputDisplayName: 'IMG_4827.${source.inspection.kind.name}',
+        inspection: MediaInspection(
+          kind: source.inspection.kind,
+          byteCount: source.inspection.byteCount,
+          metadata: patch.values.map((k, v) => MapEntry(k, v.toString())),
+          structure: source.inspection.structure,
+          notes: [],
+        ),
+        integrity: IntegrityReport(
+          nextStatus,
+          [const IntegrityCheck('Payload', 'passed', 'Matches')],
+          nextStatus == IntegrityStatus.incomplete
+              ? ['Opaque metadata not qualified.']
+              : [],
+        ),
+      ),
+    );
+    sessions = [result, ...sessions.where((s) => s.id != sessionId)];
+    return result;
+  }
+
+  @override
+  Future<bool> exportBatch(List<Map<String, Object?>> items) async {
+    exports++;
+    return true;
+  }
+
+  @override
+  Future<Map<String, Object?>?> importPreset() async => null;
+  @override
+  Future<bool> exportPreset(Map<String, Object?> preset) async => true;
+  @override
+  Future<Map<String, Object?>> verifyOriginal(
+    String sessionId,
+    String processingId,
+  ) async => {'exactMatch': true};
   @override
   Future<void> openICloud() async {
     opens++;

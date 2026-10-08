@@ -1,0 +1,4405 @@
+{
+  "schemaVersion": 1,
+  "revision": "2026-10-08",
+  "notes": [
+    "Published specifications differ from device-captured EXIF identifiers.",
+    "Unknown physical focal lengths and software are omitted; clear stale camera-specific values when changing devices.",
+    "ISO/shutter defaults are editable scenario suggestions, not verified hardware limits.",
+    "iPhone 15 Pro Max rear physical focal lengths, lens literals and software candidates are user-script values."
+  ],
+  "profiles": [
+    {
+      "id": "apple-iphone-11",
+      "brand": "Apple",
+      "model": "iPhone 11",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/111865"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.8,
+            "lensModel": "iPhone 11 Main Camera f/1.8"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111865"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.4,
+            "lensModel": "iPhone 11 Ultra Wide f/2.4"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111865"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 11 Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111865"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-11-pro",
+      "brand": "Apple",
+      "model": "iPhone 11 Pro",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/111879"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.8,
+            "lensModel": "iPhone 11 Pro Main Camera f/1.8"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111879"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.4,
+            "lensModel": "iPhone 11 Pro Ultra Wide f/2.4"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111879"
+          ]
+        },
+        {
+          "id": "tele",
+          "name": "Telephoto",
+          "fields": {
+            "fNumber": 2.0,
+            "lensModel": "iPhone 11 Pro Telephoto f/2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111879"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 11 Pro Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111879"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-11-pro-max",
+      "brand": "Apple",
+      "model": "iPhone 11 Pro Max",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/111878"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.8,
+            "lensModel": "iPhone 11 Pro Max Main Camera f/1.8"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111878"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.4,
+            "lensModel": "iPhone 11 Pro Max Ultra Wide f/2.4"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111878"
+          ]
+        },
+        {
+          "id": "tele",
+          "name": "Telephoto",
+          "fields": {
+            "fNumber": 2.0,
+            "lensModel": "iPhone 11 Pro Max Telephoto f/2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111878"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 11 Pro Max Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111878"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-12",
+      "brand": "Apple",
+      "model": "iPhone 12",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/111876"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.6,
+            "lensModel": "iPhone 12 Main Camera f/1.6"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111876"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.4,
+            "lensModel": "iPhone 12 Ultra Wide f/2.4"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111876"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 12 Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111876"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-12-mini",
+      "brand": "Apple",
+      "model": "iPhone 12 mini",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/111877"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.6,
+            "lensModel": "iPhone 12 mini Main Camera f/1.6"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111877"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.4,
+            "lensModel": "iPhone 12 mini Ultra Wide f/2.4"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111877"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 12 mini Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111877"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-12-pro",
+      "brand": "Apple",
+      "model": "iPhone 12 Pro",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/111875"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.6,
+            "lensModel": "iPhone 12 Pro Main Camera f/1.6"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111875"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.4,
+            "lensModel": "iPhone 12 Pro Ultra Wide f/2.4"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111875"
+          ]
+        },
+        {
+          "id": "tele",
+          "name": "Telephoto",
+          "fields": {
+            "fNumber": 2.0,
+            "lensModel": "iPhone 12 Pro Telephoto f/2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111875"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 12 Pro Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111875"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-12-pro-max",
+      "brand": "Apple",
+      "model": "iPhone 12 Pro Max",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/111874",
+        "https://www.apple.com/newsroom/2020/11/iphone-12-pro-max-iphone-12-mini-and-homepod-mini-available-to-order-friday/"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.6,
+            "lensModel": "iPhone 12 Pro Max Main Camera f/1.6"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111874",
+            "https://www.apple.com/newsroom/2020/11/iphone-12-pro-max-iphone-12-mini-and-homepod-mini-available-to-order-friday/"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.4,
+            "lensModel": "iPhone 12 Pro Max Ultra Wide f/2.4"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111874",
+            "https://www.apple.com/newsroom/2020/11/iphone-12-pro-max-iphone-12-mini-and-homepod-mini-available-to-order-friday/"
+          ]
+        },
+        {
+          "id": "tele",
+          "name": "Telephoto",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 12 Pro Max Telephoto 65mm equivalent f/2.2",
+            "focalLength35mm": 65
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111874",
+            "https://www.apple.com/newsroom/2020/11/iphone-12-pro-max-iphone-12-mini-and-homepod-mini-available-to-order-friday/"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 12 Pro Max Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111874",
+            "https://www.apple.com/newsroom/2020/11/iphone-12-pro-max-iphone-12-mini-and-homepod-mini-available-to-order-friday/"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-13",
+      "brand": "Apple",
+      "model": "iPhone 13",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/111872"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.6,
+            "lensModel": "iPhone 13 Main Camera f/1.6"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111872"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.4,
+            "lensModel": "iPhone 13 Ultra Wide f/2.4"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111872"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 13 Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111872"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-13-mini",
+      "brand": "Apple",
+      "model": "iPhone 13 mini",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/111873"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.6,
+            "lensModel": "iPhone 13 mini Main Camera f/1.6"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111873"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.4,
+            "lensModel": "iPhone 13 mini Ultra Wide f/2.4"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111873"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 13 mini Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111873"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-13-pro",
+      "brand": "Apple",
+      "model": "iPhone 13 Pro",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/111871",
+        "https://www.apple.com/newsroom/2021/09/apple-unveils-iphone-13-pro-and-iphone-13-pro-max-more-pro-than-ever-before/"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.5,
+            "lensModel": "iPhone 13 Pro Main Camera f/1.5"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111871",
+            "https://www.apple.com/newsroom/2021/09/apple-unveils-iphone-13-pro-and-iphone-13-pro-max-more-pro-than-ever-before/"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 1.8,
+            "lensModel": "iPhone 13 Pro Ultra Wide f/1.8"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111871",
+            "https://www.apple.com/newsroom/2021/09/apple-unveils-iphone-13-pro-and-iphone-13-pro-max-more-pro-than-ever-before/"
+          ]
+        },
+        {
+          "id": "tele",
+          "name": "Telephoto",
+          "fields": {
+            "fNumber": 2.8,
+            "lensModel": "iPhone 13 Pro Telephoto 77mm equivalent f/2.8",
+            "focalLength35mm": 77
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111871",
+            "https://www.apple.com/newsroom/2021/09/apple-unveils-iphone-13-pro-and-iphone-13-pro-max-more-pro-than-ever-before/"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 13 Pro Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111871",
+            "https://www.apple.com/newsroom/2021/09/apple-unveils-iphone-13-pro-and-iphone-13-pro-max-more-pro-than-ever-before/"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-13-pro-max",
+      "brand": "Apple",
+      "model": "iPhone 13 Pro Max",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/111870",
+        "https://www.apple.com/newsroom/2021/09/apple-unveils-iphone-13-pro-and-iphone-13-pro-max-more-pro-than-ever-before/"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.5,
+            "lensModel": "iPhone 13 Pro Max Main Camera f/1.5"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111870",
+            "https://www.apple.com/newsroom/2021/09/apple-unveils-iphone-13-pro-and-iphone-13-pro-max-more-pro-than-ever-before/"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 1.8,
+            "lensModel": "iPhone 13 Pro Max Ultra Wide f/1.8"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111870",
+            "https://www.apple.com/newsroom/2021/09/apple-unveils-iphone-13-pro-and-iphone-13-pro-max-more-pro-than-ever-before/"
+          ]
+        },
+        {
+          "id": "tele",
+          "name": "Telephoto",
+          "fields": {
+            "fNumber": 2.8,
+            "lensModel": "iPhone 13 Pro Max Telephoto 77mm equivalent f/2.8",
+            "focalLength35mm": 77
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111870",
+            "https://www.apple.com/newsroom/2021/09/apple-unveils-iphone-13-pro-and-iphone-13-pro-max-more-pro-than-ever-before/"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 13 Pro Max Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111870",
+            "https://www.apple.com/newsroom/2021/09/apple-unveils-iphone-13-pro-and-iphone-13-pro-max-more-pro-than-ever-before/"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-14",
+      "brand": "Apple",
+      "model": "iPhone 14",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/111850"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.5,
+            "lensModel": "iPhone 14 Main Camera 26mm equivalent f/1.5",
+            "focalLength35mm": 26
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111850"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.4,
+            "lensModel": "iPhone 14 Ultra Wide 13mm equivalent f/2.4",
+            "focalLength35mm": 13
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111850"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 1.9,
+            "lensModel": "iPhone 14 Front Camera f/1.9"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111850"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-14-plus",
+      "brand": "Apple",
+      "model": "iPhone 14 Plus",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/111854"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.5,
+            "lensModel": "iPhone 14 Plus Main Camera 26mm equivalent f/1.5",
+            "focalLength35mm": 26
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111854"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.4,
+            "lensModel": "iPhone 14 Plus Ultra Wide 13mm equivalent f/2.4",
+            "focalLength35mm": 13
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111854"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 1.9,
+            "lensModel": "iPhone 14 Plus Front Camera f/1.9"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111854"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-14-pro",
+      "brand": "Apple",
+      "model": "iPhone 14 Pro",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/111849"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.78,
+            "lensModel": "iPhone 14 Pro Main Camera 24mm equivalent f/1.78",
+            "focalLength35mm": 24
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111849"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 14 Pro Ultra Wide 13mm equivalent f/2.2",
+            "focalLength35mm": 13
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111849"
+          ]
+        },
+        {
+          "id": "tele",
+          "name": "Telephoto",
+          "fields": {
+            "fNumber": 2.8,
+            "lensModel": "iPhone 14 Pro Telephoto 77mm equivalent f/2.8",
+            "focalLength35mm": 77
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111849"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 1.9,
+            "lensModel": "iPhone 14 Pro Front Camera f/1.9"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111849"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-14-pro-max",
+      "brand": "Apple",
+      "model": "iPhone 14 Pro Max",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/111846"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.78,
+            "lensModel": "iPhone 14 Pro Max Main Camera 24mm equivalent f/1.78",
+            "focalLength35mm": 24
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111846"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 14 Pro Max Ultra Wide 13mm equivalent f/2.2",
+            "focalLength35mm": 13
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111846"
+          ]
+        },
+        {
+          "id": "tele",
+          "name": "Telephoto",
+          "fields": {
+            "fNumber": 2.8,
+            "lensModel": "iPhone 14 Pro Max Telephoto 77mm equivalent f/2.8",
+            "focalLength35mm": 77
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111846"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 1.9,
+            "lensModel": "iPhone 14 Pro Max Front Camera f/1.9"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111846"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-15",
+      "brand": "Apple",
+      "model": "iPhone 15",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/111831"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.6,
+            "lensModel": "iPhone 15 Main Camera 26mm equivalent f/1.6",
+            "focalLength35mm": 26
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111831"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.4,
+            "lensModel": "iPhone 15 Ultra Wide 13mm equivalent f/2.4",
+            "focalLength35mm": 13
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111831"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 1.9,
+            "lensModel": "iPhone 15 Front Camera f/1.9"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111831"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-15-plus",
+      "brand": "Apple",
+      "model": "iPhone 15 Plus",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/111830"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.6,
+            "lensModel": "iPhone 15 Plus Main Camera 26mm equivalent f/1.6",
+            "focalLength35mm": 26
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111830"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.4,
+            "lensModel": "iPhone 15 Plus Ultra Wide 13mm equivalent f/2.4",
+            "focalLength35mm": 13
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111830"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 1.9,
+            "lensModel": "iPhone 15 Plus Front Camera f/1.9"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111830"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-15-pro",
+      "brand": "Apple",
+      "model": "iPhone 15 Pro",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/111829"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.78,
+            "lensModel": "iPhone 15 Pro Main Camera 24mm equivalent f/1.78",
+            "focalLength35mm": 24
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111829"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 15 Pro Ultra Wide 13mm equivalent f/2.2",
+            "focalLength35mm": 13
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111829"
+          ]
+        },
+        {
+          "id": "tele",
+          "name": "Telephoto",
+          "fields": {
+            "fNumber": 2.8,
+            "lensModel": "iPhone 15 Pro Telephoto 77mm equivalent f/2.8",
+            "focalLength35mm": 77
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111829"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 1.9,
+            "lensModel": "iPhone 15 Pro Front Camera f/1.9"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111829"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-15-pro-max",
+      "brand": "Apple",
+      "model": "iPhone 15 Pro Max",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/111828"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [
+          "17.1.1",
+          "17.3",
+          "17.4.1",
+          "17.5.1"
+        ],
+        "evidence": "scenario-defaults",
+        "softwareEvidence": "user-script"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.78,
+            "lensModel": "iPhone 15 Pro Max back triple camera 6.765mm f/1.78",
+            "focalLength35mm": 24,
+            "focalLength": 6.765
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "user-script",
+            "focalLength35mm": "official-spec",
+            "focalLength": "user-script"
+          },
+          "clearFields": [],
+          "sources": [
+            "https://support.apple.com/en-us/111828"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 15 Pro Max back triple camera 2.22mm f/2.2",
+            "focalLength35mm": 13,
+            "focalLength": 2.22
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "user-script",
+            "focalLength35mm": "official-spec",
+            "focalLength": "user-script"
+          },
+          "clearFields": [],
+          "sources": [
+            "https://support.apple.com/en-us/111828"
+          ]
+        },
+        {
+          "id": "tele",
+          "name": "Telephoto",
+          "fields": {
+            "fNumber": 2.8,
+            "lensModel": "iPhone 15 Pro Max back triple camera 15.66mm f/2.8",
+            "focalLength35mm": 120,
+            "focalLength": 15.66
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "user-script",
+            "focalLength35mm": "official-spec",
+            "focalLength": "user-script"
+          },
+          "clearFields": [],
+          "sources": [
+            "https://support.apple.com/en-us/111828"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 1.9,
+            "lensModel": "iPhone 15 Pro Max Front Camera f/1.9"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111828"
+          ]
+        }
+      ],
+      "userScriptReference": "spoof_exif.py"
+    },
+    {
+      "id": "apple-iphone-16",
+      "brand": "Apple",
+      "model": "iPhone 16",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/121029"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.6,
+            "lensModel": "iPhone 16 Main Camera 26mm equivalent f/1.6",
+            "focalLength35mm": 26
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/121029"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 16 Ultra Wide 13mm equivalent f/2.2",
+            "focalLength35mm": 13
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/121029"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 1.9,
+            "lensModel": "iPhone 16 Front Camera f/1.9"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/121029"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-16-plus",
+      "brand": "Apple",
+      "model": "iPhone 16 Plus",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/121030"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.6,
+            "lensModel": "iPhone 16 Plus Main Camera 26mm equivalent f/1.6",
+            "focalLength35mm": 26
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/121030"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 16 Plus Ultra Wide 13mm equivalent f/2.2",
+            "focalLength35mm": 13
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/121030"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 1.9,
+            "lensModel": "iPhone 16 Plus Front Camera f/1.9"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/121030"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-16-pro",
+      "brand": "Apple",
+      "model": "iPhone 16 Pro",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/121031"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.78,
+            "lensModel": "iPhone 16 Pro Main Camera 24mm equivalent f/1.78",
+            "focalLength35mm": 24
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/121031"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 16 Pro Ultra Wide 13mm equivalent f/2.2",
+            "focalLength35mm": 13
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/121031"
+          ]
+        },
+        {
+          "id": "tele",
+          "name": "Telephoto",
+          "fields": {
+            "fNumber": 2.8,
+            "lensModel": "iPhone 16 Pro Telephoto 120mm equivalent f/2.8",
+            "focalLength35mm": 120
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/121031"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 1.9,
+            "lensModel": "iPhone 16 Pro Front Camera f/1.9"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/121031"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-16-pro-max",
+      "brand": "Apple",
+      "model": "iPhone 16 Pro Max",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/121032"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.78,
+            "lensModel": "iPhone 16 Pro Max Main Camera 24mm equivalent f/1.78",
+            "focalLength35mm": 24
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/121032"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 16 Pro Max Ultra Wide 13mm equivalent f/2.2",
+            "focalLength35mm": 13
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/121032"
+          ]
+        },
+        {
+          "id": "tele",
+          "name": "Telephoto",
+          "fields": {
+            "fNumber": 2.8,
+            "lensModel": "iPhone 16 Pro Max Telephoto 120mm equivalent f/2.8",
+            "focalLength35mm": 120
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/121032"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 1.9,
+            "lensModel": "iPhone 16 Pro Max Front Camera f/1.9"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/121032"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-16e",
+      "brand": "Apple",
+      "model": "iPhone 16e",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/122208"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.6,
+            "lensModel": "iPhone 16e Main Camera 26mm equivalent f/1.6",
+            "focalLength35mm": 26
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/122208"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 1.9,
+            "lensModel": "iPhone 16e Front Camera f/1.9"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/122208"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-17",
+      "brand": "Apple",
+      "model": "iPhone 17",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/125089"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.6,
+            "lensModel": "iPhone 17 Main Camera 26mm equivalent f/1.6",
+            "focalLength35mm": 26
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/125089"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 17 Ultra Wide 13mm equivalent f/2.2",
+            "focalLength35mm": 13
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/125089"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 1.9,
+            "lensModel": "iPhone 17 Front Camera f/1.9"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/125089"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-17-pro",
+      "brand": "Apple",
+      "model": "iPhone 17 Pro",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/125090"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.78,
+            "lensModel": "iPhone 17 Pro Main Camera 24mm equivalent f/1.78",
+            "focalLength35mm": 24
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/125090"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 17 Pro Ultra Wide 13mm equivalent f/2.2",
+            "focalLength35mm": 13
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/125090"
+          ]
+        },
+        {
+          "id": "tele",
+          "name": "Telephoto",
+          "fields": {
+            "fNumber": 2.8,
+            "lensModel": "iPhone 17 Pro Telephoto 100mm equivalent f/2.8",
+            "focalLength35mm": 100
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/125090"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 1.9,
+            "lensModel": "iPhone 17 Pro Front Camera f/1.9"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/125090"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-17-pro-max",
+      "brand": "Apple",
+      "model": "iPhone 17 Pro Max",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/125091"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.78,
+            "lensModel": "iPhone 17 Pro Max Main Camera 24mm equivalent f/1.78",
+            "focalLength35mm": 24
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/125091"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone 17 Pro Max Ultra Wide 13mm equivalent f/2.2",
+            "focalLength35mm": 13
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/125091"
+          ]
+        },
+        {
+          "id": "tele",
+          "name": "Telephoto",
+          "fields": {
+            "fNumber": 2.8,
+            "lensModel": "iPhone 17 Pro Max Telephoto 100mm equivalent f/2.8",
+            "focalLength35mm": 100
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/125091"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 1.9,
+            "lensModel": "iPhone 17 Pro Max Front Camera f/1.9"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/125091"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-17e",
+      "brand": "Apple",
+      "model": "iPhone 17e",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/126470"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.6,
+            "lensModel": "iPhone 17e Main Camera 26mm equivalent f/1.6",
+            "focalLength35mm": 26
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/126470"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 1.9,
+            "lensModel": "iPhone 17e Front Camera f/1.9"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/126470"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-air",
+      "brand": "Apple",
+      "model": "iPhone Air",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/125092"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.6,
+            "lensModel": "iPhone Air Main Camera 26mm equivalent f/1.6",
+            "focalLength35mm": 26
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label",
+            "focalLength35mm": "official-spec"
+          },
+          "clearFields": [
+            "focalLength"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/125092"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 1.9,
+            "lensModel": "iPhone Air Front Camera f/1.9"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/125092"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-se-2nd-generation",
+      "brand": "Apple",
+      "model": "iPhone SE (2nd generation)",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/111882"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.8,
+            "lensModel": "iPhone SE (2nd generation) Main Camera f/1.8"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111882"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone SE (2nd generation) Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111882"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "apple-iphone-se-3rd-generation",
+      "brand": "Apple",
+      "model": "iPhone SE (3rd generation)",
+      "make": "Apple",
+      "lensMake": "Apple",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.apple.com/en-us/111866"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.8,
+            "lensModel": "iPhone SE (3rd generation) Main Camera f/1.8"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111866"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "iPhone SE (3rd generation) Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.apple.com/en-us/111866"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "samsung-galaxy-s24",
+      "brand": "Samsung",
+      "model": "Galaxy S24",
+      "make": "Samsung",
+      "lensMake": "Samsung",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://news.samsung.com/global/enter-the-new-era-of-mobile-ai-with-samsung-galaxy-s24-series"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.8,
+            "lensModel": "Galaxy S24 Main Camera f/1.8"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/global/enter-the-new-era-of-mobile-ai-with-samsung-galaxy-s24-series"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "Galaxy S24 Ultra Wide f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/global/enter-the-new-era-of-mobile-ai-with-samsung-galaxy-s24-series"
+          ]
+        },
+        {
+          "id": "tele-3x",
+          "name": "Telephoto 3x",
+          "fields": {
+            "fNumber": 2.4,
+            "lensModel": "Galaxy S24 Telephoto 3x f/2.4"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/global/enter-the-new-era-of-mobile-ai-with-samsung-galaxy-s24-series"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "Galaxy S24 Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/global/enter-the-new-era-of-mobile-ai-with-samsung-galaxy-s24-series"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "samsung-galaxy-s24-plus",
+      "brand": "Samsung",
+      "model": "Galaxy S24+",
+      "make": "Samsung",
+      "lensMake": "Samsung",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://news.samsung.com/global/enter-the-new-era-of-mobile-ai-with-samsung-galaxy-s24-series"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.8,
+            "lensModel": "Galaxy S24+ Main Camera f/1.8"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/global/enter-the-new-era-of-mobile-ai-with-samsung-galaxy-s24-series"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "Galaxy S24+ Ultra Wide f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/global/enter-the-new-era-of-mobile-ai-with-samsung-galaxy-s24-series"
+          ]
+        },
+        {
+          "id": "tele-3x",
+          "name": "Telephoto 3x",
+          "fields": {
+            "fNumber": 2.4,
+            "lensModel": "Galaxy S24+ Telephoto 3x f/2.4"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/global/enter-the-new-era-of-mobile-ai-with-samsung-galaxy-s24-series"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "Galaxy S24+ Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/global/enter-the-new-era-of-mobile-ai-with-samsung-galaxy-s24-series"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "samsung-galaxy-s24-ultra",
+      "brand": "Samsung",
+      "model": "Galaxy S24 Ultra",
+      "make": "Samsung",
+      "lensMake": "Samsung",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://news.samsung.com/global/enter-the-new-era-of-mobile-ai-with-samsung-galaxy-s24-series"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.7,
+            "lensModel": "Galaxy S24 Ultra Main Camera f/1.7"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/global/enter-the-new-era-of-mobile-ai-with-samsung-galaxy-s24-series"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "Galaxy S24 Ultra Ultra Wide f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/global/enter-the-new-era-of-mobile-ai-with-samsung-galaxy-s24-series"
+          ]
+        },
+        {
+          "id": "tele-3x",
+          "name": "Telephoto 3x",
+          "fields": {
+            "fNumber": 2.4,
+            "lensModel": "Galaxy S24 Ultra Telephoto 3x f/2.4"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/global/enter-the-new-era-of-mobile-ai-with-samsung-galaxy-s24-series"
+          ]
+        },
+        {
+          "id": "tele-5x",
+          "name": "Telephoto 5x",
+          "fields": {
+            "fNumber": 3.4,
+            "lensModel": "Galaxy S24 Ultra Telephoto 5x f/3.4"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/global/enter-the-new-era-of-mobile-ai-with-samsung-galaxy-s24-series"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "Galaxy S24 Ultra Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/global/enter-the-new-era-of-mobile-ai-with-samsung-galaxy-s24-series"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "samsung-galaxy-s25",
+      "brand": "Samsung",
+      "model": "Galaxy S25",
+      "make": "Samsung",
+      "lensMake": "Samsung",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://news.samsung.com/ph/samsung-galaxy-s25-series-sets-the-standard-of-ai-phone-as-a-true-ai-companion"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.8,
+            "lensModel": "Galaxy S25 Main Camera f/1.8"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/ph/samsung-galaxy-s25-series-sets-the-standard-of-ai-phone-as-a-true-ai-companion"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "Galaxy S25 Ultra Wide f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/ph/samsung-galaxy-s25-series-sets-the-standard-of-ai-phone-as-a-true-ai-companion"
+          ]
+        },
+        {
+          "id": "tele-3x",
+          "name": "Telephoto 3x",
+          "fields": {
+            "fNumber": 2.4,
+            "lensModel": "Galaxy S25 Telephoto 3x f/2.4"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/ph/samsung-galaxy-s25-series-sets-the-standard-of-ai-phone-as-a-true-ai-companion"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "Galaxy S25 Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/ph/samsung-galaxy-s25-series-sets-the-standard-of-ai-phone-as-a-true-ai-companion"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "samsung-galaxy-s25-plus",
+      "brand": "Samsung",
+      "model": "Galaxy S25+",
+      "make": "Samsung",
+      "lensMake": "Samsung",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://news.samsung.com/ph/samsung-galaxy-s25-series-sets-the-standard-of-ai-phone-as-a-true-ai-companion"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.8,
+            "lensModel": "Galaxy S25+ Main Camera f/1.8"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/ph/samsung-galaxy-s25-series-sets-the-standard-of-ai-phone-as-a-true-ai-companion"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "Galaxy S25+ Ultra Wide f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/ph/samsung-galaxy-s25-series-sets-the-standard-of-ai-phone-as-a-true-ai-companion"
+          ]
+        },
+        {
+          "id": "tele-3x",
+          "name": "Telephoto 3x",
+          "fields": {
+            "fNumber": 2.4,
+            "lensModel": "Galaxy S25+ Telephoto 3x f/2.4"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/ph/samsung-galaxy-s25-series-sets-the-standard-of-ai-phone-as-a-true-ai-companion"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "Galaxy S25+ Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/ph/samsung-galaxy-s25-series-sets-the-standard-of-ai-phone-as-a-true-ai-companion"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "samsung-galaxy-s25-ultra",
+      "brand": "Samsung",
+      "model": "Galaxy S25 Ultra",
+      "make": "Samsung",
+      "lensMake": "Samsung",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://news.samsung.com/ph/samsung-galaxy-s25-series-sets-the-standard-of-ai-phone-as-a-true-ai-companion"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.7,
+            "lensModel": "Galaxy S25 Ultra Main Camera f/1.7"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/ph/samsung-galaxy-s25-series-sets-the-standard-of-ai-phone-as-a-true-ai-companion"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 1.9,
+            "lensModel": "Galaxy S25 Ultra Ultra Wide f/1.9"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/ph/samsung-galaxy-s25-series-sets-the-standard-of-ai-phone-as-a-true-ai-companion"
+          ]
+        },
+        {
+          "id": "tele-3x",
+          "name": "Telephoto 3x",
+          "fields": {
+            "fNumber": 2.4,
+            "lensModel": "Galaxy S25 Ultra Telephoto 3x f/2.4"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/ph/samsung-galaxy-s25-series-sets-the-standard-of-ai-phone-as-a-true-ai-companion"
+          ]
+        },
+        {
+          "id": "tele-5x",
+          "name": "Telephoto 5x",
+          "fields": {
+            "fNumber": 3.4,
+            "lensModel": "Galaxy S25 Ultra Telephoto 5x f/3.4"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/ph/samsung-galaxy-s25-series-sets-the-standard-of-ai-phone-as-a-true-ai-companion"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "Galaxy S25 Ultra Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://news.samsung.com/ph/samsung-galaxy-s25-series-sets-the-standard-of-ai-phone-as-a-true-ai-companion"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "google-pixel-8",
+      "brand": "Google",
+      "model": "Pixel 8",
+      "make": "Google",
+      "lensMake": "Google",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.google.com/pixelphone/answer/7158570?hl=en"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.68,
+            "lensModel": "Pixel 8 Main Camera f/1.68"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.google.com/pixelphone/answer/7158570?hl=en"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "Pixel 8 Ultra Wide f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.google.com/pixelphone/answer/7158570?hl=en"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "Pixel 8 Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.google.com/pixelphone/answer/7158570?hl=en"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "google-pixel-8-pro",
+      "brand": "Google",
+      "model": "Pixel 8 Pro",
+      "make": "Google",
+      "lensMake": "Google",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.google.com/pixelphone/answer/7158570?hl=en"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.68,
+            "lensModel": "Pixel 8 Pro Main Camera f/1.68"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.google.com/pixelphone/answer/7158570?hl=en"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 1.95,
+            "lensModel": "Pixel 8 Pro Ultra Wide f/1.95"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.google.com/pixelphone/answer/7158570?hl=en"
+          ]
+        },
+        {
+          "id": "tele",
+          "name": "Telephoto 5x",
+          "fields": {
+            "fNumber": 2.8,
+            "lensModel": "Pixel 8 Pro Telephoto 5x f/2.8"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.google.com/pixelphone/answer/7158570?hl=en"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "Pixel 8 Pro Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.google.com/pixelphone/answer/7158570?hl=en"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "google-pixel-9",
+      "brand": "Google",
+      "model": "Pixel 9",
+      "make": "Google",
+      "lensMake": "Google",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.google.com/pixelphone/answer/7158570?hl=en"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.68,
+            "lensModel": "Pixel 9 Main Camera f/1.68"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.google.com/pixelphone/answer/7158570?hl=en"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 1.7,
+            "lensModel": "Pixel 9 Ultra Wide f/1.7"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.google.com/pixelphone/answer/7158570?hl=en"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "Pixel 9 Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.google.com/pixelphone/answer/7158570?hl=en"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "google-pixel-9-pro",
+      "brand": "Google",
+      "model": "Pixel 9 Pro",
+      "make": "Google",
+      "lensMake": "Google",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.google.com/pixelphone/answer/7158570?hl=en"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.68,
+            "lensModel": "Pixel 9 Pro Main Camera f/1.68"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.google.com/pixelphone/answer/7158570?hl=en"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 1.7,
+            "lensModel": "Pixel 9 Pro Ultra Wide f/1.7"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.google.com/pixelphone/answer/7158570?hl=en"
+          ]
+        },
+        {
+          "id": "tele",
+          "name": "Telephoto 5x",
+          "fields": {
+            "fNumber": 2.8,
+            "lensModel": "Pixel 9 Pro Telephoto 5x f/2.8"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.google.com/pixelphone/answer/7158570?hl=en"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "Pixel 9 Pro Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.google.com/pixelphone/answer/7158570?hl=en"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "google-pixel-9-pro-xl",
+      "brand": "Google",
+      "model": "Pixel 9 Pro XL",
+      "make": "Google",
+      "lensMake": "Google",
+      "modelEvidence": "published-product-name",
+      "clearFields": [
+        "software",
+        "hostComputer"
+      ],
+      "sources": [
+        "https://support.google.com/pixelphone/answer/7158570?hl=en"
+      ],
+      "randomization": {
+        "iso": {
+          "min": 40,
+          "max": 1000
+        },
+        "exposureTimes": [
+          "1/24",
+          "1/30",
+          "1/60",
+          "1/120",
+          "1/240",
+          "1/500",
+          "1/1000"
+        ],
+        "exposureCompensations": [
+          0
+        ],
+        "software": [],
+        "evidence": "scenario-defaults"
+      },
+      "cameras": [
+        {
+          "id": "main",
+          "name": "Main Camera",
+          "fields": {
+            "fNumber": 1.68,
+            "lensModel": "Pixel 9 Pro XL Main Camera f/1.68"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.google.com/pixelphone/answer/7158570?hl=en"
+          ]
+        },
+        {
+          "id": "ultra",
+          "name": "Ultra Wide",
+          "fields": {
+            "fNumber": 1.7,
+            "lensModel": "Pixel 9 Pro XL Ultra Wide f/1.7"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.google.com/pixelphone/answer/7158570?hl=en"
+          ]
+        },
+        {
+          "id": "tele",
+          "name": "Telephoto 5x",
+          "fields": {
+            "fNumber": 2.8,
+            "lensModel": "Pixel 9 Pro XL Telephoto 5x f/2.8"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.google.com/pixelphone/answer/7158570?hl=en"
+          ]
+        },
+        {
+          "id": "front",
+          "name": "Front Camera",
+          "fields": {
+            "fNumber": 2.2,
+            "lensModel": "Pixel 9 Pro XL Front Camera f/2.2"
+          },
+          "fieldEvidence": {
+            "fNumber": "official-spec",
+            "lensModel": "descriptive-label"
+          },
+          "clearFields": [
+            "focalLength",
+            "focalLength35mm"
+          ],
+          "sources": [
+            "https://support.google.com/pixelphone/answer/7158570?hl=en"
+          ]
+        }
+      ]
+    }
+  ]
+}

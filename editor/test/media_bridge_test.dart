@@ -20,7 +20,7 @@ void main() {
       messenger.setMockMethodCallHandler(
         channel,
         (_) async => {
-          'protocolVersion': 2,
+          'protocolVersion': 999,
           'formats': ['jpeg'],
           'editableFields': ['make', 'model'],
           'videoStatus': 'provisional',

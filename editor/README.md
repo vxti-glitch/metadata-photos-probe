@@ -1,42 +1,31 @@
 # Metadata Editor — Flutter + Swift
 
-The owner accepted local editing followed by **Files -> manual Safari/iCloud Photos upload -> sync**. The user authorized this main-app architecture on October 8, 2026. This first editor milestone uses Flutter for the interface and the canonical separately tested Swift media engine through a versioned native channel. The original SwiftUI probe remains available in the parent directory as a diagnostic reference.
+Local metadata editing, then **Files → manual Safari/iCloud Photos upload → sync**. The accepted workflow uses the phone after installation. The original SwiftUI probe and earlier research remain preserved as diagnostic references.
 
-## Working milestone
+## Editor 0.4
 
-Import one JPEG, HEIC, MP4 or MOV from Photos or Files; inspect actual native metadata and known readable capture fields; change qualified make/model/image lens; review source/output readback and integrity; export an immutable copy through the Files picker. Native session recovery, app-owned cleanup, real cancellation and structured errors accompany the workflow. Original/provider media are never edited.
+Import JPEG, HEIC, PNG, MP4 or MOV from Photos or Files, individually or in batches. Choose Brand → Model → Camera from the researched catalog, configure randomization, or manually Keep/Set/Remove supported fields. Save reusable presets, including profile recipes; import/export validated preset JSON. Process frozen plans, recover/retry unfinished batches, and export collision-checked IMG_#### copies. Original/provider media stay immutable.
 
-HEIC changed camera strings are ASCII-only. Blank lens preserves the existing lens; video lens editing is unsupported. Photos import retrieves the original and refuses Live Photos, so prior visible Photos edits are not implicitly flattened. Files import identifies its coordinated source copy. Image thumbnails are separate display derivatives and never become processed outputs.
+Still-image fields cover the supplied script's camera, lens, software, exposure, dates/time zones and GPS operations plus descriptive fields. Movies expose supported QuickTime camera/lens/location/descriptive metadata and movie/track/media dates. Actual resolution, codec, frame rate, duration, HDR and audio are preserved rather than invented. The per-format native registry controls available fields. Camera names that are descriptive rather than captured EXIF literals are identified in optional Details.
 
-Known integrity mismatches block export. Opaque MakerNotes/HDR/container semantics can remain incomplete, requiring an explicit acknowledgment for that frozen output. Passing these checks does not authenticate camera provenance or certify every file. Video support remains provisional pending actual MP4/MOV edits with sound/portrait/HDR on the primary phone; a successful earlier unchanged upload did not qualify processing.
+PNG stays PNG, preserving transparency and compressed pixels. There is no recompression or automatic format conversion. Known integrity failures block export; disclosed incomplete verification still requires acknowledgment. Selective removal fails safely when competing metadata or unqualified structures prevent proving that a field was removed. Proprietary MakerNotes are not advertised as universally editable or fully anonymized.
 
-Files exporter completion confirms only a copy. Browser opening confirms only a website was opened. The app neither automatically uploads nor captures Apple credentials; no public API suppression of the native Photos source label is claimed. Final camera display, iCloud synchronization and attribution remain physical-device observations.
+The main flow is Import → Preset/edit → Process → Export. Technical reports and exact comparison of a downloaded iCloud Unmodified Original are in optional Details. Preview images are display derivatives and never processing outputs. Photos imports original resources and refuses Live Photos; current Photos adjustments are not silently flattened.
 
-## Architecture and source ownership
+Files export does not confirm an iCloud upload. The app opens the public iCloud Photos page and captures no Apple credentials. Direct native Photos source-label suppression is not claimed. Photos indexing/display, no-label behavior, signed installation and post-upload preservation require the physical iPhone.
 
-- `lib/`: Flutter models, typed method-channel adapter, single-operation controller and editor screens.
-- `ios/Runner/`: native channel, UIKit/PhotosUI pickers and bounded Swift session store.
-- Repository-root `Sources/ProbeCore` (`../Sources/ProbeCore` from `editor/`): canonical Swift package via local Xcode package path `../..` from `editor/ios` (the repository root). No copied or Dart-reimplemented media writer.
-- `test/`, `ios/RunnerTests/`, parent `Tests/ProbeCoreTests/`: Flutter, native integration and engine tests.
-- `docs/BRIDGE-CONTRACT.md`: versioned map/ID boundary. Media never travels through channel messages and Dart cannot supply native paths.
-- `docs/MAIN-APP-MILESTONES.md`: complete preserved roadmap, including broader fields, PNG, removal, presets/profiles/randomization, bulk/recovery and owner release integration.
+## Architecture
 
-No main-app accounts, live Zlarp entitlement API, automatic Photos saves, broad metadata removal, presets or bulk are advertised in this milestone. In particular, the current HEIC writer retains superseded EXIF bytes and is not a privacy-removal implementation.
+Flutter owns form/preset/profile/queue presentation. Swift owns media files, public pickers, the bounded atomic journal, validated writes, independent readback/integrity and export gates. Canonical processing stays in repository-root Sources/ProbeCore through a local Swift package; no copied media engine or media bytes through the channel. See docs/BRIDGE-CONTRACT.md and docs/CONFIRMED-FULL-SCOPE.md.
 
-## Windows and GitHub IPA builder
+The catalog has 42 models and 146 camera choices. It is extensible, not every historical phone. Each profile records manufacturer sources; unknown physical focal lengths/software are omitted and stale camera-specific values cleared when switching devices. See docs/CAMERA-PROFILES.md.
 
-Use pinned Flutter **3.47.6 / Dart 3.13.5**, framework revision `5fc346839b5d0eef006ed8404392afb4dfae428d`. Windows can run:
+## Windows / GitHub IPA builder
 
-```text
-flutter pub get --enforce-lockfile
-flutter analyze --fatal-infos
-flutter test
-```
+Pinned Flutter 3.47.6 / Dart 3.13.5 permits analysis and Flutter tests on Windows. The GitHub macOS workflow runs Swift tests, Flutter checks, hosted native XCTest, simulator launch and a real ARM64 device archive, then packages the unsigned IPA with source revision, catalog hash and artifact checksums. The old native probe workflow is preserved.
 
-The new `Flutter and Swift metadata editor` GitHub workflow runs the canonical engine tests, Flutter checks, native simulator tests, a real simulator launch and an arm64 iOS archive on macOS. The existing native probe workflow is preserved. macOS runs `bash scripts/build-editor-macos.sh`; its project synchronization script registers new native files and the canonical package without changing Flutter's generated SPM/UIScene integration. Actual SDK/toolchain, exact source revision, logs, framework architectures and checksums accompany artifacts.
+Metadata-Editor-UNSIGNED-NOT-INSTALLABLE.ipa needs valid signing through the user's authorized channel. A package and simulator launch do not prove signed installation. Bundle ID com.vxtiglitch.metadataeditor remains separate from the probe.
 
-The output `Metadata-Editor-UNSIGNED-NOT-INSTALLABLE.ipa` needs valid signing through the user's authorized existing channel. Flutter `--no-codesign` creates an archive but skips signed IPA export; the workflow packages its real device app explicitly. A packaged app, simulator success and successful signed installation are separate evidence. The editor's distinct bundle identifier is `com.vxtiglitch.metadataeditor`; it does not replace the probe.
+The neutral product name remains Metadata Editor / Photo & Video Metadata; independent branding is documented under branding/. Zlarp integration, accounts, Live Photo conversion and visual video editing are outside this release. Media, GPS, signing inputs and private reports stay out of source and CI.
 
-The product's plain name is **Metadata Editor**, with the subtitle **Photo & Video Metadata** and an original frame/metadata-row icon. The user requested a straightforward listing name and independent source/product identity. See `branding/DECISION.md` for the competitor research and final direction; Zlarp remains distribution/project context.
-
-See `docs/VALIDATION.md` for the actual completed run and limitations, and `docs/DEVICE-TESTS.md` for the physical editor test. User media/GPS, local diagnostic reports and signing secrets never enter source or CI.
+See docs/DEVICE-TESTS.md for the new device checklist. docs/VALIDATION.md records historical 0.3 evidence; new 0.4 evidence is recorded separately after verification.

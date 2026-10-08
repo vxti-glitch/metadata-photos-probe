@@ -416,6 +416,102 @@ class RunnerTests: XCTestCase {
     }
   }
 
+  func testFullPatchBridgeValidationAndPresetBounds() throws {
+    let patch = try NativeMediaBridge.metadataPatch(["patch": ["values": ["iso": 400, "exposureTime": 0.01, "model": "Phone"], "removals": ["software"]]])
+    XCTAssertTrue(patch.targetedKeys.contains("iso"))
+    XCTAssertThrowsError(try NativeMediaBridge.metadataPatch(["patch": ["values": ["iso": true], "removals": []]]))
+    XCTAssertThrowsError(try NativeMediaBridge.metadataPatch(["patch": ["values": ["unknownField": "x"], "removals": []]]))
+    XCTAssertThrowsError(try NativeMediaBridge.metadataPatch(["patch": ["values": ["model": "Phone"], "removals": ["model"]]]))
+    let preset: [String: Any] = ["schemaVersion": 1, "id": UUID().uuidString, "name": "Camera", "patch": ["values": ["iso": 200], "removals": []]]
+    XCTAssertNoThrow(try NativeSessionStore.validatePreset(preset))
+    var malformed = preset; malformed["name"] = ""
+    XCTAssertThrowsError(try NativeSessionStore.validatePreset(malformed))
+    XCTAssertThrowsError(try NativeSessionStore.validateEditorState(["presets": Array(repeating: 1, count: 501)]))
+    XCTAssertThrowsError(try NativeSessionStore.validateEditorState(["text": String(repeating: "a", count: 8193)]))
+    var nested: Any = "end"
+    for _ in 0..<14 { nested = ["child": nested] }
+    XCTAssertThrowsError(try NativeSessionStore.validateEditorState(nested))
+  }
+
+  func testEditorStateAndPresetExportPersistWithoutChangingSource() async throws {
+    let root = folder.appendingPathComponent("state", isDirectory: true)
+    let store = NativeSessionStore(root: root)
+    let state: [String: Any] = ["schemaVersion": 1, "presets": [], "queue": [["id": UUID().uuidString, "status": "pending"]]]
+    try await store.saveEditorState(state)
+    let restored = try await NativeSessionStore(root: root).loadEditorState()
+    XCTAssertEqual(restored["schemaVersion"] as? Int, 1)
+    XCTAssertEqual((restored["queue"] as? [[String: Any]])?.count, 1)
+    let preset: [String: Any] = ["schemaVersion": 1, "id": UUID().uuidString, "name": "My preset", "patch": ["values": ["iso": 320], "removals": []]]
+    let exported = try await store.presetExportURL(preset)
+    XCTAssertEqual(exported.lastPathComponent, "Metadata-Preset.json")
+    let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: exported)) as? [String: Any])
+    XCTAssertNoThrow(try NativeSessionStore.validatePreset(object))
+    try await store.clear()
+    XCTAssertFalse(FileManager.default.fileExists(atPath: exported.path))
+    let afterClear = try await store.loadEditorState()
+    XCTAssertEqual(afterClear["schemaVersion"] as? Int, 1, "Cleaning media should preserve saved settings")
+  }
+
+  func testFullMetadataProcessingFilenameRecoveryAndCloudOriginalVerification() async throws {
+    let provider = folder.appendingPathComponent("full-source.jpg")
+    try jpeg().write(to: provider)
+    let sourceHash = try WholeFileDigest.sha256(provider)
+    let root = folder.appendingPathComponent("full-pipeline", isDirectory: true)
+    let store = NativeSessionStore(root: root)
+    let source = try await store.importFile(provider)
+    let patch = MetadataPatch(values: ["make": .string("Apple"), "model": .string("iPhone 15 Pro Max"),
+      "lensModel": .string("Main camera"), "iso": .number(400), "exposureTime": .number(1.0 / 120),
+      "fNumber": .number(1.78), "focalLength": .number(6.765), "focalLength35mm": .number(24),
+      "latitude": .number(10), "longitude": .number(20)], removals: [])
+    let changed = try await store.processMetadata(sessionID: source.id, patch: patch)
+    let output = try XCTUnwrap(changed.processing)
+    XCTAssertNil(output.patch)
+    XCTAssertNotNil(output.metadataPatch)
+    let name = try XCTUnwrap(output.outputDisplayName)
+    XCTAssertNotNil(name.range(of: "^IMG_[0-9]{4}\\.JPG$", options: .regularExpression))
+    let exported = try await store.exportCopyURL(sessionID: source.id, processingID: output.id, acknowledgeIncomplete: true)
+    XCTAssertEqual(exported.lastPathComponent, name)
+    XCTAssertEqual(try WholeFileDigest.sha256(exported), output.outputSHA256)
+    let verification = try await store.verifyOriginal(sessionID: source.id, processingID: output.id, providerURL: exported)
+    XCTAssertEqual(verification["exactMatch"] as? Bool, true)
+    let different = try await store.verifyOriginal(sessionID: source.id, processingID: output.id, providerURL: provider)
+    XCTAssertEqual(different["exactMatch"] as? Bool, false)
+    let recovered = NativeSessionStore(root: root)
+    let recoveredExport = try await recovered.exportCopyURL(sessionID: source.id, processingID: output.id, acknowledgeIncomplete: true)
+    XCTAssertEqual(recoveredExport.lastPathComponent, name)
+    XCTAssertEqual(try WholeFileDigest.sha256(provider), sourceHash)
+    try await recovered.clear()
+    XCTAssertFalse(FileManager.default.fileExists(atPath: exported.path))
+    XCTAssertEqual(try WholeFileDigest.sha256(provider), sourceHash)
+  }
+
+  func testFilenameValidationRejectsTraversalAndInvalidExtensions() throws {
+    for name in ["../IMG_1234.JPG", "IMG_1234.EXE", "IMG_123.JPG", "IMG_1234.JPG/other", "output-uuid.jpg"] {
+      XCTAssertThrowsError(try NativeSessionStore.validateOutputDisplayName(name))
+    }
+    XCTAssertNoThrow(try NativeSessionStore.validateOutputDisplayName("IMG_4827.HEIC"))
+  }
+
+  func testReplacingExportedOutputsRemovesRetiredConsumerLinks() async throws {
+    let provider = folder.appendingPathComponent("history-source.jpg")
+    try jpeg().write(to: provider)
+    let root = folder.appendingPathComponent("history-links", isDirectory: true)
+    let store = NativeSessionStore(root: root)
+    let imported = try await store.importFile(provider)
+    var firstExport: URL?
+    for index in 0..<12 {
+      let changed = try await store.process(sessionID: imported.id, patch: CameraPatch(make: "Maker \(index)", model: "Model \(index)"))
+      let output = try XCTUnwrap(changed.processing)
+      let url = try await store.exportCopyURL(sessionID: imported.id, processingID: output.id, acknowledgeIncomplete: true)
+      if firstExport == nil { firstExport = url }
+    }
+    XCTAssertFalse(FileManager.default.fileExists(atPath: firstExport!.path), "Trimmed history retained a consumer hard link")
+    let exports = try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("Exports").path)
+    XCTAssertEqual(exports.count, 11, "Current output plus ten history outputs must bound consumer links")
+    let current = try await store.list()
+    XCTAssertEqual(current.first?.history.count, 10)
+  }
+
   private func persistedSession(root: URL, status: IntegrityStatus) throws -> NativeSession {
     let id = UUID(), processingID = UUID()
     let directory = root.appendingPathComponent(id.uuidString, isDirectory: true)

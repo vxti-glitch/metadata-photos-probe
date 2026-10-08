@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Portable tests of release architecture, identity and version validation."""
 import importlib.util
+import json
 from pathlib import Path
 import plistlib
 import struct
@@ -22,6 +23,11 @@ class EditorPackagingTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.app = Path(self.temporary.name) / "Runner.app"
         self.app.mkdir()
+        self.catalog_source = Path(self.temporary.name) / "editor/assets/camera_profiles.json"
+        self.catalog_packaged = self.app / "Frameworks/App.framework/flutter_assets/assets/camera_profiles.json"
+        self.catalog = {"schemaVersion": 1, "revision": "2026-10-08",
+                        "profiles": [{"id": "synthetic-camera", "cameras": [{"id": "main"}]}]}
+        self.write_catalog()
         self.info = {
             "CFBundleIdentifier": package.BUNDLE_ID, "CFBundleShortVersionString": "0.3.0",
             "CFBundleVersion": "4", "CFBundleExecutable": "Runner", "MinimumOSVersion": "17.0",
@@ -62,9 +68,16 @@ class EditorPackagingTests(unittest.TestCase):
         with (self.app / "Info.plist").open("wb") as stream:
             plistlib.dump(self.info, stream)
 
+    def write_catalog(self):
+        payload = (json.dumps(self.catalog) + "\n").encode("utf-8")
+        for location in (self.catalog_source, self.catalog_packaged):
+            location.parent.mkdir(parents=True, exist_ok=True)
+            location.write_bytes(payload)
+
     def inspect(self, signature=None):
         signature = signature or subprocess.CompletedProcess([], 1, "", "code object is not signed at all")
         with patch.object(package, "expected_version", return_value=("0.3.0", "4")), \
+                patch.object(package, "ROOT", Path(self.temporary.name)), \
                 patch.object(package.subprocess, "run", return_value=signature):
             return package.inspect_app(self.app)
 
@@ -74,6 +87,36 @@ class EditorPackagingTests(unittest.TestCase):
         self.assertFalse(result["provisioning_profile_embedded"])
         self.assertEqual(set(result["framework_binaries"]), {"app", "Flutter.framework", "App.framework"})
         self.assertEqual(len(result["framework_binaries"]["app"]["sha256"]), 64)
+        self.assertEqual(result["camera_catalog"]["profiles"], 1)
+        self.assertEqual(result["camera_catalog"]["cameras"], 1)
+        self.assertEqual(result["camera_catalog"]["sha256"], package.sha256(self.catalog_source))
+
+    def test_missing_or_stale_packaged_catalog_rejected(self):
+        self.catalog_packaged.unlink()
+        with self.assertRaisesRegex(ValueError, "catalog is missing"):
+            self.inspect()
+        self.write_catalog()
+        self.catalog_packaged.write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "catalog differs"):
+            self.inspect()
+
+    def test_empty_duplicate_and_unknown_catalogs_rejected(self):
+        for change, error in [({"profiles": []}, "profile list"),
+                              ({"schemaVersion": 99}, "schema"),
+                              ({"revision": ""}, "revision"),
+                              ({"profiles": [{"id": "duplicate", "cameras": [{}]}] * 2}, "duplicate")]:
+            with self.subTest(change=change):
+                original = dict(self.catalog)
+                self.catalog.update(change)
+                self.write_catalog()
+                with self.assertRaisesRegex(ValueError, error):
+                    self.inspect()
+                self.catalog = original
+
+    def test_oversized_catalog_rejected_before_reading(self):
+        self.catalog_packaged.write_bytes(b" " * (2 * 1024 * 1024 + 1))
+        with self.assertRaisesRegex(ValueError, "size bound"):
+            self.inspect()
 
     def test_simulator_framework_rejected(self):
         self.binaries[1].write_bytes(b"\xcf\xfa\xed\xfe" + struct.pack("<I", X64) + bytes(24))

@@ -1,15 +1,14 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 
 import 'app_brand.dart';
 import 'editor_controller.dart';
 import 'media_bridge.dart';
-import 'media_models.dart';
+
+import 'metadata_form.dart';
 
 const _background = Color(0xFF0E1115);
 const _surface = Color(0xFF191E25);
-const _accent = Color(0xFF84E4C7);
+const _accent = Color(0xFF9CB5FF);
 const _muted = Color(0xFF9BA6B4);
 
 class MetadataEditorApp extends StatelessWidget {
@@ -210,7 +209,7 @@ class _EditorHomeState extends State<EditorHome> {
                       ] else if (session == null)
                         _Projects(controller: controller)
                       else
-                        _SessionEditor(
+                        MetadataForm(
                           key: ValueKey(session.id),
                           controller: controller,
                           session: session,
@@ -312,7 +311,7 @@ class _Projects extends StatelessWidget {
             FilledButton.icon(
               key: const Key('importPhotos'),
               onPressed: controller.ready && !controller.busy
-                  ? () => controller.importMedia(photos: true)
+                  ? () => controller.importBatch(photos: true)
                   : null,
               icon: const Icon(Icons.photo_library_outlined),
               label: const Text('Import from Photos'),
@@ -321,7 +320,7 @@ class _Projects extends StatelessWidget {
             OutlinedButton.icon(
               key: const Key('importFiles'),
               onPressed: controller.ready && !controller.busy
-                  ? () => controller.importMedia(photos: false)
+                  ? () => controller.importBatch(photos: false)
                   : null,
               icon: const Icon(Icons.folder_open_rounded),
               label: const Text('Import from Files'),
@@ -372,6 +371,108 @@ class _Projects extends StatelessWidget {
         ],
       ),
       const SizedBox(height: 10),
+      if (controller.batchSelection.isNotEmpty) ...[
+        Text('${controller.batchSelection.length} selected'),
+        FilledButton(
+          onPressed: controller.busy
+              ? null
+              : () => showModalBottomSheet<void>(
+                  context: context,
+                  isScrollControlled: true,
+                  builder: (context) => SafeArea(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(20),
+                      child: MetadataForm(
+                        controller: controller,
+                        session: controller.sessions.firstWhere(
+                          (s) => controller.batchSelection.contains(s.id),
+                        ),
+                        batch: true,
+                      ),
+                    ),
+                  ),
+                ),
+          child: const Text('Edit selected files'),
+        ),
+        TextButton(
+          onPressed: controller.busy
+              ? null
+              : () async {
+                  final chosen = controller.sessions.where(
+                    (s) => controller.batchSelection.contains(s.id),
+                  );
+                  final needs = chosen.any(
+                    (s) => s.processing?.integrity.needsAcknowledgment ?? false,
+                  );
+                  var acknowledgment = false;
+                  if (needs) {
+                    acknowledgment =
+                        await showDialog<bool>(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            title: const Text('Export with limitations?'),
+                            content: SingleChildScrollView(
+                              child: Text(
+                                chosen
+                                    .expand(
+                                      (s) =>
+                                          s.processing?.integrity.limitations ??
+                                          <String>[],
+                                    )
+                                    .toSet()
+                                    .join('\n'),
+                              ),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context, false),
+                                child: const Text('Cancel'),
+                              ),
+                              TextButton(
+                                onPressed: () => Navigator.pop(context, true),
+                                child: const Text('Accept & export'),
+                              ),
+                            ],
+                          ),
+                        ) ??
+                        false;
+                    if (!acknowledgment) return;
+                  }
+                  await controller.exportSelectedBatch(
+                    acknowledgeIncomplete: acknowledgment,
+                  );
+                },
+          child: const Text('Export selected copies'),
+        ),
+      ],
+      if (controller.queue.isNotEmpty)
+        ExpansionTile(
+          title: Text(
+            'Batch: ${controller.queue.where((q) => q.status == "completed").length}/${controller.queue.length} ready',
+          ),
+          children: [
+            for (final item in controller.queue)
+              ListTile(
+                title: Text(
+                  controller.sessions
+                          .where((s) => s.id == item.sessionId)
+                          .firstOrNull
+                          ?.displayName ??
+                      'Local file',
+                ),
+                subtitle: Text(
+                  '${item.status}${item.message == null ? '' : ' · ${item.message}'}',
+                ),
+              ),
+            if (controller.queue.any(
+              (q) => q.status == 'failed' || q.status == 'interrupted',
+            ))
+              TextButton(
+                onPressed: controller.busy ? null : controller.retryBatch,
+                child: const Text('Retry unfinished files'),
+              ),
+          ],
+        ),
       if (controller.sessions.isEmpty)
         const _Panel(
           child: Column(
@@ -396,11 +497,12 @@ class _Projects extends StatelessWidget {
             child: ListTile(
               enabled: !controller.busy,
               onTap: () => controller.select(session),
-              leading: Icon(
-                session.inspection.kind.isImage
-                    ? Icons.image_outlined
-                    : Icons.videocam_outlined,
-                color: _accent,
+              leading: Checkbox(
+                value: controller.batchSelection.contains(session.id),
+                onChanged: controller.busy
+                    ? null
+                    : (value) =>
+                          controller.toggleBatch(session, value ?? false),
               ),
               title: Text(
                 session.displayName,
@@ -429,424 +531,6 @@ class _Projects extends StatelessWidget {
         ),
     ],
   );
-}
-
-class _SessionEditor extends StatefulWidget {
-  const _SessionEditor({
-    super.key,
-    required this.controller,
-    required this.session,
-  });
-  final EditorController controller;
-  final MediaSession session;
-  @override
-  State<_SessionEditor> createState() => _SessionEditorState();
-}
-
-class _SessionEditorState extends State<_SessionEditor> {
-  late final TextEditingController make;
-  late final TextEditingController model;
-  late final TextEditingController lens;
-  @override
-  void initState() {
-    super.initState();
-    final session = widget.session;
-    make = TextEditingController(
-      text:
-          session.processing?.patch.make ??
-          session.inspection.metadata['make'] ??
-          '',
-    );
-    model = TextEditingController(
-      text:
-          session.processing?.patch.model ??
-          session.inspection.metadata['model'] ??
-          '',
-    );
-    lens = TextEditingController(text: session.processing?.patch.lens ?? '');
-  }
-
-  @override
-  void dispose() {
-    make.dispose();
-    model.dispose();
-    lens.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final session = widget.session;
-    final controller = widget.controller;
-    final kind = session.inspection.kind;
-    final processing = session.processing;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text(
-          session.displayName,
-          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
-        const SizedBox(height: 6),
-        Text(
-          '${kind.label} · ${session.inspection.sizeLabel} · ${session.origin}',
-          style: const TextStyle(color: _muted),
-        ),
-        const SizedBox(height: 18),
-        if (session.previewPath != null) ...[
-          ClipRRect(
-            borderRadius: BorderRadius.circular(16),
-            child: Image.file(
-              File(session.previewPath!),
-              height: 180,
-              width: double.infinity,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stack) => const SizedBox.shrink(),
-            ),
-          ),
-          const SizedBox(height: 14),
-        ],
-        _Panel(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const _SectionTitle('01', 'Original inspection'),
-              const SizedBox(height: 12),
-              _MetadataRows(session.inspection.metadata),
-              if (session.inspection.location != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 10),
-                  child: Text(
-                    'Embedded location: ${session.inspection.location!["state"] ?? "inspected"}',
-                    style: const TextStyle(color: _muted, fontSize: 12),
-                  ),
-                ),
-              for (final note in session.notes)
-                Padding(
-                  padding: const EdgeInsets.only(top: 10),
-                  child: Text(
-                    note,
-                    style: const TextStyle(
-                      color: _muted,
-                      fontSize: 12,
-                      height: 1.4,
-                    ),
-                  ),
-                ),
-              ExpansionTile(
-                tilePadding: EdgeInsets.zero,
-                title: const Text(
-                  'All readable metadata',
-                  style: TextStyle(fontSize: 14),
-                ),
-                children: [
-                  _MetadataRows({
-                    ...session.inspection.structure,
-                    ...session.details,
-                  }),
-                  for (final note in session.inspection.notes)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: Text(
-                        note,
-                        style: const TextStyle(color: _muted, fontSize: 12),
-                      ),
-                    ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        _Panel(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const _SectionTitle('02', 'Edit camera information'),
-              const SizedBox(height: 8),
-              Text(
-                kind == MediaKind.heic
-                    ? 'HEIC camera changes use ASCII text. Existing image data and auxiliary items are checked.'
-                    : kind.isImage
-                    ? 'Change supported camera tags in a new copy.'
-                    : 'Video metadata support is provisional. Playback, audio and rotation still need device verification.',
-                style: const TextStyle(
-                  color: _muted,
-                  fontSize: 13,
-                  height: 1.4,
-                ),
-              ),
-              const SizedBox(height: 18),
-              TextField(
-                key: const Key('makeField'),
-                controller: make,
-                enabled: !controller.busy,
-                autocorrect: false,
-                textCapitalization: TextCapitalization.none,
-                decoration: const InputDecoration(
-                  labelText: 'Camera make',
-                  hintText: 'e.g. Apple',
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                key: const Key('modelField'),
-                controller: model,
-                enabled: !controller.busy,
-                autocorrect: false,
-                decoration: const InputDecoration(
-                  labelText: 'Camera model',
-                  hintText: 'e.g. iPhone 15 Pro Max',
-                ),
-              ),
-              if (kind.isImage &&
-                  (controller.capabilities?.editableFields.contains('lens') ??
-                      false)) ...[
-                const SizedBox(height: 12),
-                TextField(
-                  key: const Key('lensField'),
-                  controller: lens,
-                  enabled: !controller.busy,
-                  autocorrect: false,
-                  decoration: InputDecoration(
-                    labelText: 'Lens (optional)',
-                    hintText:
-                        session.inspection.metadata['lens'] ??
-                        'Leave blank to preserve the current lens',
-                    helperText: 'Blank preserves the original lens.',
-                  ),
-                ),
-              ],
-              const SizedBox(height: 18),
-              FilledButton.icon(
-                key: const Key('process'),
-                onPressed: controller.busy
-                    ? null
-                    : () {
-                        FocusScope.of(context).unfocus();
-                        controller.process(
-                          CameraPatch(
-                            make: make.text,
-                            model: model.text,
-                            lens: kind.isImage && lens.text.isNotEmpty
-                                ? lens.text
-                                : null,
-                          ),
-                        );
-                      },
-                icon: const Icon(Icons.tune_rounded),
-                label: const Text('Create processed copy'),
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                'No automatic Photos save or upload. The engine refuses layouts it cannot preserve safely.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: _muted, fontSize: 12, height: 1.4),
-              ),
-            ],
-          ),
-        ),
-        if (processing != null) ...[
-          const SizedBox(height: 16),
-          _ResultReview(controller: controller, processing: processing),
-        ],
-        const SizedBox(height: 20),
-        OutlinedButton.icon(
-          onPressed: controller.busy
-              ? null
-              : () async {
-                  final confirmed = await _confirm(
-                    context,
-                    'Remove local project?',
-                    'Delete copies held inside the app. Photos and provider originals stay unchanged.',
-                  );
-                  if (confirmed) await controller.delete(session);
-                },
-          icon: const Icon(Icons.delete_outline_rounded),
-          label: const Text('Remove app-owned copies'),
-        ),
-      ],
-    );
-  }
-}
-
-class _ResultReview extends StatelessWidget {
-  const _ResultReview({required this.controller, required this.processing});
-  final EditorController controller;
-  final Processing processing;
-  @override
-  Widget build(BuildContext context) {
-    final report = processing.integrity;
-    final color = report.hasMismatch
-        ? const Color(0xFFFF9A9A)
-        : report.needsAcknowledgment
-        ? const Color(0xFFF0CA80)
-        : _accent;
-    final title = report.hasMismatch
-        ? 'Export blocked'
-        : report.needsAcknowledgment
-        ? 'Checks passed with limitations'
-        : 'Preservation checks passed';
-    return _Panel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const _SectionTitle('03', 'Review the processed copy'),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              Icon(
-                report.hasMismatch
-                    ? Icons.error_outline
-                    : report.needsAcknowledgment
-                    ? Icons.info_outline
-                    : Icons.check_circle_outline,
-                color: color,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 17,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(
-            '${processing.inspection.kind.label} · ${processing.inspection.sizeLabel}',
-            style: const TextStyle(color: _muted),
-          ),
-          const SizedBox(height: 12),
-          _MetadataRows(processing.inspection.metadata),
-          const SizedBox(height: 10),
-          for (final check in report.checks)
-            ExpansionTile(
-              tilePadding: EdgeInsets.zero,
-              leading: Icon(
-                check.status == 'passed'
-                    ? Icons.check_rounded
-                    : check.status == 'failed'
-                    ? Icons.close_rounded
-                    : Icons.help_outline,
-                color: check.status == 'passed' ? _accent : color,
-                size: 20,
-              ),
-              title: Text(check.name, style: const TextStyle(fontSize: 13)),
-              subtitle: Text(
-                check.status == 'notChecked' ? 'Not qualified' : check.status,
-                style: const TextStyle(fontSize: 11, color: _muted),
-              ),
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 14),
-                  child: Text(
-                    check.detail,
-                    style: const TextStyle(
-                      color: _muted,
-                      fontSize: 13,
-                      height: 1.4,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          for (final limitation in report.limitations)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Text(
-                '• $limitation',
-                style: TextStyle(color: color, fontSize: 13, height: 1.4),
-              ),
-            ),
-          if (report.needsAcknowledgment && !report.hasMismatch)
-            CheckboxListTile(
-              key: const Key('acknowledge'),
-              contentPadding: EdgeInsets.zero,
-              controlAffinity: ListTileControlAffinity.leading,
-              value: controller.acknowledged,
-              onChanged: controller.busy
-                  ? null
-                  : (value) => controller.acknowledge(value ?? false),
-              title: const Text(
-                'I reviewed the limitations for this copy',
-                style: TextStyle(fontSize: 13),
-              ),
-            ),
-          const SizedBox(height: 12),
-          FilledButton.icon(
-            key: const Key('exportFiles'),
-            onPressed: controller.canExport ? controller.exportFiles : null,
-            icon: const Icon(Icons.ios_share_rounded),
-            label: const Text('Save processed copy to Files'),
-          ),
-          const SizedBox(height: 16),
-          const _WorkflowNote(),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            key: const Key('openICloud'),
-            onPressed: controller.busy ? null : controller.openICloud,
-            icon: const Icon(Icons.open_in_browser_rounded),
-            label: const Text('Open iCloud Photos'),
-          ),
-          const SizedBox(height: 10),
-          const Text(
-            'A Files export does not confirm an upload, Photos display, or absence of a source label. Check the synced result in Photos.',
-            style: TextStyle(fontSize: 12, color: _muted, height: 1.4),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MetadataRows extends StatelessWidget {
-  const _MetadataRows(this.values);
-  final Map<String, String> values;
-  @override
-  Widget build(BuildContext context) {
-    if (values.isEmpty) {
-      return const Text(
-        'No readable camera fields reported.',
-        style: TextStyle(color: _muted, fontSize: 13),
-      );
-    }
-    final entries = values.entries.toList()
-      ..sort((a, b) => a.key.compareTo(b.key));
-    return Column(
-      children: [
-        for (final entry in entries)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 5),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(
-                  width: 100,
-                  child: Text(
-                    entry.key,
-                    style: const TextStyle(color: _muted, fontSize: 12),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: SelectableText(
-                    entry.value,
-                    style: const TextStyle(fontSize: 13, height: 1.3),
-                  ),
-                ),
-              ],
-            ),
-          ),
-      ],
-    );
-  }
 }
 
 class _Panel extends StatelessWidget {
@@ -1032,7 +716,7 @@ void _showAbout(BuildContext context) => showDialog<void>(
         '0.3.0 · First editing milestone\n\nFlutter interface · Swift media engine\n\n'
         'Image camera changes have physical-device evidence on tested JPEG and HEIC samples. Video camera editing remains provisional. '
         'Files → Safari/iCloud → Photos is the selected workflow. Direct Photos saving without attribution is not established.\n\n'
-        'Only make, model and image lens are editable in this milestone. Presets, randomization, bulk processing and broader metadata editing come later. '
+        'Manual metadata editing, camera profiles, saved presets and batch processing run locally. Supported fields depend on the source format. '
         'Live Photo conversion and video editing are outside scope.\n\n'
         'Media and metadata stay local. Nothing is uploaded automatically.',
       ),

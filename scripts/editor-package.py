@@ -101,6 +101,42 @@ def expected_version():
     return match.groups()
 
 
+def inspect_camera_catalog(app):
+    """Require the shipped consumer catalog to match reviewed source, not a stale cache."""
+    source = ROOT / "editor/assets/camera_profiles.json"
+    packaged = app / "Frameworks/App.framework/flutter_assets/assets/camera_profiles.json"
+    for location in (source, packaged):
+        if location.is_symlink() or not location.is_file():
+            raise ValueError("Camera profile catalog is missing or is a symbolic link.")
+        if not 1 <= location.stat().st_size <= 2 * 1024 * 1024:
+            raise ValueError("Camera profile catalog exceeds its release size bound.")
+    source_hash = sha256(source)
+    if sha256(packaged) != source_hash:
+        raise ValueError("Packaged camera profile catalog differs from committed source.")
+    catalog = json.loads(source.read_text(encoding="utf-8"))
+    if not isinstance(catalog, dict) or catalog.get("schemaVersion") != 1:
+        raise ValueError("Unsupported camera profile catalog schema.")
+    profiles = catalog.get("profiles")
+    revision = catalog.get("revision")
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", revision):
+        raise ValueError("Camera profile catalog must declare its reviewed revision.")
+    if not isinstance(profiles, list) or not 1 <= len(profiles) <= 1000:
+        raise ValueError("Camera profile catalog has no qualified bounded profile list.")
+    identifiers = set()
+    camera_count = 0
+    for profile in profiles:
+        if not isinstance(profile, dict) or not isinstance(profile.get("id"), str):
+            raise ValueError("Camera profile catalog contains an invalid profile.")
+        identifier = profile["id"]
+        cameras = profile.get("cameras")
+        if not identifier or identifier in identifiers or not isinstance(cameras, list) or not 1 <= len(cameras) <= 16:
+            raise ValueError("Camera profile catalog has duplicate identifiers or invalid cameras.")
+        identifiers.add(identifier)
+        camera_count += len(cameras)
+    return {"schema_version": 1, "revision": revision, "profiles": len(profiles),
+            "cameras": camera_count, "bytes": source.stat().st_size, "sha256": source_hash}
+
+
 def macho_device_platform(path):
     """Reject ARM64 simulator binaries, which have the same CPU type as device binaries."""
     slices = macho_slices(path)
@@ -193,6 +229,7 @@ def inspect_app(app):
     # Apple toolchains may generate ad-hoc signatures. An identity/profile must not be injected.
     if "Authority=" in signature_text or re.search(r"TeamIdentifier=(?!not set)[^\s]+", signature_text):
         raise ValueError("An identity-signed app was produced in the unsigned build path.")
+    camera_catalog = inspect_camera_catalog(app)
     return {
         "bundle_identifier": info["CFBundleIdentifier"], "version": version, "build_number": build,
         "display_name": info["CFBundleDisplayName"], "bundle_name": info["CFBundleName"],
@@ -201,6 +238,7 @@ def inspect_app(app):
         "xcode_build": info.get("DTXcodeBuild"), "framework_binaries": binaries,
         "app_signature": "ad-hoc; must re-sign for device" if signature.returncode == 0 else "unsigned",
         "provisioning_profile_embedded": False,
+        "camera_catalog": camera_catalog,
     }
 
 

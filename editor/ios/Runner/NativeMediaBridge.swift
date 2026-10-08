@@ -54,8 +54,10 @@ final class NativeMediaBridge: NSObject {
         do {
             switch call.method {
             case "capabilities":
-                result(["protocolVersion": 1, "formats": ["jpeg", "heic", "mp4", "mov"],
-                        "editableFields": ["make", "model", "lens"], "videoStatus": "provisional"])
+                let fields = Dictionary(uniqueKeysWithValues: MediaKind.allCases.map { ($0.rawValue, MetadataPatch.supportedKeys(for: $0).sorted()) })
+                result(["protocolVersion": 1, "formats": MediaKind.allCases.map(\.rawValue),
+                        "editableFields": Array(Set(fields.values.flatMap { $0 })).sorted(),
+                        "editableFieldsByFormat": fields, "videoStatus": "device-validation-required"])
             case "listSessions":
                 Task {
                     do { result(try await store.bridgeList()) }
@@ -63,6 +65,41 @@ final class NativeMediaBridge: NSObject {
                 }
             case "importFiles": try presentFiles(result: result)
             case "importPhotos": try presentPhotos(result: result)
+            case "importFilesBatch": try presentFiles(result: result, batch: true)
+            case "importPhotosBatch": try presentPhotos(result: result, batch: true)
+            case "loadEditorState":
+                Task { do { result(try await store.loadEditorState()) } catch { result(Self.flutterError(error)) } }
+            case "saveEditorState":
+                let arguments = try Self.arguments(call.arguments)
+                guard let state = arguments["state"] as? [String: Any] else { throw NativeMediaError.invalidArgument }
+                try NativeSessionStore.validateEditorState(state)
+                try perform(result: result) { try await self.store.saveEditorState(state); return nil }
+            case "importPreset": try presentPresetImport(result: result)
+            case "exportPreset":
+                let arguments = try Self.arguments(call.arguments)
+                guard let preset = arguments["preset"] as? [String: Any] else { throw NativeMediaError.invalidArgument }
+                try NativeSessionStore.validatePreset(preset)
+                let token = try start(result)
+                task = Task {
+                    do {
+                        let url = try await store.presetExportURL(preset)
+                        try Task.checkCancellation()
+                        try presentExport(urls: [url], token: token); task = nil
+                    } catch { finish(token, value: Self.flutterError(error)) }
+                }
+            case "processMetadata":
+                let arguments = try Self.arguments(call.arguments)
+                let id = try Self.identifier(arguments, "sessionId")
+                let patch = try Self.metadataPatch(arguments)
+                try perform(result: result) {
+                    let session = try await self.store.processMetadata(sessionID: id, patch: patch)
+                    return try await self.store.bridgeMap(session)
+                }
+            case "verifyOriginal":
+                let arguments = try Self.arguments(call.arguments)
+                let id = try Self.identifier(arguments, "sessionId")
+                let processingID = try Self.identifier(arguments, "processingId")
+                try presentVerification(sessionID: id, processingID: processingID, result: result)
             case "process":
                 let arguments = try Self.arguments(call.arguments)
                 let id = try Self.identifier(arguments, "sessionId")
@@ -81,11 +118,34 @@ final class NativeMediaBridge: NSObject {
                 let token = try start(result)
                 task = Task {
                     do {
-                        let url = try await store.exportURL(sessionID: id, processingID: processingID, acknowledgeIncomplete: acknowledgement)
+                        let url = try await store.exportCopyURL(sessionID: id, processingID: processingID, acknowledgeIncomplete: acknowledgement)
                         try Task.checkCancellation()
                         guard gate.isCurrent(token), !gate.canceled else { throw NativeMediaError.canceled }
-                        try presentExport(url: url, token: token)
+                        try presentExport(urls: [url], token: token)
                         task = nil
+                    } catch { finish(token, value: Self.flutterError(error)) }
+                }
+            case "exportFilesBatch":
+                let arguments = try Self.arguments(call.arguments)
+                guard let items = arguments["items"] as? [[String: Any]], !items.isEmpty, items.count <= 100 else { throw NativeMediaError.invalidArgument }
+                let parsed = try items.map { item -> (UUID, UUID, Bool) in
+                    let id = try Self.identifier(item, "sessionId"), output = try Self.identifier(item, "processingId")
+                    guard let raw = item["acknowledgeIncomplete"] as? NSNumber,
+                          CFGetTypeID(raw) == CFBooleanGetTypeID() else { throw NativeMediaError.invalidArgument }
+                    return (id, output, raw.boolValue)
+                }
+                guard Set(parsed.map { $0.0 }).count == parsed.count else { throw NativeMediaError.invalidArgument }
+                let token = try start(result)
+                task = Task {
+                    do {
+                        var urls: [URL] = []
+                        for (id, output, acknowledgment) in parsed {
+                            try Task.checkCancellation()
+                            urls.append(try await store.exportCopyURL(sessionID: id, processingID: output, acknowledgeIncomplete: acknowledgment))
+                        }
+                        try Task.checkCancellation()
+                        guard gate.isCurrent(token), !gate.canceled else { throw NativeMediaError.canceled }
+                        try presentExport(urls: urls, token: token); task = nil
                     } catch { finish(token, value: Self.flutterError(error)) }
                 }
             case "cancel":
@@ -145,32 +205,47 @@ final class NativeMediaBridge: NSObject {
         return controller
     }
 
-    private func presentFiles(result: @escaping FlutterResult) throws {
+    private func presentFiles(result: @escaping FlutterResult, batch: Bool = false) throws {
         let controller = try presenter()
         let token = try start(result)
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.jpeg, .heic, .mpeg4Movie, .quickTimeMovie], asCopy: false)
-        picker.allowsMultipleSelection = false
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.jpeg, .heic, .png, .mpeg4Movie, .quickTimeMovie], asCopy: false)
+        picker.allowsMultipleSelection = batch
         let delegate = NativePickerDelegate(token: token)
         delegate.onFiles = { [weak self, weak picker] token, urls in
             guard let self, self.gate.isCurrent(token), !self.gate.canceled else { return }
-            guard urls.count == 1 else { self.finish(token, value: Self.flutterError(NativeMediaError.invalidArgument)); return }
+            guard !urls.isEmpty, urls.count <= (batch ? 50 : 1) else { self.finish(token, value: Self.flutterError(NativeMediaError.unsupported("Select up to 50 files per import."))); return }
             picker?.dismiss(animated: true)
             self.presentedPicker = nil
             self.task = Task {
                 do {
+                    if batch {
+                        var sessions: [[String: Any]] = [], errors: [[String: String]] = []
+                        for url in urls {
+                            if Task.isCancelled || self.gate.canceled { break }
+                            do {
+                                let session = try await self.store.importFile(url)
+                                sessions.append(try await self.store.bridgeMap(session))
+                            } catch {
+                                if error is CancellationError { break }
+                                errors.append(["name": String(url.lastPathComponent.prefix(256)), "message": Self.flutterError(error).message ?? "Import failed."])
+                            }
+                        }
+                        self.finish(token, value: ["sessions": sessions, "errors": errors, "canceled": Task.isCancelled || self.gate.canceled])
+                        return
+                    }
                     let session = try await self.store.importFile(urls[0])
                     self.finish(token, value: try await self.store.bridgeMap(session))
                 } catch { self.finish(token, value: Self.flutterError(error)) }
             }
         }
-        delegate.onCancel = { [weak self] token in self?.finish(token, value: nil) }
+        delegate.onCancel = { [weak self] token in self?.finish(token, value: batch ? ["sessions": [], "errors": [], "canceled": true] : nil) }
         picker.delegate = delegate; pickerDelegate = delegate; presentedPicker = picker
         picker.presentationController?.delegate = delegate
         controller.present(picker, animated: true)
         picker.presentationController?.delegate = delegate
     }
 
-    private func presentPhotos(result: @escaping FlutterResult) throws {
+    private func presentPhotos(result: @escaping FlutterResult, batch: Bool = false) throws {
         _ = try presenter()
         let token = try start(result)
         task = Task {
@@ -180,7 +255,8 @@ final class NativeMediaBridge: NSObject {
                 try Task.checkCancellation()
                 guard authorization == .authorized || authorization == .limited else { throw NativeMediaError.permission }
                 var configuration = PHPickerConfiguration(photoLibrary: .shared())
-                configuration.selectionLimit = 1
+                configuration.selectionLimit = batch ? 50 : 1
+                configuration.selection = .ordered
                 configuration.filter = .any(of: [.images, .videos])
                 configuration.preferredAssetRepresentationMode = .current
                 let picker = PHPickerViewController(configuration: configuration)
@@ -188,6 +264,24 @@ final class NativeMediaBridge: NSObject {
                 delegate.onPhotos = { [weak self, weak picker] token, results in
                     guard let self, self.gate.isCurrent(token), !self.gate.canceled else { return }
                     picker?.dismiss(animated: true); self.presentedPicker = nil
+                    if batch {
+                        self.task = Task {
+                            var sessions: [[String: Any]] = [], errors: [[String: String]] = []
+                            for selected in results {
+                                if Task.isCancelled || self.gate.canceled { break }
+                                do {
+                                    let resource = try Self.originalResource(selected)
+                                    let session = try await self.store.importPhotoResource(resource)
+                                    sessions.append(try await self.store.bridgeMap(session))
+                                } catch {
+                                    if error is CancellationError { break }
+                                    errors.append(["name": "Selected Photos item", "message": Self.flutterError(error).message ?? "Import failed."])
+                                }
+                            }
+                            self.finish(token, value: ["sessions": sessions, "errors": errors, "canceled": results.isEmpty || Task.isCancelled || self.gate.canceled])
+                        }
+                        return
+                    }
                     guard !results.isEmpty else { self.finish(token, value: nil); return }
                     guard results.count == 1, let identifier = results[0].assetIdentifier,
                           let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject else {
@@ -208,7 +302,7 @@ final class NativeMediaBridge: NSObject {
                         } catch { self.finish(token, value: Self.flutterError(error)) }
                     }
                 }
-                delegate.onCancel = { [weak self] token in self?.finish(token, value: nil) }
+                delegate.onCancel = { [weak self] token in self?.finish(token, value: batch ? ["sessions": [], "errors": [], "canceled": true] : nil) }
                 picker.delegate = delegate
                 pickerDelegate = delegate; presentedPicker = picker
                 try presenter().present(picker, animated: true)
@@ -218,9 +312,9 @@ final class NativeMediaBridge: NSObject {
         }
     }
 
-    private func presentExport(url: URL, token: UUID) throws {
+    private func presentExport(urls: [URL], token: UUID) throws {
         let controller = try presenter()
-        let picker = UIDocumentPickerViewController(forExporting: [url], asCopy: true)
+        let picker = UIDocumentPickerViewController(forExporting: urls, asCopy: true)
         let delegate = NativePickerDelegate(token: token)
         delegate.onFiles = { [weak self] token, urls in
             guard let self, self.gate.isCurrent(token) else { return }
@@ -235,6 +329,73 @@ final class NativeMediaBridge: NSObject {
     static func arguments(_ value: Any?) throws -> [String: Any] {
         guard let map = value as? [String: Any] else { throw NativeMediaError.invalidArgument }
         return map
+    }
+
+    static func metadataPatch(_ arguments: [String: Any]) throws -> MetadataPatch {
+        guard let map = arguments["patch"] as? [String: Any],
+              Set(map.keys) == Set(["values", "removals"]) else { throw NativeMediaError.invalidArgument }
+        let data = try JSONSerialization.data(withJSONObject: map)
+        guard data.count <= 16_384 else { throw NativeMediaError.invalidArgument }
+        let patch = try JSONDecoder().decode(MetadataPatch.self, from: data)
+        try patch.validate()
+        return patch
+    }
+
+    private static func originalResource(_ selected: PHPickerResult) throws -> PHAssetResource {
+        guard let identifier = selected.assetIdentifier,
+              let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject else { throw NativeMediaError.permission }
+        guard !asset.mediaSubtypes.contains(.photoLive) else { throw NativeMediaError.unsupported("Live Photos are outside this editor's scope. Choose a still image with Live turned off.") }
+        guard asset.mediaType == .image || asset.mediaType == .video else { throw NativeMediaError.unsupported("Choose a photo or video.") }
+        let type: PHAssetResourceType = asset.mediaType == .video ? .video : .photo
+        let resources = PHAssetResource.assetResources(for: asset).filter { $0.type == type }
+        guard resources.count == 1, let resource = resources.first else { throw NativeMediaError.unsupported("A unique original Photos resource is required.") }
+        return resource
+    }
+
+    private func presentPresetImport(result: @escaping FlutterResult) throws {
+        try presentSingleFile(types: [.json], result: result) { url in
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            var coordinationError: NSError?, readError: Error?, preset: [String: Any]?
+            NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinationError) { selected in
+                do {
+                    try NativeSessionStore.requireRegularFile(selected, maximumBytes: 32_768)
+                    guard let parsed = try JSONSerialization.jsonObject(with: Data(contentsOf: selected)) as? [String: Any] else { throw NativeMediaError.invalidArgument }
+                    try NativeSessionStore.validatePreset(parsed); preset = parsed
+                } catch { readError = error }
+            }
+            guard coordinationError == nil, readError == nil, let preset else { throw NativeMediaError.invalidArgument }
+            try Task.checkCancellation()
+            return preset
+        }
+    }
+
+    private func presentVerification(sessionID: UUID, processingID: UUID, result: @escaping FlutterResult) throws {
+        try presentSingleFile(types: [.jpeg, .heic, .png, .mpeg4Movie, .quickTimeMovie], result: result) { url in
+            try await self.store.verifyOriginal(sessionID: sessionID, processingID: processingID, providerURL: url)
+        }
+    }
+
+    private func presentSingleFile(types: [UTType], result: @escaping FlutterResult,
+                                   operation: @escaping @MainActor (URL) async throws -> Any?) throws {
+        let controller = try presenter(), token = try start(result)
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: false)
+        picker.allowsMultipleSelection = false
+        let delegate = NativePickerDelegate(token: token)
+        delegate.onFiles = { [weak self, weak picker] token, urls in
+            guard let self, self.gate.isCurrent(token), !self.gate.canceled else { return }
+            picker?.dismiss(animated: true); self.presentedPicker = nil
+            guard urls.count == 1 else { self.finish(token, value: Self.flutterError(NativeMediaError.invalidArgument)); return }
+            self.task = Task {
+                do {
+                    let value = try await operation(urls[0]); try Task.checkCancellation()
+                    self.finish(token, value: value)
+                } catch { self.finish(token, value: Self.flutterError(error)) }
+            }
+        }
+        delegate.onCancel = { [weak self] token in self?.finish(token, value: nil) }
+        picker.delegate = delegate; pickerDelegate = delegate; presentedPicker = picker
+        controller.present(picker, animated: true); picker.presentationController?.delegate = delegate
     }
 
     static func identifier(_ map: [String: Any], _ key: String) throws -> UUID {

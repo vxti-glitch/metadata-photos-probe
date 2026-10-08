@@ -34,6 +34,29 @@ public enum HEICMetadataWriter {
 
     public static func write(source: URL, output: URL, patch: CameraPatch) throws {
         try patch.validate()
+        try rewrite(source: source, output: output, scrubRetired: false) { try HEICTIFFEditor.patch($0, camera: patch) }
+    }
+    public static func write(source: URL, output: URL, patch: MetadataPatch) throws {
+        try patch.validate()
+        if !patch.removals.isEmpty, try HEICContainer(source).hasAlternativeMetadata { throw ProbeError.unsupported("Selected removal is refused because another HEIC metadata item may contain duplicate fields") }
+        try rewrite(source: source, output: output, scrubRetired: true) { item in
+            let prefix = try exifPrefix(item)
+            return Data(item.prefix(prefix)) + (try ExifMetadataEditor.patch(Data(item.dropFirst(prefix)), patch: patch))
+        }
+    }
+    static func exif(_ url: URL) throws -> Data {
+        let parsed = try HEICContainer(url), extent = parsed.exif.extents[0]
+        guard extent.length <= UInt64(HEICContainer.metadataLimit) else { throw ProbeError.unsupported("HEIC EXIF budget") }
+        let item = try parsed.read(offset: extent.absolute, count: Int(extent.length))
+        return Data(item.dropFirst(try exifPrefix(item)))
+    }
+    private static func exifPrefix(_ item: Data) throws -> Int {
+        guard item.count >= 12 else { throw ProbeError.malformed("Short HEIF EXIF") }
+        let offset = try integer(item, at: 0, width: 4)
+        guard offset <= UInt64(item.count - 12) else { throw ProbeError.malformed("HEIF EXIF prefix") }
+        return 4 + Int(offset)
+    }
+    private static func rewrite(source: URL, output: URL, scrubRetired: Bool, transform: (Data) throws -> Data) throws {
         guard source.standardizedFileURL.resolvingSymlinksInPath() != output.standardizedFileURL.resolvingSymlinksInPath() else { throw ProbeError.sameFile }
         guard !FileManager.default.fileExists(atPath: output.path) else { throw ProbeError.outputExists }
         let parsed = try HEICContainer(source)
@@ -41,7 +64,7 @@ public enum HEICMetadataWriter {
         let oldExtent = parsed.exif.extents[0]
         guard oldExtent.length <= UInt64(HEICContainer.metadataLimit) else { throw ProbeError.unsupported("Exif item exceeds 16 MiB") }
         let original = try parsed.read(offset: oldExtent.absolute, count: Int(oldExtent.length))
-        let changed = try HEICTIFFEditor.patch(original, camera: patch)
+        let changed = try transform(original)
         guard changed.count <= HEICContainer.metadataLimit else { throw ProbeError.unsupported("Patched Exif exceeds 16 MiB") }
         let payloadOffset = try checkedAdd(parsed.fileSize, 8)
         var meta = parsed.meta
@@ -69,6 +92,12 @@ public enum HEICMetadataWriter {
             try storeInteger(UInt64(changed.count + 8), width: 4, at: 0, in: &header, little: false)
             header.replaceSubrange(4..<8, with: Data("mdat".utf8))
             try destination.write(contentsOf: header); try destination.write(contentsOf: changed)
+            if scrubRetired {
+                // Old item is unreferenced after iloc retargeting. Zero it so a
+                // selected removal is not recoverable in obsolete EXIF bytes.
+                try destination.seek(toOffset: oldExtent.absolute)
+                try destination.write(contentsOf: Data(repeating: 0, count: Int(oldExtent.length)))
+            }
             try destination.seek(toOffset: parsed.metaOffset); try destination.write(contentsOf: meta)
             try destination.synchronize()
         }
@@ -115,6 +144,7 @@ private final class HEICContainer {
     let locations: [HEICLocation]
     let exif: HEICLocation
     let sharedToneMapExif: Bool
+    let hasAlternativeMetadata: Bool
 
     static func size(_ url: URL) throws -> UInt64 {
         let values = try FileManager.default.attributesOfItem(atPath: url.path)
@@ -160,6 +190,7 @@ private final class HEICContainer {
         let primaryVersion = try primary.fullBoxVersion(allowed: [0, 1])
         primaryID = UInt32(try primary.number(primaryVersion == 0 ? 2 : 4)); try primary.finish()
         let info = try itemInfo(meta, box: iinf)
+        hasAlternativeMetadata = info.values.contains { ["mime", "uri "].contains($0) }
         guard ["hvc1", "grid"].contains(info[primaryID] ?? "") else { throw ProbeError.unsupported("Unsupported primary HEIC item type") }
         let exifIDs = info.filter { $0.value == "Exif" }.map(\.key)
         guard exifIDs.count == 1 else { throw ProbeError.unsupported("An existing unique Exif item is required; no implicit item creation") }

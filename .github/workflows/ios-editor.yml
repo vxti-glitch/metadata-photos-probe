@@ -5,8 +5,8 @@ on:
     branches: ["**"]
     paths:
       - 'editor/**'
-      - 'Sources/ProbeCore/**'
-      - 'Tests/ProbeCoreTests/**'
+      - 'Sources/**'
+      - 'Tests/**'
       - 'Package.swift'
       - 'scripts/editor-*'
       - 'scripts/build-editor-macos.sh'
@@ -14,8 +14,8 @@ on:
   pull_request:
     paths:
       - 'editor/**'
-      - 'Sources/ProbeCore/**'
-      - 'Tests/ProbeCoreTests/**'
+      - 'Sources/**'
+      - 'Tests/**'
       - 'Package.swift'
       - 'scripts/editor-*'
       - 'scripts/build-editor-macos.sh'

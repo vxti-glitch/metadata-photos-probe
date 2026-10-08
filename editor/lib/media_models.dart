@@ -1,12 +1,15 @@
 import 'dart:convert';
 
+import 'metadata_patch.dart';
+
 enum MediaKind {
   jpeg,
   heic,
+  png,
   mp4,
   mov;
 
-  bool get isImage => this == jpeg || this == heic;
+  bool get isImage => this == jpeg || this == heic || this == png;
   String get label => name.toUpperCase();
 }
 
@@ -186,16 +189,22 @@ class Processing {
     required this.patch,
     required this.inspection,
     required this.integrity,
+    this.metadataPatch,
+    this.outputDisplayName,
   });
   final String id;
   final DateTime createdAt;
   final CameraPatch patch;
+  final MetadataPatch? metadataPatch;
+  final String? outputDisplayName;
   final MediaInspection inspection;
   final IntegrityReport integrity;
   factory Processing.decode(Object? data) {
     final value = objectMap(data);
     final patch = objectMap(value['patch']);
-    final lens = patch['lens'];
+    final isFull = patch.containsKey('values');
+    final fullPatch = isFull ? MetadataPatch.decode(patch) : null;
+    final lens = isFull ? fullPatch!.values['lensModel'] : patch['lens'];
     if (lens != null && lens is! String) {
       throw const FormatException('Invalid lens.');
     }
@@ -203,10 +212,16 @@ class Processing {
       id: identifier(value, 'id'),
       createdAt: timestamp(value, 'createdAt'),
       patch: CameraPatch(
-        make: requiredString(patch, 'make'),
-        model: requiredString(patch, 'model'),
+        make: isFull
+            ? (fullPatch!.values['make']?.toString() ?? '')
+            : requiredString(patch, 'make'),
+        model: isFull
+            ? (fullPatch!.values['model']?.toString() ?? '')
+            : requiredString(patch, 'model'),
         lens: lens as String?,
       ),
+      metadataPatch: fullPatch,
+      outputDisplayName: value['outputDisplayName'] as String?,
       inspection: MediaInspection.decode(value['outputInspection']),
       integrity: IntegrityReport.decode(value['integrity']),
     );
@@ -274,13 +289,21 @@ class MediaSession {
 }
 
 class MediaCapabilities {
-  const MediaCapabilities(this.formats, this.editableFields, this.videoStatus);
+  const MediaCapabilities(
+    this.formats,
+    this.editableFields,
+    this.videoStatus, [
+    this.fieldsByFormat = const {},
+  ]);
   final List<String> formats;
   final List<String> editableFields;
   final String videoStatus;
+  final Map<String, List<String>> fieldsByFormat;
+  Set<String> fieldsFor(MediaKind kind) =>
+      (fieldsByFormat[kind.name] ?? editableFields).toSet();
   factory MediaCapabilities.decode(Object? data) {
     final value = objectMap(data);
-    if (value['protocolVersion'] != 1) {
+    if (![1, 2].contains(value['protocolVersion'])) {
       throw const FormatException(
         'This app and its media engine are incompatible.',
       );
@@ -298,6 +321,10 @@ class MediaCapabilities {
       formats,
       fields,
       requiredString(value, 'videoStatus'),
+      value['editableFieldsByFormat'] == null
+          ? const {}
+          : objectMap(value['editableFieldsByFormat'])
+                .map((key, value) => MapEntry(key, strings(value))),
     );
   }
 }

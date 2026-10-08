@@ -1,8 +1,8 @@
 import Foundation
 
 public enum MediaKind: String, Codable, CaseIterable, Sendable {
-    case jpeg, heic, mp4, mov
-    public var isImage: Bool { self == .jpeg || self == .heic }
+    case jpeg, heic, png, mp4, mov
+    public var isImage: Bool { self == .jpeg || self == .heic || self == .png }
 }
 
 public struct CameraPatch: Codable, Sendable {

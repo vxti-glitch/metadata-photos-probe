@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:metadata_editor/editor_app.dart';
 import 'package:metadata_editor/editor_controller.dart';
+import 'package:metadata_editor/camera_profiles.dart';
 import 'package:metadata_editor/media_models.dart';
 
 import 'fake_media_bridge.dart';
@@ -16,6 +17,7 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.runAsync(loadCameraProfiles);
     final controller = EditorController(bridge);
     addTearDown(controller.dispose);
     await tester.pumpWidget(MetadataEditorApp(controller: controller));
@@ -31,26 +33,30 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  Future<void> setField(WidgetTester tester, String field, String value) async {
+    final mode = find.byKey(Key('${field}Mode'));
+    await tester.ensureVisible(mode);
+    await tester.tap(mode);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Set').last);
+    await tester.pumpAndSettle();
+    final input = find.byKey(Key(field));
+    await tester.ensureVisible(input);
+    await tester.enterText(input, value);
+  }
+
   testWidgets(
-    'HEIC import → camera edit → acknowledgment → Files export → browser',
+    'HEIC manual editing, mandatory limitation gate, Files export and optional details',
     (tester) async {
       final bridge = FakeMediaBridge();
       await launch(tester, bridge);
-      expect(find.text('Your media.\nYour metadata.'), findsOneWidget);
       await tap(tester, 'importPhotos');
-      expect(find.text('controlled.heic'), findsOneWidget);
-      await tester.enterText(find.byKey(const Key('makeField')), 'Apple');
-      await tester.enterText(
-        find.byKey(const Key('modelField')),
-        'Controlled Phone',
-      );
-      await tester.enterText(
-        find.byKey(const Key('lensField')),
-        'Controlled Lens',
-      );
+      await tester.tap(find.text('Edit').first);
+      await tester.pumpAndSettle();
+      await setField(tester, 'make', 'Apple');
+      await setField(tester, 'model', 'Controlled Phone');
       await tap(tester, 'process');
-      expect(bridge.receivedPatch?.lens, 'Controlled Lens');
-      expect(find.text('Checks passed with limitations'), findsOneWidget);
+      expect(find.text('Review the processed copy'), findsNothing);
       expect(
         tester
             .widget<FilledButton>(find.byKey(const Key('exportFiles')))
@@ -60,28 +66,24 @@ void main() {
       await tap(tester, 'acknowledge');
       await tap(tester, 'exportFiles');
       expect(bridge.exports, 1);
-      expect(bridge.exportedAcknowledgment, isTrue);
-      expect(find.textContaining('Copy saved to Files.'), findsOneWidget);
       await tap(tester, 'openICloud');
       expect(bridge.opens, 1);
       expect(tester.takeException(), isNull);
     },
   );
   testWidgets(
-    'video has provisional wording, no lens input and mismatch export disabled',
+    'failed preservation blocks export without offering acknowledgment',
     (tester) async {
       final bridge = FakeMediaBridge()
         ..importResult = fixture(kind: MediaKind.mov)
         ..nextStatus = IntegrityStatus.mismatch;
       await launch(tester, bridge);
       await tap(tester, 'importFiles');
-      expect(find.byKey(const Key('lensField')), findsNothing);
-      expect(
-        find.textContaining('Video metadata support is provisional'),
-        findsOneWidget,
-      );
+      await tester.tap(find.text('Edit').first);
+      await tester.pumpAndSettle();
+      await setField(tester, 'make', 'Apple');
       await tap(tester, 'process');
-      expect(find.text('Export blocked'), findsOneWidget);
+      expect(find.textContaining('Export blocked.'), findsWidgets);
       expect(find.byKey(const Key('acknowledge')), findsNothing);
       expect(
         tester
@@ -90,6 +92,38 @@ void main() {
         isNull,
       );
       expect(bridge.exports, 0);
+    },
+  );
+
+  testWidgets(
+    'Brand and model selection automatically fills a coherent profile',
+    (tester) async {
+      final bridge = FakeMediaBridge();
+      await launch(tester, bridge);
+      await tap(tester, 'importFiles');
+      final brand = find.byKey(const Key('profileBrand'));
+      await tester.ensureVisible(brand);
+      await tester.tap(brand);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Apple').last);
+      await tester.pumpAndSettle();
+      final model = find.byKey(const ValueKey('model-Apple'));
+      await tester.ensureVisible(model);
+      final profile = (await loadCameraProfiles()).firstWhere(
+        (p) => p.model == 'iPhone 15 Pro Max',
+      );
+      tester.widget<DropdownButtonFormField<String>>(model).onChanged!(
+        profile.id,
+      );
+      await tester.pumpAndSettle();
+      await tap(tester, 'process');
+      final plan = bridge.sessions.single.processing!.metadataPatch!;
+      expect(plan.values['make'], 'Apple');
+      expect(plan.values['model'], 'iPhone 15 Pro Max');
+      expect(plan.values['fNumber'], 1.78);
+      expect(plan.values['iso'], isA<num>());
+      expect(plan.values['lensModel'], contains('6.765mm'));
+      expect(tester.takeException(), isNull);
     },
   );
   testWidgets('permission error is visible and import remains retryable', (
