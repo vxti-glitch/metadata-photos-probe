@@ -25,17 +25,24 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def macho_architectures(path):
-    """Inspect thin and fat Mach-O headers without trusting executable filenames."""
+def macho_slices(path):
+    """Read bounded thin/fat slice locations and verify their declared CPU headers."""
+    file_bytes = path.stat().st_size
     with path.open("rb") as stream:
         data = stream.read(4096)
     if len(data) < 8:
         raise ValueError(f"Truncated Mach-O: {path.name}")
     magic = data[:4]
-    if magic in (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe"):
-        return [struct.unpack_from("<I", data, 4)[0]]
-    if magic in (b"\xfe\xed\xfa\xcf", b"\xfe\xed\xfa\xce"):
-        return [struct.unpack_from(">I", data, 4)[0]]
+    thin_formats = {
+        b"\xcf\xfa\xed\xfe": ("<", 32), b"\xce\xfa\xed\xfe": ("<", 28),
+        b"\xfe\xed\xfa\xcf": (">", 32), b"\xfe\xed\xfa\xce": (">", 28),
+    }
+    if magic in thin_formats:
+        endian, width = thin_formats[magic]
+        if len(data) < width:
+            raise ValueError(f"Truncated Mach-O header: {path.name}")
+        cpu, subtype = struct.unpack_from(endian + "II", data, 4)
+        return [{"offset": 0, "size": file_bytes, "cpu": cpu, "subtype": subtype}]
     fat_formats = {
         b"\xca\xfe\xba\xbe": (">", 20), b"\xbe\xba\xfe\xca": ("<", 20),
         b"\xca\xfe\xba\xbf": (">", 32), b"\xbf\xba\xfe\xca": ("<", 32),
@@ -46,7 +53,42 @@ def macho_architectures(path):
     count = struct.unpack_from(endian + "I", data, 4)[0]
     if not 1 <= count <= 64 or 8 + count * width > len(data):
         raise ValueError(f"Invalid fat Mach-O table: {path.name}")
-    return [struct.unpack_from(endian + "I", data, 8 + index * width)[0] for index in range(count)]
+    table_end = 8 + count * width
+    slices = []
+    for index in range(count):
+        position = 8 + index * width
+        if width == 20:
+            cpu, subtype, offset, size, alignment = struct.unpack_from(endian + "IIIII", data, position)
+        else:
+            cpu, subtype, offset, size, alignment, reserved = struct.unpack_from(endian + "IIQQII", data, position)
+            if reserved != 0:
+                raise ValueError(f"Invalid fat Mach-O reserved field: {path.name}")
+        if offset < table_end or size < 28 or offset + size > file_bytes:
+            raise ValueError(f"Fat Mach-O slice exceeds file bounds: {path.name}")
+        if alignment > 31 or offset % (1 << alignment):
+            raise ValueError(f"Invalid fat Mach-O slice alignment: {path.name}")
+        slices.append({"offset": offset, "size": size, "cpu": cpu, "subtype": subtype})
+    ordered = sorted(slices, key=lambda entry: entry["offset"])
+    if any(left["offset"] + left["size"] > right["offset"] for left, right in zip(ordered, ordered[1:])):
+        raise ValueError(f"Overlapping fat Mach-O slices: {path.name}")
+    with path.open("rb") as stream:
+        for entry in slices:
+            stream.seek(entry["offset"])
+            header = stream.read(min(32, entry["size"]))
+            if header[:4] not in thin_formats:
+                raise ValueError(f"Fat Mach-O slice has no thin header: {path.name}")
+            thin_endian, header_size = thin_formats[header[:4]]
+            if len(header) < header_size:
+                raise ValueError(f"Truncated fat Mach-O slice header: {path.name}")
+            cpu, subtype = struct.unpack_from(thin_endian + "II", header, 4)
+            if cpu != entry["cpu"] or subtype != entry["subtype"]:
+                raise ValueError(f"Fat Mach-O CPU declaration differs from slice: {path.name}")
+    return slices
+
+
+def macho_architectures(path):
+    """Inspect every bounded thin/fat CPU header without trusting filenames."""
+    return [entry["cpu"] for entry in macho_slices(path)]
 
 
 def expected_version():
@@ -59,36 +101,51 @@ def expected_version():
 
 def macho_device_platform(path):
     """Reject ARM64 simulator binaries, which have the same CPU type as device binaries."""
+    slices = macho_slices(path)
     with path.open("rb") as stream:
-        header = stream.read(32)
-        if len(header) != 32 or header[:4] != b"\xcf\xfa\xed\xfe":
-            raise ValueError(f"Expected thin little-endian arm64 Mach-O: {path.name}")
-        command_count, command_bytes = struct.unpack_from("<II", header, 16)
-        if not 1 <= command_count <= 4096 or not 8 <= command_bytes <= 16 * 1024 * 1024:
-            raise ValueError(f"Unqualified Mach-O load commands: {path.name}")
-        commands = stream.read(command_bytes)
+        for entry in slices:
+            stream.seek(entry["offset"])
+            header = stream.read(32)
+            if entry["cpu"] != 0x0100000C or entry["size"] < 32 or header[:4] != b"\xcf\xfa\xed\xfe":
+                raise ValueError(f"Expected little-endian arm64 Mach-O slice: {path.name}")
+            command_count, command_bytes = struct.unpack_from("<II", header, 16)
+            if not 1 <= command_count <= 4096 or not 8 <= command_bytes <= 16 * 1024 * 1024:
+                raise ValueError(f"Unqualified Mach-O load commands: {path.name}")
+            if command_bytes > entry["size"] - 32:
+                raise ValueError(f"Mach-O load commands exceed slice bounds: {path.name}")
+            commands = stream.read(command_bytes)
+            validate_device_commands(commands, command_count, command_bytes, path.name)
+    return "iOS device"
+
+
+def validate_device_commands(commands, command_count, command_bytes, name):
     if len(commands) != command_bytes:
-        raise ValueError(f"Truncated Mach-O load commands: {path.name}")
+        raise ValueError(f"Truncated Mach-O load commands: {name}")
     platforms = []
     cursor = 0
     for _ in range(command_count):
         if cursor + 8 > len(commands):
-            raise ValueError(f"Truncated Mach-O command header: {path.name}")
+            raise ValueError(f"Truncated Mach-O command header: {name}")
         kind, size = struct.unpack_from("<II", commands, cursor)
-        if size < 8 or cursor + size > len(commands):
-            raise ValueError(f"Invalid Mach-O command size: {path.name}")
+        if size < 8 or size % 8 or cursor + size > len(commands):
+            raise ValueError(f"Invalid Mach-O command size: {name}")
         if kind == 0x32:  # LC_BUILD_VERSION; platform 2 is iOS, 7 is iOS Simulator.
             if size < 24:
-                raise ValueError(f"Truncated platform command: {path.name}")
+                raise ValueError(f"Truncated platform command: {name}")
+            tool_count = struct.unpack_from("<I", commands, cursor + 20)[0]
+            if size != 24 + tool_count * 8:
+                raise ValueError(f"Invalid Mach-O build-tool table: {name}")
             platforms.append(struct.unpack_from("<I", commands, cursor + 8)[0])
         elif kind == 0x25:  # LC_VERSION_MIN_IPHONEOS on an arm64 legacy device binary.
             if size < 16:
-                raise ValueError(f"Truncated legacy iOS command: {path.name}")
+                raise ValueError(f"Truncated legacy iOS command: {name}")
             platforms.append(2)
+        elif kind in (0x24, 0x2F, 0x30):
+            # Other legacy minimum-platform commands cannot coexist with an iOS qualification.
+            platforms.append(-1)
         cursor += size
     if cursor != len(commands) or platforms != [2]:
-        raise ValueError(f"{path.name} is not qualified for the iOS device platform.")
-    return "iOS device"
+        raise ValueError(f"{name} is not qualified for the iOS device platform.")
 
 
 def inspect_app(app):
@@ -124,7 +181,8 @@ def inspect_app(app):
         if arm64 not in architectures or any(cpu != arm64 for cpu in architectures):
             raise ValueError(f"{name} is not a device-only arm64 binary.")
         platform = macho_device_platform(executable)
-        binaries[name] = {"architectures": ["arm64"], "platform": platform, "bytes": executable.stat().st_size,
+        binaries[name] = {"architectures": ["arm64"], "slice_count": len(architectures),
+                          "platform": platform, "bytes": executable.stat().st_size,
                           "sha256": sha256(executable)}
     signature = subprocess.run(["codesign", "--display", "--verbose=4", str(app)],
                                capture_output=True, text=True, check=False)

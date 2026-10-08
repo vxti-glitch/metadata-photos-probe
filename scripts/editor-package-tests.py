@@ -37,9 +37,25 @@ class EditorPackagingTests(unittest.TestCase):
             binary.write_bytes(self.device_binary())
 
     @staticmethod
-    def device_binary(platform=2):
-        header = b"\xcf\xfa\xed\xfe" + struct.pack("<IIIIIII", ARM64, 0, 2, 1, 24, 0, 0)
+    def device_binary(platform=2, cpu=ARM64, subtype=0):
+        header = b"\xcf\xfa\xed\xfe" + struct.pack("<IIIIIII", cpu, subtype, 2, 1, 24, 0, 0)
         return header + struct.pack("<IIIIII", 0x32, 24, platform, 0x110000, 0x1A0200, 0)
+
+    @staticmethod
+    def fat_binary(slices, wide=False, endian=">"):
+        magic = {(">", False): b"\xca\xfe\xba\xbe", ("<", False): b"\xbe\xba\xfe\xca",
+                 (">", True): b"\xca\xfe\xba\xbf", ("<", True): b"\xbf\xba\xfe\xca"}[endian, wide]
+        width = 32 if wide else 20
+        data = bytearray(128 * (len(slices) + 1))
+        data[:8] = magic + struct.pack(endian + "I", len(slices))
+        for index, payload in enumerate(slices):
+            offset = 128 * (index + 1)
+            cpu, subtype = struct.unpack_from("<II", payload, 4)
+            entry = struct.pack(endian + ("IIQQII" if wide else "IIIII"),
+                                cpu, subtype, offset, len(payload), 7, *([0] if wide else []))
+            data[8 + index * width:8 + (index + 1) * width] = entry
+            data[offset:offset + len(payload)] = payload
+        return bytes(data)
 
     def write_info(self):
         with (self.app / "Info.plist").open("wb") as stream:
@@ -107,12 +123,61 @@ class EditorPackagingTests(unittest.TestCase):
             package.macho_architectures(self.binaries[0])
 
     def test_fat_macho_returns_all_cpu_types_for_rejection(self):
-        payload = b"\xca\xfe\xba\xbe" + struct.pack(">I", 2)
-        payload += struct.pack(">IIIII", ARM64, 0, 4096, 64, 12)
-        payload += struct.pack(">IIIII", X64, 0, 8192, 64, 12)
+        payload = self.fat_binary([self.device_binary(), self.device_binary(platform=7, cpu=X64)])
         self.binaries[0].write_bytes(payload)
         self.assertEqual(package.macho_architectures(self.binaries[0]), [ARM64, X64])
         with self.assertRaisesRegex(ValueError, "device-only arm64"):
+            self.inspect()
+
+    def test_fat_device_framework_supports_both_widths_and_table_endianness(self):
+        for wide in [False, True]:
+            for endian in [">", "<"]:
+                for count in [1, 2]:
+                    with self.subTest(wide=wide, endian=endian, count=count):
+                        payloads = [self.device_binary(subtype=index) for index in range(count)]
+                        self.binaries[2].write_bytes(self.fat_binary(payloads, wide=wide, endian=endian))
+                        result = self.inspect()
+                        self.assertEqual(result["framework_binaries"]["App.framework"]["platform"], "iOS device")
+                        self.assertEqual(result["framework_binaries"]["App.framework"]["slice_count"], count)
+
+    def test_fat_arm64_device_and_simulator_slices_are_rejected(self):
+        self.binaries[2].write_bytes(self.fat_binary([self.device_binary(), self.device_binary(platform=7)]))
+        with self.assertRaisesRegex(ValueError, "iOS device platform"):
+            self.inspect()
+
+    def test_fat_slice_outside_file_and_overlap_are_rejected(self):
+        for wide in [False, True]:
+            with self.subTest(wide=wide):
+                data = bytearray(self.fat_binary([self.device_binary()], wide=wide))
+                struct.pack_into(">Q" if wide else ">I", data, 16, (1 << 63) if wide else len(data) + 128)
+                self.binaries[2].write_bytes(data)
+                with self.assertRaisesRegex(ValueError, "slice exceeds file bounds"):
+                    self.inspect()
+        data = bytearray(self.fat_binary([self.device_binary(), self.device_binary()]))
+        struct.pack_into(">I", data, 36, 128)
+        self.binaries[2].write_bytes(data)
+        with self.assertRaisesRegex(ValueError, "Overlapping"):
+            self.inspect()
+
+    def test_fat_declared_cpu_must_match_actual_slice(self):
+        data = bytearray(self.fat_binary([self.device_binary()]))
+        struct.pack_into(">I", data, 8, X64)
+        self.binaries[2].write_bytes(data)
+        with self.assertRaisesRegex(ValueError, "CPU declaration differs"):
+            self.inspect()
+
+    def test_load_commands_cannot_read_outside_fat_slice(self):
+        data = bytearray(self.fat_binary([self.device_binary(), self.device_binary()]))
+        struct.pack_into(">I", data, 20, 32)
+        self.binaries[2].write_bytes(data)
+        with self.assertRaisesRegex(ValueError, "load commands exceed slice bounds"):
+            self.inspect()
+
+    def test_malformed_platform_tool_table_is_rejected(self):
+        data = bytearray(self.device_binary())
+        struct.pack_into("<I", data, 52, 99)
+        self.binaries[2].write_bytes(data)
+        with self.assertRaisesRegex(ValueError, "build-tool table"):
             self.inspect()
 
 
