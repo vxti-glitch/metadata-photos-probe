@@ -29,6 +29,8 @@ final class ProbeViewModel: ObservableObject {
     @Published var outputInspection: MediaInspection?
     @Published var comparison: IntegrityComparison?
     @Published var attempts: [ProbeAttempt] = []
+    @Published var fileTrials: [FileWorkflowTrial] = []
+    @Published var selectedFileTrialID: UUID?
     @Published var busy = false
     @Published var status = "Select one controlled file. Photos display and attribution are not checked automatically."
     @Published var errorMessage: String?
@@ -56,6 +58,7 @@ final class ProbeViewModel: ObservableObject {
     private var photosAcquisitionID: UUID?
     private var photosAcquisitionCanceled = false
     private var outputPatch: CameraPatch?
+    private var activeFilesExportID: UUID?
     private var didCommitCurrentOutput = false
     let device = DeviceEvidence.capture()
     let workspace: URL
@@ -74,6 +77,8 @@ final class ProbeViewModel: ObservableObject {
                 guard (values.fileSize ?? 0) <= 8 * 1024 * 1024 else { throw ProbeUIError.reportTooLarge }
                 let saved = try JSONDecoder.probe.decode(ProbeEvidenceDocument.self, from: Data(contentsOf: url))
                 attempts = saved.recoveredAttempts
+                fileTrials = saved.fileTrials ?? []
+                selectedFileTrialID = fileTrials.last?.id
                 reportedBuild = saved.userReportedBuild
                 selectedAttemptID = attempts.last?.id
             }
@@ -166,6 +171,7 @@ final class ProbeViewModel: ObservableObject {
             self.didCommitCurrentOutput = false
             self.incompleteAcknowledged = false
             self.status = "Metadata readback completed. Review the separate integrity checks before saving."
+            try self.recordCurrentFileTrial()
         }
     }
 
@@ -267,6 +273,101 @@ final class ProbeViewModel: ObservableObject {
         shareURL = outputURL
     }
 
+    var selectedFileTrial: FileWorkflowTrial? { fileTrials.first { $0.id == selectedFileTrialID } }
+
+    /// Holds a busy lease while the system Files exporter is visible. No Photos commit.
+    func beginFilesExport() -> UUID? {
+        guard !busy, outputURL != nil, comparison?.status != .mismatch else { return nil }
+        do {
+            let id = try recordCurrentFileTrial()
+            guard let index = fileTrials.firstIndex(where: { $0.id == id }),
+                  FileManager.default.fileExists(atPath: fileTrials[index].outputURL.path) else { throw ProbeUIError.missingSource }
+            fileTrials[index].exportState = "Files export requested; completion not yet confirmed"
+            try persist()
+            activeFilesExportID = id; busy = true; errorMessage = nil
+            status = "Choose a destination in Files. This copies the staged file; it does not upload to Photos."
+            return id
+        } catch { errorMessage = error.localizedDescription; return nil }
+    }
+
+    func finishFilesExport(id: UUID, completed: Bool) {
+        guard id == activeFilesExportID else { return }
+        activeFilesExportID = nil; busy = false
+        if let index = fileTrials.firstIndex(where: { $0.id == id }) {
+            fileTrials[index].exportState = completed ? "System Files exporter confirmed a copy" : "Files export canceled or dismissed"
+            fileTrials[index].exportCompletedAt = completed ? Date() : nil
+        }
+        status = completed ? "Copy saved to Files. Upload it yourself through Safari/iCloud.com Photos, then record your observation here." : "Files export canceled. Staged media remains available."
+        do { try persist() } catch { errorMessage = "Files outcome observed, but local evidence could not be saved: \(error.localizedDescription)" }
+    }
+
+    func receivedReturnedPhoto(_ result: Result<ImportedMediaAsset, Error>, acquisitionID: UUID?, trialID: UUID) {
+        guard let acquisitionID, acquisitionID == photosAcquisitionID else { discardAcquisition(result); return }
+        let canceled = photosAcquisitionCanceled
+        photosAcquisitionID = nil; photosAcquisitionCanceled = false; busy = false
+        if canceled { discardAcquisition(result); status = "Returned-photo inspection canceled."; return }
+        guard let trial = fileTrials.first(where: { $0.id == trialID }) else { discardAcquisition(result); return }
+        switch result {
+        case .failure(let error): errorMessage = error.localizedDescription
+        case .success(let candidate):
+            run("Reading the returned Photos original — no save will be performed…") {
+                defer { self.discardAcquisition(.success(candidate)) }
+                do {
+                    guard let identifier = candidate.assetIdentifier else { throw PhotosProbeError.assetUnavailable }
+                    _ = try await self.photos.requestReadWriteAuthorization()
+                    let original = try await self.photos.importAsset(identifier: identifier, preferOriginal: true, to: self.stagingDirectory)
+                    let inspection = try await MetadataEngine.inspect(original.fileURL)
+                    let integrity = try await MediaIntegrity.compare(source: trial.outputURL, output: original.fileURL)
+                    try Task.checkCancellation()
+                    guard let index = self.fileTrials.firstIndex(where: { $0.id == trialID }) else { return }
+                    self.fileTrials[index].returnedAsset = original
+                    self.fileTrials[index].returnedInspection = inspection
+                    self.fileTrials[index].returnedIntegrity = integrity
+                    self.fileTrials[index].returnedError = nil
+                    try self.persist()
+                    self.status = "Returned original inspected. Embedded GPS, Photos location and file integrity are separate results. Check the visible source label yourself."
+                } catch {
+                    if let index = self.fileTrials.firstIndex(where: { $0.id == trialID }) {
+                        self.fileTrials[index].returnedAsset = nil; self.fileTrials[index].returnedInspection = nil
+                        self.fileTrials[index].returnedIntegrity = nil; self.fileTrials[index].returnedError = error.localizedDescription
+                        try? self.persist()
+                    }
+                    throw error
+                }
+            }
+        }
+    }
+
+    func addFileObservation() {
+        guard !busy, let index = fileTrials.firstIndex(where: { $0.id == selectedFileTrialID }) else { return }
+        let value = ManualObservation(phase: observationPhase, attribution: attribution,
+            attributionText: String(attributionText.prefix(2000)), camera: observedCamera,
+            cameraText: String(observedCameraText.prefix(2000)), screenshotReference: String(screenshotReference.prefix(1000)),
+            notes: String(observationNotes.prefix(4000)))
+        guard value.hasMeaningfulObservation else { errorMessage = "Choose the source-label or camera result you actually observed."; return }
+        fileTrials[index].observations.append(value)
+        do { try persist(); status = "External-upload observation recorded as user-reported evidence." }
+        catch { errorMessage = error.localizedDescription }
+    }
+
+    func resetObservationForm() {
+        attribution = .notChecked; attributionText = ""; observedCamera = .notChecked
+        observedCameraText = ""; screenshotReference = ""; observationNotes = ""
+    }
+
+    @discardableResult
+    private func recordCurrentFileTrial() throws -> UUID {
+        guard let source, let sourceInspection, let outputURL, let outputInspection, let comparison else { throw ProbeUIError.missingSource }
+        if let existing = selectedFileTrial, existing.outputURL == outputURL, existing.source.fileURL == source.fileURL,
+           existing.stage == stage { return existing.id }
+        let value = FileWorkflowTrial(device: device, reportedBuild: reportedBuild, stage: stage,
+            source: source, sourceInspection: sourceInspection, outputURL: outputURL,
+            outputInspection: outputInspection, patch: outputPatch, integrity: comparison)
+        fileTrials.append(value); selectedFileTrialID = value.id
+        try persist()
+        return value.id
+    }
+
     func cancel() {
         guard busy else { return }
         if photosAcquisitionID != nil {
@@ -296,7 +397,7 @@ final class ProbeViewModel: ObservableObject {
             if FileManager.default.fileExists(atPath: workspace.path) { try FileManager.default.removeItem(at: workspace) }
             try prepareWorkspace()
             source = nil; sourceInspection = nil; clearOutput()
-            attempts = []; selectedAttemptID = nil; shareURL = nil
+            attempts = []; selectedAttemptID = nil; fileTrials = []; selectedFileTrialID = nil; shareURL = nil
             stageAReviewed = false; existingEditConsented = false
             status = "Local probe copies and reports removed. Photos assets and provider files were not changed."
         } catch { errorMessage = error.localizedDescription }
@@ -332,6 +433,7 @@ final class ProbeViewModel: ObservableObject {
         outputURL = candidate; outputInspection = inspected; comparison = verified
         outputPatch = nil; didCommitCurrentOutput = false; incompleteAcknowledged = false
         status = "Prepared output compared. This does not count as an on-device metadata transformation."
+        try recordCurrentFileTrial()
     }
 
     private func readBack(attemptID: UUID) async throws {
@@ -419,7 +521,7 @@ final class ProbeViewModel: ObservableObject {
     }
 
     private func document() -> ProbeEvidenceDocument {
-        ProbeEvidenceDocument(exportedAt: Date(), device: device, userReportedBuild: reportedBuild, attempts: attempts)
+        ProbeEvidenceDocument(exportedAt: Date(), device: device, userReportedBuild: reportedBuild, attempts: attempts, fileTrials: fileTrials)
     }
 
     private func persist() throws {

@@ -22,6 +22,8 @@ public enum MediaIntegrity {
         }
         check("retained embedded metadata", retainedMetadata(before.metadata, patch: patch) == retainedMetadata(after.metadata, patch: patch),
               "Preserve inspected non-target fields; a nil patch preserves all inspected camera fields too.")
+        check("exposed embedded location", before.location == after.location,
+              "Compare exposed embedded location independently from the Photos library location; absent fields do not prove there is no location elsewhere.")
         if before.byteCount == after.byteCount,
            try WholeFileDigest.sha256(source) == WholeFileDigest.sha256(output) {
             check("exact complete file bytes", true, "Whole-file SHA-256 and byte count match. No container, compressed media or opaque metadata bytes changed. Photos UI/provenance remains a separate device observation.")
@@ -40,10 +42,16 @@ public enum MediaIntegrity {
                 limitations += Array(Set(original.limitations + edited.limitations)).sorted()
                 limitations.append("Opaque EXIF maker notes and XMP fields not exposed by ImageIO are not fully qualified; this result cannot certify arbitrary originals.")
             } else {
-                let original = try BoxInventory.read(source), edited = try BoxInventory.read(output)
-                let same = !original.payloadHashes.isEmpty && original.payloadHashes == edited.payloadHashes
-                checks.append(IntegrityCheck(name: "HEIC mdat bytes", status: same ? .passed : .notChecked,
-                    detail: same ? "Top-level media payload bytes match; item graph semantics remain unverified." : "Media payload layout differs; item-level identity cannot be inferred from this comparison."))
+                do {
+                    let original = try HEICMetadataWriter.inventory(source), edited = try HEICMetadataWriter.inventory(output)
+                    check("HEIC non-Exif item bytes", original.nonExifItemSHA256 == edited.nonExifItemSHA256,
+                          "Independently hash all non-Exif item extents, including coded image, thumbnail and auxiliary items.")
+                    check("HEIC item graph and properties", original.itemGraphSHA256 == edited.itemGraphSHA256 &&
+                          original.primaryItemID == edited.primaryItemID && original.exifItemID == edited.exifItemID,
+                          "Compare the container metadata graph and properties, excluding only the selected Exif locator fields.")
+                } catch ProbeError.unsupported(let detail) {
+                    checks.append(IntegrityCheck(name: "HEIC item graph", status: .notChecked, detail: detail))
+                }
                 limitations.append("HEIC iloc/iinf/iref/iprp item graph, primary item, transformations, tiles, auxiliary images, depth and HDR gain maps require an independent full HEIF verifier.")
             }
         } else if !after.kind.isImage {

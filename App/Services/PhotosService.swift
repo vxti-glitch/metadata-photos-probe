@@ -31,7 +31,10 @@ actor PhotosService {
         return ImportedMediaAsset(fileURL: target, assetIdentifier: identifier,
             representation: preferOriginal ? "Photos original resource" : (chosen.type == renderedType ? "Photos rendered resource" : "Photos original (no rendered resource)"),
             resourceInventory: resources.map(inventory),
-            notes: ["Resource extraction can download an iCloud asset. Original and current resources are separate evidence."])
+            notes: ["Resource extraction can download an iCloud asset. Original and current resources are separate evidence."],
+            librarySnapshot: PhotosLibrarySnapshot(creationDate: asset.creationDate,
+                latitude: asset.location?.coordinate.latitude, longitude: asset.location?.coordinate.longitude,
+                altitude: asset.location?.altitude, sourceType: "rawValue=\(asset.sourceType.rawValue)"))
     }
 
     func save(fileURL: URL, route: PhotoSaveRoute, existingAssetIdentifier: String? = nil,

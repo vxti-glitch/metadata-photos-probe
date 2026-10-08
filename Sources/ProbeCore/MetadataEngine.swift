@@ -33,7 +33,8 @@ public enum MetadataEngine {
             var notes = ["Embedded metadata only; Photos display and source attribution require physical-device observation."]
             if kind == .jpeg { _ = try JPEGInventory.read(url) }
             else { _ = try BoxInventory.read(url); notes.append("HEIC item graph/auxiliary/HDR preservation is not fully qualified.") }
-            return MediaInspection(kind: kind, byteCount: size, metadata: metadata, notes: notes, structure: structure)
+            return MediaInspection(kind: kind, byteCount: size, metadata: metadata, notes: notes, structure: structure,
+                location: EmbeddedLocationEvidence.image(gps: properties[kCGImagePropertyGPSDictionary as String] as? [String: Any]))
         }
         let inventory = try BoxInventory.read(url)
         guard inventory.types.contains("ftyp"), inventory.types.contains("moov"), inventory.types.contains("mdat") else {
@@ -58,7 +59,8 @@ public enum MetadataEngine {
         }
         return MediaInspection(kind: kind, byteCount: size, metadata: metadata,
             notes: ["QuickTime camera fields are embedded tags; whether Photos shows them is unverified.", "Passthrough is not proof of preservation of every container, HDR or opaque-track semantic."],
-            structure: ["duration": canonicalTime(duration), "tracks": String(tracks.count), "trackTypes": tracks.map { $0.mediaType.rawValue }.joined(separator: ","), "boxes": inventory.types.joined(separator: ","), "metadataFormats": metadataFormats.map { $0.rawValue }.joined(separator: ",")])
+            structure: ["duration": canonicalTime(duration), "tracks": String(tracks.count), "trackTypes": tracks.map { $0.mediaType.rawValue }.joined(separator: ","), "boxes": inventory.types.joined(separator: ","), "metadataFormats": metadataFormats.map { $0.rawValue }.joined(separator: ",")],
+            location: EmbeddedLocationEvidence.video(metadata: metadata))
     }
 
     public static func process(source: URL, output: URL, patch: CameraPatch) async throws -> ProcessingResult {
@@ -82,6 +84,11 @@ public enum MetadataEngine {
     }
 
     private static func writeImage(source: URL, output: URL, patch: CameraPatch) throws {
+        if let inspection = CGImageSourceCreateWithURL(source as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+           CGImageSourceGetType(inspection) as String? == UTType.heic.identifier {
+            try HEICMetadataWriter.write(source: source, output: output, patch: patch)
+            return
+        }
         guard let image = CGImageSourceCreateWithURL(source as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
               let type = CGImageSourceGetType(image),
               let destination = CGImageDestinationCreateWithURL(output as CFURL, type, 1, nil) else {
@@ -113,31 +120,7 @@ public enum MetadataEngine {
     }
 
     private static func writeVideo(source: URL, output: URL, kind: MediaKind, patch: CameraPatch) async throws {
-        guard patch.lens == nil else { throw ProbeError.unsupported("A video lens-model field is not qualified; leave lens empty") }
-        let asset = AVURLAsset(url: source)
-        guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else {
-            throw ProbeError.writeFailed("Passthrough export unavailable")
-        }
-        let fileType: AVFileType = kind == .mp4 ? .mp4 : .mov
-        guard session.supportedFileTypes.contains(fileType) else { throw ProbeError.unsupported("Same-container passthrough unavailable") }
-        session.outputURL = output; session.outputFileType = fileType
-        session.shouldOptimizeForNetworkUse = false
-        let existing = try await containerMetadata(asset)
-        let replaced: Set<AVMetadataIdentifier> = [.quickTimeMetadataMake, .quickTimeMetadataModel]
-        var items = existing.filter { !replaced.contains($0.identifier ?? AVMetadataIdentifier(rawValue: "")) }
-        for (identifier, value) in [(AVMetadataIdentifier.quickTimeMetadataMake, patch.make), (.quickTimeMetadataModel, patch.model)] {
-            let item = AVMutableMetadataItem()
-            item.identifier = identifier; item.value = value as NSString
-            item.dataType = "com.apple.metadata.datatype.UTF-8"
-            items.append(item)
-        }
-        session.metadata = items
-        let operation = ExportOperation(session: session)
-        try await withTaskCancellationHandler(operation: {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                operation.start(continuation)
-            }
-        }, onCancel: { operation.cancel() })
+        _ = try await VideoMetadataWriter.write(source: source, output: output, patch: patch)
         try Task.checkCancellation()
     }
 
@@ -162,30 +145,6 @@ public enum MetadataEngine {
         if brand == "qt  " { return .mov }
         if ["isom", "iso2", "mp41", "mp42", "avc1", "M4V ", "MSNV"].contains(brand) { return .mp4 }
         throw ProbeError.unsupported("Unqualified video brand \(brand)")
-    }
-}
-
-/// The configured export session never leaves this lifecycle adapter. A lock serializes
-/// starting/cancelling, including cancellation before the continuation is installed.
-/// AVFoundation completes exports asynchronously; its callback is the only status reader.
-private final class ExportOperation: @unchecked Sendable {
-    private let session: AVAssetExportSession
-    private let lock = NSLock()
-    private var cancelled = false
-    init(session: AVAssetExportSession) { self.session = session }
-    func start(_ continuation: CheckedContinuation<Void, Error>) {
-        lock.lock(); defer { lock.unlock() }
-        guard !cancelled else { continuation.resume(throwing: CancellationError()); return }
-        session.exportAsynchronously { [self] in
-            if session.status == .completed { continuation.resume() }
-            else if session.status == .cancelled { continuation.resume(throwing: CancellationError()) }
-            else { continuation.resume(throwing: session.error ?? ProbeError.writeFailed("Export did not complete")) }
-        }
-    }
-    func cancel() {
-        lock.lock(); defer { lock.unlock() }
-        cancelled = true
-        session.cancelExport()
     }
 }
 

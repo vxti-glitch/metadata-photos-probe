@@ -11,6 +11,9 @@ struct ProbeView: View {
     @State private var confirmSave = false
     @State private var confirmClear = false
     @State private var showShare = false
+    @State private var showFilesExport = false
+    @State private var exportTrialID: UUID?
+    @State private var returnedTrialID: UUID?
 
     var body: some View {
         NavigationStack {
@@ -30,7 +33,7 @@ struct ProbeView: View {
                 }
 
                 Section("1 · Controlled source") {
-                    Button("Choose source from Photos") { showPhotos = true }.disabled(probe.busy)
+                    Button("Choose source from Photos") { returnedTrialID = nil; showPhotos = true }.disabled(probe.busy)
                     Button("Choose source from Files") { pickingPreparedOutput = false; showFilePicker = true }
                         .disabled(probe.busy)
                     TextField("Baseline origin: Camera / iCloud / app / Files", text: $probe.baselineOrigin)
@@ -49,14 +52,15 @@ struct ProbeView: View {
 
                 if let source = probe.sourceInspection {
                     InspectionSection(title: "Source metadata", inspection: source)
+                    Section("Source Photos library location") {
+                        Text(probe.source?.librarySnapshot?.locationSummary ?? "Not checked. Retrieve the original Photos resource to inspect the library separately.")
+                        Text("The Photos map can differ from embedded GPS. The probe never silently copies library coordinates into a file.").font(.footnote)
+                    }
                 }
 
                 Section("2 · Experiment") {
                     Picker("Stage", selection: $probe.stage) {
                         ForEach(ProbeStage.allCases) { Text($0.rawValue).tag($0) }
-                    }.disabled(probe.busy)
-                    Picker("Photos route", selection: $probe.route) {
-                        ForEach(PhotoSaveRoute.allCases) { Text($0.title).tag($0) }
                     }.disabled(probe.busy)
                     if probe.stage == .preparedFiles {
                         Text("First isolate Photos behavior using a prepared edited counterpart of this exact source, or an unchanged control. This is not proof of processing on iPhone.")
@@ -66,7 +70,7 @@ struct ProbeView: View {
                         Button("Use unchanged source as a no-op control") { probe.selectNoOp() }
                             .disabled(probe.busy || probe.source == nil)
                     } else {
-                        Toggle("I reviewed a Stage A result for this format and route on the physical phone", isOn: $probe.stageAReviewed)
+                        Toggle("I completed the baseline upload test for this format on my phone", isOn: $probe.stageAReviewed)
                             .disabled(probe.busy)
                         Text("This acknowledgement is your observation, not an automatic feasibility verdict. Choose camera values different from the source.")
                             .font(.footnote).foregroundStyle(.secondary)
@@ -84,7 +88,19 @@ struct ProbeView: View {
                 }
                 if let comparison = probe.comparison {
                     IntegritySection(title: "Source → staged output", result: comparison)
-                    Section("3 · Photos save") {
+                    Section("3 · Export to Files for iCloud") {
+                        Text("Save a copy to Files, then upload it yourself at iCloud.com/photos in Safari. This does not require choosing a PhotoKit save route.").font(.footnote)
+                        Button("Save a copy to Files") {
+                            exportTrialID = probe.beginFilesExport()
+                            showFilesExport = exportTrialID != nil
+                        }.disabled(probe.busy || probe.outputURL == nil || comparison.status == .mismatch)
+                        Link("Open iCloud Photos in your browser", destination: URL(string: "https://www.icloud.com/photos/")!)
+                    }
+                    Section("Optional direct Photos save experiment") {
+                        Picker("Photos route", selection: $probe.route) {
+                            ForEach(PhotoSaveRoute.allCases) { Text($0.title).tag($0) }
+                        }.disabled(probe.busy)
+                        Text("Direct saves previously displayed app attribution. This diagnostic route is separate from Files/Safari export.").font(.footnote)
                         if comparison.status == .incomplete {
                             Toggle("Diagnostic save: I accept that remaining integrity checks are unverified", isOn: $probe.incompleteAcknowledged)
                                 .disabled(probe.busy)
@@ -96,8 +112,6 @@ struct ProbeView: View {
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
                         Button("Run selected PhotoKit save route") { confirmSave = true }.disabled(!probe.canSave)
-                        Button("Share staged media to Files") { probe.exportProcessedFile(); showShare = probe.shareURL != nil }
-                            .disabled(probe.busy || probe.outputURL == nil || comparison.status == .mismatch)
                     }
                 }
 
@@ -105,6 +119,12 @@ struct ProbeView: View {
                     if probe.busy { ProgressView() }
                     Text(probe.status)
                     if probe.busy { Button("Request cancellation", role: .destructive) { probe.cancel() } }
+                }
+
+                if !probe.fileTrials.isEmpty {
+                    FileEvidenceSection(probe: probe) { id in
+                        returnedTrialID = id; showPhotos = true
+                    }
                 }
 
                 if !probe.attempts.isEmpty {
@@ -189,10 +209,17 @@ struct ProbeView: View {
             .navigationTitle("Photos Metadata Probe")
             .onChange(of: probe.stage) { _, _ in probe.stageChanged() }
             .onChange(of: probe.route) { _, _ in probe.routeChanged() }
+            .onChange(of: probe.selectedFileTrialID) { _, _ in probe.resetObservationForm() }
+            .onChange(of: probe.selectedAttemptID) { _, _ in probe.resetObservationForm() }
             .sheet(isPresented: $showPhotos) {
+                let returnTarget = returnedTrialID
                 PhotosPicker(stagingDirectory: probe.stagingDirectory,
                     onAcquisitionStarted: { probe.beginPhotosAcquisition() },
-                    onResult: { generation, result in probe.receivedPhoto(result, acquisitionID: generation) })
+                    onResult: { generation, result in
+                        if let id = returnTarget { probe.receivedReturnedPhoto(result, acquisitionID: generation, trialID: id) }
+                        else { probe.receivedPhoto(result, acquisitionID: generation) }
+                        returnedTrialID = nil
+                    })
             }
             .fileImporter(isPresented: $showFilePicker,
                 allowedContentTypes: [.jpeg, .heic, .mpeg4Movie, .quickTimeMovie], allowsMultipleSelection: false) { result in
@@ -203,6 +230,16 @@ struct ProbeView: View {
             }
             .sheet(isPresented: $showShare) {
                 if let url = probe.shareURL { ProbeShareSheet(url: url) }
+            }
+            .sheet(isPresented: $showFilesExport, onDismiss: {
+                if let id = exportTrialID { probe.finishFilesExport(id: id, completed: false) }
+                exportTrialID = nil
+            }) {
+                if let id = exportTrialID, let trial = probe.fileTrials.first(where: { $0.id == id }) {
+                    FilesExportPicker(fileURL: trial.outputURL) { completed in
+                        probe.finishFilesExport(id: id, completed: completed); showFilesExport = false
+                    }
+                }
             }
             .alert("Run controlled Photos experiment?", isPresented: $confirmSave) {
                 Button("Run experiment") { probe.save() }
@@ -233,6 +270,10 @@ private struct InspectionSection: View {
         Section(title) {
             LabeledContent("Format", value: inspection.kind.rawValue.uppercased())
             LabeledContent("Bytes", value: String(inspection.byteCount))
+            Text("Embedded location: \(inspection.location?.summary ?? "not checked in this report")")
+            if let location = inspection.location, !location.values.isEmpty {
+                DisclosureGroup("Embedded location fields") { MetadataRows(values: location.values) }
+            }
             MetadataRows(values: inspection.metadata)
             DisclosureGroup("Structure and limitations") {
                 MetadataRows(values: inspection.structure)
@@ -288,4 +329,55 @@ private struct ProbeShareSheet: UIViewControllerRepresentable {
         return controller
     }
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+private struct FileEvidenceSection: View {
+    @ObservedObject var probe: ProbeViewModel
+    let inspect: (UUID) -> Void
+    var body: some View {
+    Section("Files/iCloud test evidence") {
+        Picker("File test", selection: $probe.selectedFileTrialID) {
+            ForEach(probe.fileTrials) { trial in
+                Text("\(trial.outputInspection.kind.rawValue.uppercased()) · \(trial.id.uuidString.prefix(6))")
+                    .tag(Optional(trial.id))
+            }
+        }.disabled(probe.busy)
+        if let trial = probe.selectedFileTrial {
+            Text(trial.exportState)
+            Text("Processed file GPS: \(trial.outputInspection.location?.summary ?? "not checked")")
+            Text("Original library location: \(trial.source.librarySnapshot?.locationSummary ?? "not checked")")
+            Button("Inspect returned iCloud photo (optional)") {
+                inspect(trial.id)
+            }.disabled(probe.busy)
+            if let error = trial.returnedError { Text(error).foregroundStyle(.orange) }
+            if let returned = trial.returnedInspection {
+                Text("Returned file GPS: \(returned.location?.summary ?? "not checked")")
+                Text("Returned library location: \(trial.returnedAsset?.librarySnapshot?.locationSummary ?? "not checked")")
+                MetadataRows(values: returned.metadata)
+            }
+            if let result = trial.returnedIntegrity {
+                Text("Returned original integrity: \(result.status.rawValue)")
+                ForEach(result.checks, id: \.name) { CheckRow(check: $0) }
+                ForEach(result.limitations, id: \.self) { Text($0).font(.caption) }
+            }
+            Picker("Observation time", selection: $probe.observationPhase) {
+                ForEach(ObservationPhase.allCases) { Text($0.rawValue).tag($0) }
+            }
+            Picker("Photos source label", selection: $probe.attribution) {
+                ForEach(AttributionObservation.allCases) { Text($0.rawValue).tag($0) }
+            }
+            TextField("Exact label, if present", text: $probe.attributionText)
+            Picker("Photos camera display", selection: $probe.observedCamera) {
+                ForEach(CameraObservation.allCases) { Text($0.rawValue).tag($0) }
+            }
+            TextField("Camera values actually displayed", text: $probe.observedCameraText)
+            TextField("Notes / screenshot reference", text: $probe.observationNotes)
+            Button("Record this external-upload observation") { probe.addFileObservation() }
+            Text("Upload completion, source labels and camera display are your observations. They are not automatically detected.").font(.footnote)
+            ForEach(trial.observations) { observation in
+                Text("\(observation.phase.rawValue): \(observation.attribution.rawValue)").font(.caption)
+            }
+        }
+    }.disabled(probe.busy)
+    }
 }

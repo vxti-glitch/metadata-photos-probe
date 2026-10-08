@@ -134,13 +134,14 @@ struct ProbeAttempt: Codable, Identifiable {
 }
 
 struct ProbeEvidenceDocument: Codable {
-    let schemaVersion = 2
+    let schemaVersion = 3
     let exportedAt: Date
     let device: DeviceEvidence
     let userReportedBuild: String
     let declaredScope = "Single-file feasibility prototype; no automatic attribution detection or authenticity proof"
     let hardwareVerdict = "Pending supervised physical-device evaluation; manual observations are user-reported evidence"
     let attempts: [ProbeAttempt]
+    var fileTrials: [FileWorkflowTrial]? = nil
 
     var recoveredAttempts: [ProbeAttempt] {
         attempts.map { stored in

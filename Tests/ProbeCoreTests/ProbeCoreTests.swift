@@ -255,20 +255,13 @@ final class ProbeCoreTests: XCTestCase {
         let source = folder.appendingPathComponent("source.heic"), output = folder.appendingPathComponent("edited.heic")
         try makeImage(source, type: UTType.heic.identifier, orientation: 1)
         let original = try WholeFileDigest.sha256(source)
-        do {
-            let result = try await MetadataEngine.process(source: source, output: output, patch: CameraPatch(make: "Probe", model: "HEIC Camera"))
-            XCTAssertNotEqual(result.integrity.status, .verified)
-            XCTAssertTrue(result.integrity.limitations.contains { $0.contains("item graph") })
-        } catch ProbeError.writeFailed(let detail) {
-            // ImageIO's HEIC metadata-only copy support varies; failure is a valid measured result, never an encoding fallback.
-            XCTAssertFalse(detail.isEmpty)
-            XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
-            print("HEIC metadata-only write unsupported on this host: \(detail)")
-        } catch ProbeError.readbackFailed(let detail) {
-            XCTAssertTrue(detail.contains("make/model"))
-            XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
-            print("HEIC metadata-only write rejected after independent camera readback: \(detail)")
-        }
+        let result = try await MetadataEngine.process(source: source, output: output, patch: CameraPatch(make: "Probe", model: "HEIC Camera"))
+        XCTAssertEqual(result.outputInspection.metadata["make"], "Probe")
+        XCTAssertEqual(result.outputInspection.metadata["model"], "HEIC Camera")
+        XCTAssertNotEqual(result.integrity.status, .verified)
+        XCTAssertTrue(result.integrity.limitations.contains { $0.contains("item graph") })
+        XCTAssertTrue(result.integrity.checks.contains { $0.name == "HEIC non-Exif item bytes" && $0.status == .passed })
+        XCTAssertFalse(result.integrity.checks.contains { $0.status == .failed })
         XCTAssertEqual(try WholeFileDigest.sha256(source), original)
     }
 
@@ -285,16 +278,7 @@ final class ProbeCoreTests: XCTestCase {
         let output = folder.appendingPathComponent("output.\(kind.rawValue)")
         try await makeVideo(source, kind: kind)
         let original = try WholeFileDigest.sha256(source)
-        let result: ProcessingResult
-        do {
-            result = try await MetadataEngine.process(source: source, output: output, patch: CameraPatch(make: "Probe Maker", model: "Probe Video"))
-        } catch ProbeError.readbackFailed(let detail) where kind == .mp4 {
-            XCTAssertTrue(detail.contains("make/model"))
-            XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
-            XCTAssertEqual(try WholeFileDigest.sha256(source), original)
-            print("MP4 metadata-only camera write unsupported on this host; no successful output retained: \(detail)")
-            return
-        }
+        let result = try await MetadataEngine.process(source: source, output: output, patch: CameraPatch(make: "Probe Maker", model: "Probe Video"))
         XCTAssertEqual(result.outputInspection.kind, kind)
         XCTAssertEqual(result.outputInspection.metadata["model"], "Probe Video")
         XCTAssertEqual(try WholeFileDigest.sha256(source), original)

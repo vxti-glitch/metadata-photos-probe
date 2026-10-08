@@ -29,8 +29,10 @@ public struct MediaInspection: Codable, Sendable {
     public let metadata: [String: String]
     public let notes: [String]
     public let structure: [String: String]
-    public init(kind: MediaKind, byteCount: Int64, metadata: [String: String], notes: [String], structure: [String: String]) {
+    public let location: EmbeddedLocationEvidence?
+    public init(kind: MediaKind, byteCount: Int64, metadata: [String: String], notes: [String], structure: [String: String], location: EmbeddedLocationEvidence? = nil) {
         self.kind = kind; self.byteCount = byteCount; self.metadata = metadata; self.notes = notes; self.structure = structure
+        self.location = location
     }
 }
 

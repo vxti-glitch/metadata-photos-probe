@@ -25,6 +25,7 @@ struct ImportedMediaAsset: Codable {
     let representation: String
     let resourceInventory: [PhotoResourceInventory]
     let notes: [String]
+    var librarySnapshot: PhotosLibrarySnapshot? = nil
 }
 
 struct PhotoCommitResult: Codable {
