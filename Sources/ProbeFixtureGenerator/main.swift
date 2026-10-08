@@ -121,7 +121,7 @@ struct FixtureGenerator {
             guard CVPixelBufferCreate(kCFAllocatorDefault, 160, 96, kCVPixelFormatType_32BGRA, nil, &optionalBuffer) == kCVReturnSuccess, let buffer = optionalBuffer else { throw ProbeError.writeFailed("Video fixture buffer unavailable") }
             CVPixelBufferLockBaseAddress(buffer, [])
             if let address = CVPixelBufferGetBaseAddress(buffer) {
-                memset(address, frame * 12, CVPixelBufferGetBytesPerRow(buffer) * 96)
+                memset(address, Int32(frame * 12), CVPixelBufferGetBytesPerRow(buffer) * 96)
             }
             CVPixelBufferUnlockBaseAddress(buffer, [])
             guard adaptor.append(buffer, withPresentationTime: CMTime(value: Int64(frame), timescale: 30)) else { throw writer.error ?? ProbeError.writeFailed("Video fixture append failed") }

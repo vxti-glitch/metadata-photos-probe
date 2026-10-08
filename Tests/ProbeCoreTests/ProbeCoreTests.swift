@@ -226,7 +226,7 @@ final class ProbeCoreTests: XCTestCase {
             guard CVPixelBufferCreate(kCFAllocatorDefault, 32, 32, kCVPixelFormatType_32BGRA, nil, &buffer) == kCVReturnSuccess, let buffer else { throw ProbeError.writeFailed("Pixel buffer unavailable") }
             CVPixelBufferLockBaseAddress(buffer, [])
             if let address = CVPixelBufferGetBaseAddress(buffer) {
-                memset(address, frame * 70, CVPixelBufferGetBytesPerRow(buffer) * 32)
+                memset(address, Int32(frame * 70), CVPixelBufferGetBytesPerRow(buffer) * 32)
             }
             CVPixelBufferUnlockBaseAddress(buffer, [])
             guard adaptor.append(buffer, withPresentationTime: CMTime(value: Int64(frame), timescale: 30)) else { throw writer.error ?? ProbeError.writeFailed("Cannot append fixture frame") }
