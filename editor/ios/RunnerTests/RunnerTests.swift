@@ -42,6 +42,49 @@ class RunnerTests: XCTestCase {
     XCTAssertNil(patch.lens)
   }
 
+  func testFilesystemConfinementIgnoresDirectoryHintButRejectsSiblingAndSymlink() throws {
+    let path = folder.appendingPathComponent("owned", isDirectory: true).path
+    let hintedDirectory = URL(fileURLWithPath: path, isDirectory: true)
+    let unhintedDirectory = URL(fileURLWithPath: path, isDirectory: false)
+    XCTAssertNotEqual(hintedDirectory, unhintedDirectory)
+    XCTAssertTrue(NativeFileSystem.samePath(hintedDirectory, unhintedDirectory))
+    try FileManager.default.createDirectory(at: hintedDirectory, withIntermediateDirectories: false)
+    let file = hintedDirectory.appendingPathComponent("source.jpg")
+    try jpeg().write(to: file)
+    XCTAssertTrue(NativeFileSystem.samePath(file.deletingLastPathComponent(), hintedDirectory))
+    XCTAssertTrue(NativeFileSystem.isDescendant(file, of: unhintedDirectory))
+    XCTAssertFalse(NativeFileSystem.isDescendant(folder.appendingPathComponent("owned-sibling/source.jpg"), of: hintedDirectory))
+    XCTAssertFalse(NativeFileSystem.isDescendant(hintedDirectory, of: unhintedDirectory))
+    let link = hintedDirectory.appendingPathComponent("link.jpg")
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: file)
+    XCTAssertFalse(NativeFileSystem.samePath(link.resolvingSymlinksInPath(), link))
+  }
+
+  func testEitherDirectoryHintImportsProcessesAndRecoversTheSameOwnedOutput() async throws {
+    let provider = folder.appendingPathComponent("directory-hint-source.jpg")
+    try jpeg().write(to: provider)
+    for hint in [false, true] {
+      let path = folder.appendingPathComponent("hint-\(hint)").path
+      let root = URL(fileURLWithPath: path, isDirectory: hint)
+      let previews = folder.appendingPathComponent("hint-preview-\(hint)", isDirectory: true)
+      let store = NativeSessionStore(root: root, previewRoot: previews)
+      let imported = try await store.importFile(provider)
+      let processed = try await store.process(sessionID: imported.id,
+        patch: CameraPatch(make: "Directory hint maker", model: "Directory hint model"))
+      let processing = try XCTUnwrap(processed.processing)
+      let output = try await store.exportURL(sessionID: imported.id, processingID: processing.id, acknowledgeIncomplete: true)
+      let alternateRoot = URL(fileURLWithPath: path, isDirectory: !hint)
+      let recoveredStore = NativeSessionStore(root: alternateRoot, previewRoot: previews)
+      let recovered = try await recoveredStore.list()
+      XCTAssertEqual(recovered.count, 1)
+      XCTAssertEqual(recovered[0].processing?.id, processing.id)
+      let recoveredOutput = try await recoveredStore.exportURL(sessionID: imported.id,
+        processingID: processing.id, acknowledgeIncomplete: true)
+      XCTAssertTrue(NativeFileSystem.samePath(output, recoveredOutput))
+      XCTAssertEqual(try WholeFileDigest.sha256(recoveredOutput), processing.outputSHA256)
+    }
+  }
+
   func testRealJPEGImportProcessRecoveryAndFrozenExportToken() async throws {
     let provider = folder.appendingPathComponent("provider.jpg")
     let data = jpeg()
@@ -333,6 +376,37 @@ class RunnerTests: XCTestCase {
       _ = try await recovered.exportURL(sessionID: second.id, processingID: sharedID, acknowledgeIncomplete: true)
       XCTFail("A different session reused the first session's qualified output")
     } catch NativeMediaError.processing { }
+  }
+
+  func testQualificationCacheFollowsCurrentOutputReplacementDeleteAndClear() async throws {
+    let provider = folder.appendingPathComponent("cache-lifecycle-source.jpg")
+    try jpeg().write(to: provider)
+    let root = folder.appendingPathComponent("cache-lifecycle", isDirectory: true)
+    let store = NativeSessionStore(root: root)
+    let first = try await store.importFile(provider)
+    var processingIDs = Set<UUID>()
+    for index in 0..<3 {
+      let result = try await store.process(sessionID: first.id,
+        patch: CameraPatch(make: "Synthetic maker \(index)", model: "Synthetic model \(index)"))
+      processingIDs.insert(try XCTUnwrap(result.processing).id)
+      let count = await store.cachedQualificationCount
+      XCTAssertEqual(count, 1, "Replacing an output retained a previous qualification report")
+    }
+    XCTAssertEqual(processingIDs.count, 3)
+    let second = try await store.importFile(provider)
+    _ = try await store.process(sessionID: second.id, patch: CameraPatch(make: "Second maker", model: "Second model"))
+    let twoLive = await store.cachedQualificationCount
+    XCTAssertEqual(twoLive, 2)
+    try await store.delete(first.id)
+    let afterDeletion = await store.cachedQualificationCount
+    XCTAssertEqual(afterDeletion, 1)
+    let recovered = NativeSessionStore(root: root)
+    _ = try await recovered.list()
+    let beforeRequalification = await recovered.cachedQualificationCount
+    XCTAssertEqual(beforeRequalification, 0)
+    try await store.clear()
+    let afterClear = await store.cachedQualificationCount
+    XCTAssertEqual(afterClear, 0)
   }
 
   private func jpeg() -> Data {

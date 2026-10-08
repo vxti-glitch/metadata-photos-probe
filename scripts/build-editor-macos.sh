@@ -45,10 +45,19 @@ cd "$task_root/editor"
 ruby "$task_root/scripts/editor-sync-project.rb" 2>&1 | tee "$task_build/evidence/project-sync.log"
 task_destination="$(python3 "$task_root/scripts/select-simulator.py" 2>"$task_build/evidence/simulator.txt")"
 cat "$task_build/evidence/simulator.txt"
+# Hosted tests share one Flutter app process. Serial execution avoids simulator clones and
+# makes session/import failures attributable to one test without masking a failing result.
+set +e
 xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner -configuration Debug \
   -destination "$task_destination" -derivedDataPath "$task_build/DerivedData" \
-  -resultBundlePath "$task_build/NativeTests.xcresult" test \
+  -resultBundlePath "$task_build/NativeTests.xcresult" -parallel-testing-enabled NO test \
   CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$task_build/evidence/native-tests.log"
+task_native_status=${PIPESTATUS[0]}
+set -e
+printf '%s\n' "$task_native_status" > "$task_build/evidence/native-test-exit.txt"
+python3 "$task_root/scripts/editor-test-results.py" --result "$task_build/NativeTests.xcresult" \
+  --evidence "$task_build/evidence" 2>&1 | tee "$task_build/evidence/native-test-diagnostics.txt" || true
+[[ "$task_native_status" == 0 ]] || exit "$task_native_status"
 task_simulator_id="${task_destination##*id=}"
 task_simulator_app="$task_build/DerivedData/Build/Products/Debug-iphonesimulator/Runner.app"
 [[ -d "$task_simulator_app" ]] || { printf '%s\n' 'Simulator test build did not produce the editor app.' >&2; exit 1; }

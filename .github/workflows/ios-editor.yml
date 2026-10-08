@@ -47,6 +47,18 @@ jobs:
       - name: Test, launch simulator and compile arm64 device archive
         shell: bash
         run: bash scripts/build-editor-macos.sh
+      - name: Preserve XCTest JSON diagnostics after any build result
+        if: always()
+        shell: bash
+        run: |
+          if [[ -d build/editor/NativeTests.xcresult && ! -f build/editor/evidence/native-test-summary.json ]]; then
+            if [[ -d /Applications/Xcode_26.2.app/Contents/Developer ]]; then
+              export DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer
+            elif [[ -d /Applications/Xcode_16.4.app/Contents/Developer ]]; then
+              export DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer
+            fi
+            python3 scripts/editor-test-results.py --result build/editor/NativeTests.xcresult --evidence build/editor/evidence
+          fi
       - name: Upload editor and verification evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

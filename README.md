@@ -1,4 +1,8 @@
-# Photos Metadata Feasibility Probe
+# Zlarp Metadata — editor and preserved feasibility probe
+
+The user has authorized main-app development with **Flutter + Swift**, and the owner accepted explicit Files/Safari/iCloud Photos export. The first working editor lives in [editor/](editor/README.md), with its [full preserved milestone plan](editor/docs/MAIN-APP-MILESTONES.md) and [actual validation record](editor/docs/VALIDATION.md). The canonical Swift engine is shared; the diagnostic app below remains available independently.
+
+## Photos Metadata Feasibility Probe
 
 Single-file SwiftUI/iOS diagnostic app for an iPhone 15 Pro Max running reported iOS 27.2. It tests embedded camera metadata, source/output integrity and public PhotoKit save routes. **It does not suppress attribution or automatically inspect Apple Photos' interface.**
 

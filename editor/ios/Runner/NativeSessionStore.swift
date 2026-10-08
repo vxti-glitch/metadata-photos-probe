@@ -55,6 +55,22 @@ enum NativeJSON {
     }
 }
 
+/// URL equality includes directory hints/trailing URL separators. Confinement
+/// concerns filesystem components instead; resolve links separately before
+/// comparing them so identical directory URLs do not produce false failures.
+enum NativeFileSystem {
+    static func samePath(_ left: URL, _ right: URL) -> Bool {
+        left.isFileURL && right.isFileURL
+            && left.standardizedFileURL.pathComponents == right.standardizedFileURL.pathComponents
+    }
+    static func isDescendant(_ candidate: URL, of root: URL) -> Bool {
+        guard candidate.isFileURL, root.isFileURL else { return false }
+        let components = candidate.standardizedFileURL.pathComponents
+        let parent = root.standardizedFileURL.pathComponents
+        return components.count > parent.count && components.starts(with: parent)
+    }
+}
+
 /// Serializes the local journal. Native-only generated relative names are the
 /// sole authority for disk access; Flutter never supplies a URL or filename.
 actor NativeSessionStore {
@@ -70,6 +86,8 @@ actor NativeSessionStore {
     private var loaded = false
     private var sessions: [NativeSession] = []
     private var qualifiedComparisons = [QualificationKey: IntegrityComparison]()
+    // Internal diagnostic only; never exposed through the Flutter channel.
+    var cachedQualificationCount: Int { qualifiedComparisons.count }
 
     init(root: URL, previewRoot: URL? = nil, mediaSizeLimit: Int64 = NativeSessionStore.maximumMediaBytes,
          processOperation: @escaping @Sendable (URL, URL, CameraPatch) async throws -> ProcessingResult = {
@@ -308,11 +326,11 @@ actor NativeSessionStore {
         guard !loaded else { return }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true,
             attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
-        guard root.resolvingSymlinksInPath().standardizedFileURL == root else { throw NativeMediaError.storage }
+        guard NativeFileSystem.samePath(root.resolvingSymlinksInPath(), root) else { throw NativeMediaError.storage }
         try FileManager.default.createDirectory(at: previewRoot, withIntermediateDirectories: true,
             attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
-        guard previewRoot.resolvingSymlinksInPath().standardizedFileURL == previewRoot,
-              previewRoot != root, !previewRoot.path.hasPrefix(root.path + "/") else { throw NativeMediaError.storage }
+        guard NativeFileSystem.samePath(previewRoot.resolvingSymlinksInPath(), previewRoot),
+              !NativeFileSystem.samePath(previewRoot, root), !NativeFileSystem.isDescendant(previewRoot, of: root) else { throw NativeMediaError.storage }
         var excluded = root
         var values = URLResourceValues(); values.isExcludedFromBackup = true
         try excluded.setResourceValues(values)
@@ -353,6 +371,14 @@ actor NativeSessionStore {
         if FileManager.default.fileExists(atPath: url.path) { try Self.requireRegularFile(url, maximumBytes: Int64(Self.maximumManifestBytes)) }
         try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         sessions = replacement
+        // Qualification applies only to each session's current frozen output.
+        // History remains on disk without retaining its potentially large check
+        // reports in this additional cache. Replacement/deletion/clear all use
+        // this same journal transition, bounding cache entries by live sessions.
+        let liveKeys = Set(replacement.compactMap { session in
+            session.processing.map { QualificationKey(session: session.id, processing: $0.id) }
+        })
+        qualifiedComparisons = qualifiedComparisons.filter { liveKeys.contains($0.key) }
     }
 
     private func createDirectory(_ id: UUID) throws -> URL {
@@ -365,7 +391,8 @@ actor NativeSessionStore {
 
     private func confinedDirectory(_ id: UUID) throws -> URL {
         let directory = root.appendingPathComponent(id.uuidString, isDirectory: true).standardizedFileURL
-        guard directory.path.hasPrefix(root.path + "/"), directory.resolvingSymlinksInPath() == directory else { throw NativeMediaError.storage }
+        guard NativeFileSystem.isDescendant(directory, of: root),
+              NativeFileSystem.samePath(directory.resolvingSymlinksInPath(), directory) else { throw NativeMediaError.storage }
         return directory
     }
 
@@ -379,7 +406,8 @@ actor NativeSessionStore {
         _ = try allowedExtension((name as NSString).pathExtension)
         let directory = try confinedDirectory(id)
         let url = directory.appendingPathComponent(name).standardizedFileURL
-        guard url.deletingLastPathComponent() == directory, url.resolvingSymlinksInPath() == url else { throw NativeMediaError.storage }
+        guard NativeFileSystem.samePath(url.deletingLastPathComponent(), directory),
+              NativeFileSystem.samePath(url.resolvingSymlinksInPath(), url) else { throw NativeMediaError.storage }
         return url
     }
 
@@ -434,7 +462,8 @@ actor NativeSessionStore {
     private func confinedPreview(_ id: UUID, name: String) throws -> URL {
         guard name == "\(id.uuidString).png" else { throw NativeMediaError.storage }
         let url = previewRoot.appendingPathComponent(name).standardizedFileURL
-        guard url.deletingLastPathComponent() == previewRoot, url.resolvingSymlinksInPath() == url else { throw NativeMediaError.storage }
+        guard NativeFileSystem.samePath(url.deletingLastPathComponent(), previewRoot),
+              NativeFileSystem.samePath(url.resolvingSymlinksInPath(), url) else { throw NativeMediaError.storage }
         return url
     }
 
