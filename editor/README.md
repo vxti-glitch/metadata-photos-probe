@@ -16,7 +16,7 @@ Files exporter completion confirms only a copy. Browser opening confirms only a 
 
 - `lib/`: Flutter models, typed method-channel adapter, single-operation controller and editor screens.
 - `ios/Runner/`: native channel, UIKit/PhotosUI pickers and bounded Swift session store.
-- `../../Sources/ProbeCore`: canonical Swift package via local Xcode package path `../..` from `editor/ios` (the repository root). No copied or Dart-reimplemented media writer.
+- Repository-root `Sources/ProbeCore` (`../Sources/ProbeCore` from `editor/`): canonical Swift package via local Xcode package path `../..` from `editor/ios` (the repository root). No copied or Dart-reimplemented media writer.
 - `test/`, `ios/RunnerTests/`, parent `Tests/ProbeCoreTests/`: Flutter, native integration and engine tests.
 - `docs/BRIDGE-CONTRACT.md`: versioned map/ID boundary. Media never travels through channel messages and Dart cannot supply native paths.
 - `docs/MAIN-APP-MILESTONES.md`: complete preserved roadmap, including broader fields, PNG, removal, presets/profiles/randomization, bulk/recovery and owner release integration.
