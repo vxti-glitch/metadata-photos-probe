@@ -14,7 +14,7 @@ Validated October 8, 2026. [Final GitHub macOS run 37751001638](https://github.c
 | Integrity | Coded image/media payloads, item graph or video track/sample/timing/format/transform evidence and exposed non-target metadata are independently compared. All five generated processed controls remain **incomplete** for opaque metadata/container/HDR semantics, rather than universally lossless. Known mismatches remain blocked. |
 | Packaging | Generic iOS Release archive succeeded. Downloaded IPA, archive, source ZIP and fixture ZIP match manifest byte counts/SHA-256. Fixture file checksums also matched. IPA contains arm64 Mach-O, version 0.2.0/build 2/minimum iOS 17.0, no provisioning profile or code signature. |
 | Signing/install | Repository signing secrets/variables remain absent. The package is **unsigned and not ordinarily installable**. Use the authorized signing method used for the first IPA or configure the documented team workflow. No 0.2 installation is claimed. |
-| Physical 0.2 tests | Not run. iPhone 15 Pro Max / reported iOS 27.2 remains the primary target. |
+| Physical 0.2 follow-up | User reported HEIC recognition followed by `Unsupported media: Exif has ambiguous association` at the on-device write action. Screenshot shows the follow-up interface; exact installed version/build and original file structure have not been independently captured. Successful real-camera HEIC writing remains unverified. |
 | Full editor | Not implemented; only the authorized feasibility follow-up. |
 
 The final run passed **84 tests** (47 engine + 26 hosted app + 11 portable). Code review identified TIFF string alignment, shared observation drafts and a stale exporter presentation callback; all were corrected and independently re-reviewed. Final verification separately confirmed scope, tests, packaging and remaining evidence limits.
@@ -26,6 +26,8 @@ The user installed a re-signed version 0.1/build 1 on the reported target phone.
 The user's manual Files -> Safari/iCloud.com Photos -> synchronized Photos workflow showed changed JPEG camera information without an unwanted source label. Screenshots showed equal dimensions and rounded size, which do not alone prove unchanged compressed data. The user also reported no unwanted source labels for HEIC, MP4 and MOV uploads. Those latter trials established a save-route observation, not successful on-phone metadata writing by version 0.2. Duplicate warnings remain inconclusive for any trial that does not create an identifiable result.
 
 The JPEG screenshots showed a source location map and a processed image without a map. The new diagnostics expose embedded GPS and library location separately; no location loss cause or automatic repair is claimed. Returned-original inspection is optional and never creates another Photos asset.
+
+The first reported follow-up HEIC attempt reached a deliberately narrow association guard: the unique EXIF item must have a `cdsc` reference whose target list is exactly the primary image alone. The reported error also covers other reference types/targets, so the screenshot does not prove a particular multi-image layout or a corrupt file. Parsing rejected it before creating a processed output or a Photos save. Inspect the actual original HEIC before qualifying additional layouts; do not simply remove the guard or convert to JPEG. The controlled cloud samples did not cover this physical input.
 
 ### Delivered 0.2 artifacts
 
