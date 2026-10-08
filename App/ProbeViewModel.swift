@@ -168,6 +168,9 @@ final class ProbeViewModel: ObservableObject {
     func transform() {
         guard canTransform, let source, let sourceInspection else { return }
         let intended = ProbeSafetyPolicy.patch(make: make, model: model, lens: lens, kind: sourceInspection.kind)
+        // Retain historical trial files, but never offer an earlier output as the
+        // result of a newly requested write that may fail.
+        clearOutput()
         run("Writing metadata on this device…") {
             let output = self.stagingDirectory.appendingPathComponent(UUID().uuidString)
                 .appendingPathExtension(source.fileURL.pathExtension)
@@ -527,7 +530,10 @@ final class ProbeViewModel: ObservableObject {
             defer { self.busy = false; self.work = nil }
             do { try await operation() }
             catch is CancellationError { self.status = "Operation canceled; inspect any recorded commit before repeating." }
-            catch { self.errorMessage = error.localizedDescription }
+            catch {
+                self.errorMessage = error.localizedDescription
+                self.status = "Operation stopped with an error. Review the error and recorded save state before repeating."
+            }
         }
     }
 

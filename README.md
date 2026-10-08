@@ -24,7 +24,7 @@ Windows can edit the source and dispatch the workflow. It cannot compile PhotoKi
 
 ## Device experiment
 
-For version 0.2 follow [PROTOTYPE-0.2-TESTS.md](docs/PROTOTYPE-0.2-TESTS.md): perform an actual on-device camera change, export through Files, then upload manually through Safari/iCloud. [DEVICE-TEST-PROTOCOL.md](docs/DEVICE-TEST-PROTOCOL.md) preserves the original direct PhotoKit experiment. Stage A imports a prepared counterpart or unchanged control; Stage B performs the camera change on the device after acknowledging the baseline result.
+For the current HEIC compatibility patch follow [PROTOTYPE-0.2.1-HEIC-FIX.md](docs/PROTOTYPE-0.2.1-HEIC-FIX.md). The broader [0.2 protocol](docs/PROTOTYPE-0.2-TESTS.md) covers on-device camera changes, Files export and manual Safari/iCloud upload. [DEVICE-TEST-PROTOCOL.md](docs/DEVICE-TEST-PROTOCOL.md) preserves the original direct PhotoKit experiment. Stage A imports a prepared counterpart or unchanged control; Stage B performs the camera change on the device after acknowledging the baseline result.
 
 The two new-asset routes and existing-content-edit route are independent tests. User-recorded label absence is not automatically a full feasibility verdict. Genuine camera, existing iCloud-upload and previously app-attributed controls must be characterized on hardware.
 

@@ -138,6 +138,24 @@ final class FileWorkflowTests: XCTestCase {
         XCTAssertEqual(value.attribution, .present)
         XCTAssertEqual(value.fileAttribution, .notChecked)
     }
+
+    func testFailedWriteEndsProgressAndDoesNotOfferEarlierOutput() async throws {
+        let photos = CountingFilePhotos()
+        let value = try await model(photos: photos)
+        let source = try XCTUnwrap(value.source?.fileURL)
+        let original = try Data(contentsOf: source)
+        let historical = try XCTUnwrap(value.outputURL)
+        value.stage = .onDevice; value.stageAReviewed = true; value.make = ""
+        value.transform(); await idle(value)
+        XCTAssertNotNil(value.errorMessage)
+        XCTAssertTrue(value.status.contains("stopped with an error"))
+        XCTAssertNil(value.outputURL); XCTAssertNil(value.outputInspection); XCTAssertNil(value.comparison)
+        XCTAssertFalse(value.canSave); XCTAssertNil(value.beginFilesExport())
+        XCTAssertEqual(try Data(contentsOf: source), original)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: historical.path))
+        XCTAssertEqual(value.fileTrials.count, 1)
+        let commits = await photos.commits; XCTAssertEqual(commits, 0)
+    }
 }
 
 private actor CountingFilePhotos: ProbePhotosAccess {

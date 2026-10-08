@@ -44,6 +44,7 @@ public enum MediaIntegrity {
             } else {
                 do {
                     let original = try HEICMetadataWriter.inventory(source), edited = try HEICMetadataWriter.inventory(output)
+                    limitations += Array(Set(original.limitations + edited.limitations)).sorted()
                     check("HEIC non-Exif item bytes", original.nonExifItemSHA256 == edited.nonExifItemSHA256,
                           "Independently hash all non-Exif item extents, including coded image, thumbnail and auxiliary items.")
                     check("HEIC item graph and properties", original.itemGraphSHA256 == edited.itemGraphSHA256 &&

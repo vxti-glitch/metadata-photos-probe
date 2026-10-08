@@ -97,9 +97,81 @@ final class HEICMetadataWriterTests: XCTestCase {
         }
     }
 
-    func testExifMustDescribeOnlyThePrimaryItemExactlyOnce() throws {
+    func testExifRejectsUnqualifiedMultipleImageAssociations() throws {
         for (index, targets) in [[UInt16(3)], [UInt16(1), UInt16(3)], []].enumerated() {
             try assertRejected(Fixture(exifTargets: targets).bytes, name: "association-\(index)")
+        }
+    }
+
+    func testSharedPrimaryToneMapExifPreservesEveryItemAndReference() throws {
+        for little in [false, true] {
+            let references = little ? sharedToneMapReferences.replacing(type: "cdsc", from: 2, targets: [5, 1]) : sharedToneMapReferences
+            let fixture = Fixture(little: little, sharedToneMap: true, referenceOverrides: references)
+            let source = folder.appendingPathComponent("shared-source-\(little).heic")
+            let output = folder.appendingPathComponent("shared-output-\(little).heic")
+            try fixture.bytes.write(to: source)
+            let sourceHash = try WholeFileDigest.sha256(source)
+            let inventory = try HEICMetadataWriter.inventory(source)
+            XCTAssertEqual(Set(inventory.nonExifItemSHA256.keys), Set(["1", "3", "4", "5", "6", "7"]))
+            XCTAssertTrue(inventory.limitations.contains { $0.contains("camera edits apply to both") })
+            try HEICMetadataWriter.write(source: source, output: output,
+                patch: CameraPatch(make: "Shared maker", model: "Shared model", lens: "Shared lens"))
+            let bytes = try Data(contentsOf: output)
+            XCTAssertEqual(try HEICMetadataWriter.inventory(output), inventory)
+            XCTAssertEqual(try WholeFileDigest.sha256(source), sourceHash)
+            // Independent checks compare the original raw reference box, every
+            // non-Exif item byte range, and the TIFF body, not just inventory.
+            for boxType in ["iref", "iprp"] {
+                let oldBox = try XCTUnwrap(fixture.bytes.range(of: Data(boxType.utf8)))
+                let length = Int(number(fixture.bytes, oldBox.lowerBound - 4, 4))
+                let range = (oldBox.lowerBound - 4)..<(oldBox.lowerBound - 4 + length)
+                XCTAssertEqual(Data(bytes[range]), Data(fixture.bytes[range]))
+            }
+            for id in inventory.nonExifItemSHA256.keys {
+                let item = UInt32(id)!
+                let offset = fixture.itemOffsets[item]!
+                let count = Int(number(fixture.bytes, fixture.lengthFields[item]!, 4))
+                XCTAssertEqual(Data(bytes[offset..<offset + count]), Data(fixture.bytes[offset..<offset + count]))
+            }
+            let edited = fixture.exifTIFF(in: bytes)
+            XCTAssertEqual(Data(edited[8..<fixture.tiff.count]), Data(fixture.tiff[8...]))
+            let root = Int(number(edited, 4, 4, little))
+            XCTAssertEqual(ascii(edited, directory: root, tag: 0x010f, little: little), "Shared maker")
+            XCTAssertEqual(ascii(edited, directory: root, tag: 0x0110, little: little), "Shared model")
+        }
+    }
+
+    func testSharedExifRejectsUnrelatedDuplicatedAndCyclicAssociations() throws {
+        let valid = sharedToneMapReferences
+        let cases: [(String, [Reference])] = [
+            ("unrelated-description", valid.replacing(type: "cdsc", from: 2, targets: [1, 3])),
+            ("duplicate-description-target", valid.replacing(type: "cdsc", from: 2, targets: [1, 1])),
+            ("missing-primary-description", valid.replacing(type: "cdsc", from: 2, targets: [3, 5])),
+            ("extra-description-target", valid.replacing(type: "cdsc", from: 2, targets: [1, 5, 4])),
+            ("duplicate-description-box", valid + [("cdsc", 2, [1, 5])]),
+            ("extra-exif-relationship", valid + [("auxl", 2, [1])]),
+            ("reversed-tone-inputs", valid.replacing(type: "dimg", from: 5, targets: [3, 1])),
+            ("duplicate-tone-inputs", valid.replacing(type: "dimg", from: 5, targets: [1, 1])),
+            ("missing-tone-input", valid.replacing(type: "dimg", from: 5, targets: [1])),
+            ("missing-gain-link", valid.filter { !($0.0 == "auxl" && $0.1 == 3) }),
+            ("unrelated-gain-link", valid.replacing(type: "auxl", from: 3, targets: [6])),
+            ("duplicate-gain-link", valid + [("auxl", 3, [1])]),
+            ("duplicate-tone-reference", valid + [("dimg", 5, [1, 3])]),
+            ("extra-tone-reference", valid + [("thmb", 5, [1])]),
+            ("primary-grid-cycle", valid.replacing(type: "dimg", from: 1, targets: [5])),
+            ("gain-grid-cycle", valid.replacing(type: "dimg", from: 3, targets: [3])),
+            ("tile-cycle", valid + [("dimg", 6, [1])]),
+            ("duplicate-grid-tile", valid.replacing(type: "dimg", from: 1, targets: [6, 6])),
+            ("unknown-tone-input", valid.replacing(type: "dimg", from: 5, targets: [1, 99])),
+            ("unqualified-primary-link", valid + [("thmb", 1, [3])])]
+        for (name, references) in cases {
+            try assertRejected(Fixture(sharedToneMap: true, referenceOverrides: references).bytes, name: name)
+        }
+    }
+
+    func testSharedExifRejectsUnqualifiedItemTypes() throws {
+        for (id, type) in [(UInt32(5), "iden"), (UInt32(3), "mime"), (UInt32(6), "grid")] {
+            try assertRejected(Fixture(typeOverrides: [id: type], sharedToneMap: true).bytes, name: "shared-type-\(id)")
         }
     }
 
@@ -163,6 +235,16 @@ final class HEICMetadataWriterTests: XCTestCase {
     }
 }
 
+private typealias Reference = (String, UInt16, [UInt16])
+private let sharedToneMapReferences: [Reference] = [
+    ("dimg", 1, [6]), ("dimg", 3, [7]), ("auxl", 3, [1]),
+    ("cdsc", 4, [3]), ("dimg", 5, [1, 3]), ("cdsc", 2, [1, 5])]
+private extension Array where Element == Reference {
+    func replacing(type: String, from: UInt16, targets: [UInt16]) -> [Reference] {
+        map { $0.0 == type && $0.1 == from ? (type, from, targets) : $0 }
+    }
+}
+
 private struct Fixture {
     let bytes: Data
     let tiff: Data
@@ -173,33 +255,41 @@ private struct Fixture {
     let ilocCountField: Int
     let propertyValueField: Int
 
-    init(little: Bool = false, typeOverrides: [UInt32: String] = [:], exifTargets: [UInt16] = [1], oddTIFFLength: Bool = false) {
+    init(little: Bool = false, typeOverrides: [UInt32: String] = [:], exifTargets: [UInt16] = [1], oddTIFFLength: Bool = false,
+         sharedToneMap: Bool = false, referenceOverrides: [Reference]? = nil) {
         self.little = little
         var originalTIFF = makeTIFF(little: little)
         if oddTIFFLength && originalTIFF.count % 2 == 0 { originalTIFF.append(0xa5) }
         tiff = originalTIFF
         let exif = Data([0,0,0,6]) + Data("Exif\0\0".utf8) + tiff
-        let payloads: [(UInt32, Data)] = [(1, Data("coded-primary-diagnostic".utf8)), (2, exif), (3, Data("auxiliary-HDR-depth-diagnostic".utf8)), (4, Data("<unknown:opaque xmlns:unknown='urn:probe'>keep</unknown:opaque>".utf8))]
+        var payloads: [(UInt32, Data)] = [(1, Data("coded-primary-diagnostic".utf8)), (2, exif), (3, Data("auxiliary-HDR-depth-diagnostic".utf8)), (4, Data("<unknown:opaque xmlns:unknown='urn:probe'>keep</unknown:opaque>".utf8))]
+        var types: [(UInt32, String)] = [(1, sharedToneMap ? "grid" : "hvc1"), (2, "Exif"), (3, sharedToneMap ? "grid" : "hvc1"), (4, "mime")]
+        if sharedToneMap {
+            payloads += [(5, Data("tone-map-diagnostic".utf8)), (6, Data("primary-tile-diagnostic".utf8)), (7, Data("gain-map-tile-diagnostic".utf8))]
+            types += [(5, "tmap"), (6, "hvc1"), (7, "hvc1")]
+        }
         let ftyp = box("ftyp", Data("heic".utf8) + Data(repeating: 0, count: 4) + Data("mif1heic".utf8))
-        var info = Data(repeating: 0, count: 4) + encoded(4, 2)
-        for (id, type) in [(UInt32(1), "hvc1"), (UInt32(2), "Exif"), (UInt32(3), "hvc1"), (UInt32(4), "mime")] {
+        var info = Data(repeating: 0, count: 4) + encoded(UInt64(types.count), 2)
+        for (id, type) in types {
             let actualType = typeOverrides[id] ?? type
             var body = Data([2,0,0,0]) + encoded(UInt64(id), 2) + Data([0,0]) + Data(actualType.utf8) + Data([0])
             if actualType == "mime" { body.append(Data("application/rdf+xml\0".utf8)) }
             info.append(box("infe", body))
         }
         var references = Data(repeating: 0, count: 4)
-        references.append(box("cdsc", encoded(2, 2) + encoded(UInt64(exifTargets.count), 2) + exifTargets.reduce(Data()) { $0 + encoded(UInt64($1), 2) }))
-        references.append(box("auxl", encoded(3, 2) + encoded(1, 2) + encoded(1, 2)))
-        references.append(box("cdsc", encoded(4, 2) + encoded(1, 2) + encoded(1, 2)))
+        let selectedReferences = referenceOverrides ?? (sharedToneMap ? sharedToneMapReferences : [("cdsc", 2, exifTargets), ("auxl", 3, [1]), ("cdsc", 4, [1])])
+        for (type, from, targets) in selectedReferences {
+            references.append(box(type, encoded(UInt64(from), 2) + encoded(UInt64(targets.count), 2)
+                + targets.reduce(Data()) { $0 + encoded(UInt64($1), 2) }))
+        }
         let properties = box("iprp", box("ipco", box("ispe", Data(repeating: 0, count: 4) + encoded(16, 4) + encoded(8, 4))))
         let prefix = Data(repeating: 0, count: 4) + box("pitm", Data(repeating: 0, count: 4) + encoded(1, 2)) + box("iinf", info) + box("iref", references) + properties
         // iloc v0, four local items, fixed-width offsets/lengths, one extent each.
-        let locationSize = 8 + 4 + 2 + 2 + 4 * 14
+        let locationSize = 8 + 4 + 2 + 2 + payloads.count * 14
         let metaSize = 8 + prefix.count + locationSize
         var offsets = [UInt32: Int](), cursor = ftyp.count + metaSize + 8
         for (id, payload) in payloads { offsets[id] = cursor; cursor += payload.count }
-        var location = Data(repeating: 0, count: 4) + Data([0x44,0]) + encoded(4, 2)
+        var location = Data(repeating: 0, count: 4) + Data([0x44,0]) + encoded(UInt64(payloads.count), 2)
         var fields = [UInt32: Int](), lengths = [UInt32: Int]()
         let locationStart = ftyp.count + 8 + prefix.count
         for (id, payload) in payloads {
