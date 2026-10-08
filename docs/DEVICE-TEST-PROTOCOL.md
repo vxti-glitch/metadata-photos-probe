@@ -15,6 +15,8 @@ For JPEG, HEIC, MP4 and MOV, obtain:
 
 The generated fixtures contain simulated camera metadata and are not authentic captures. Their manifest reflects macOS engine results, not iPhone behavior. If a counterpart was not generated, use an independently validated counterpart or record the operation unsupported; do not substitute a recompressed conversion.
 
+The verified cloud build supplies processed dated/undated JPEG and H.264 MOV controls. Its HEIC and MP4 candidate writes failed camera readback, so those formats have originals only. Use **Use unchanged source** first for their creation/edit control, then independently validated prepared counterparts if available. Stage B must record whether the native writer also refuses on the actual iPhone; successful macOS guard tests are not successful HEIC/MP4 edits. Both JPEG variants remain synthetic; never remove a real capture's date to imitate the undated control.
+
 Do not construct all existing-asset controls using the probe's new-asset route: that can give them this app's source association and contaminate the comparison. If duplicating a control, check its displayed source first.
 
 ## Stage A: test PhotoKit with prepared files

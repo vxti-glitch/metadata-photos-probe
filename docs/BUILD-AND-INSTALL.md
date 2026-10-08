@@ -109,4 +109,4 @@ It downloads the pinned XcodeGen build tool, verifies its published SHA-256, and
 - [Apple ad hoc profiles](https://developer.apple.com/help/account/provisioning-profiles/create-an-ad-hoc-provisioning-profile) require registered eligible devices.
 - [Apple TestFlight overview](https://developer.apple.com/help/app-store-connect/test-a-beta-version/testflight-overview/) explains its time-limited beta builds.
 
-Only the build logs from an actual successful macOS run establish compilation/test/archive success. Only an actual signed export establishes an IPA artifact, and only physical-device results establish installation and Photos feasibility.
+Only the build logs from an actual successful macOS run establish compilation/test/archive success. A packaged unsigned IPA establishes a build artifact; a verified signed export establishes an eligible installation candidate. Only physical-device results establish installation and Photos feasibility.
