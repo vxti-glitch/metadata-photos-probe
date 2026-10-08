@@ -49,7 +49,9 @@ final class PhotosPolicyTests: XCTestCase {
 
     @MainActor
     func testPendingCanceledPhotosImportBlocksClearAndDiscardsLateFile() async throws {
-        let probe = ProbeViewModel()
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let probe = ProbeViewModel(workspaceOverride: temporary.appendingPathComponent("PhotosMetadataProbe"))
         let generation = try XCTUnwrap(probe.beginPhotosAcquisition())
         XCTAssertTrue(probe.busy)
         XCTAssertNil(probe.beginPhotosAcquisition(), "A pending provider must retain its exclusive acquisition.")
@@ -71,7 +73,9 @@ final class PhotosPolicyTests: XCTestCase {
 
     @MainActor
     func testStalePhotosCallbackCannotReleaseNewAcquisitionOrAcceptFile() async throws {
-        let probe = ProbeViewModel()
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let probe = ProbeViewModel(workspaceOverride: temporary.appendingPathComponent("PhotosMetadataProbe"))
         let active = try XCTUnwrap(probe.beginPhotosAcquisition())
         let staged = probe.stagingDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
         try Data([0xFF, 0xD8, 0xFF, 0xD9]).write(to: staged)

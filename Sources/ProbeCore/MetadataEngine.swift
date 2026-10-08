@@ -47,8 +47,9 @@ public enum MetadataEngine {
         let tracks = try await asset.load(.tracks)
         guard tracks.contains(where: { $0.mediaType == .video }) else { throw ProbeError.unsupported("No video track") }
         let duration = try await asset.load(.duration)
+        let metadataFormats = try await asset.load(.availableMetadataFormats)
         var metadata = [String: String]()
-        for item in try await asset.load(.metadata) {
+        for item in try await containerMetadata(asset) {
             if let value = try await item.load(.stringValue) {
                 metadata[item.identifier?.rawValue ?? String(describing: item.key)] = value
                 if item.identifier == .quickTimeMetadataMake { metadata["make"] = value }
@@ -57,7 +58,7 @@ public enum MetadataEngine {
         }
         return MediaInspection(kind: kind, byteCount: size, metadata: metadata,
             notes: ["QuickTime camera fields are embedded tags; whether Photos shows them is unverified.", "Passthrough is not proof of preservation of every container, HDR or opaque-track semantic."],
-            structure: ["duration": canonicalTime(duration), "tracks": String(tracks.count), "trackTypes": tracks.map { $0.mediaType.rawValue }.joined(separator: ","), "boxes": inventory.types.joined(separator: ",")])
+            structure: ["duration": canonicalTime(duration), "tracks": String(tracks.count), "trackTypes": tracks.map { $0.mediaType.rawValue }.joined(separator: ","), "boxes": inventory.types.joined(separator: ","), "metadataFormats": metadataFormats.map { $0.rawValue }.joined(separator: ",")])
     }
 
     public static func process(source: URL, output: URL, patch: CameraPatch) async throws -> ProcessingResult {
@@ -72,7 +73,7 @@ public enum MetadataEngine {
         let outputInspection = try await inspect(output)
         guard outputInspection.kind == sourceInspection.kind else { throw ProbeError.readbackFailed("Container format changed") }
         guard outputInspection.metadata["make"] == patch.make, outputInspection.metadata["model"] == patch.model else {
-            throw ProbeError.readbackFailed("Requested make/model are not present exactly")
+            throw ProbeError.readbackFailed("Requested make/model are not present exactly. Actual inspected metadata: \(outputInspection.metadata). Metadata formats: \(outputInspection.structure["metadataFormats"] ?? "ImageIO").")
         }
         if let lens = patch.lens, outputInspection.metadata["lens"] != lens { throw ProbeError.readbackFailed("Requested lens is not present exactly") }
         let integrity = try await MediaIntegrity.compare(source: source, output: output, patch: patch)
@@ -117,7 +118,7 @@ public enum MetadataEngine {
         guard session.supportedFileTypes.contains(fileType) else { throw ProbeError.unsupported("Same-container passthrough unavailable") }
         session.outputURL = output; session.outputFileType = fileType
         session.shouldOptimizeForNetworkUse = false
-        let existing = try await asset.load(.metadata)
+        let existing = try await containerMetadata(asset)
         let replaced: Set<AVMetadataIdentifier> = [.quickTimeMetadataMake, .quickTimeMetadataModel]
         var items = existing.filter { !replaced.contains($0.identifier ?? AVMetadataIdentifier(rawValue: "")) }
         for (identifier, value) in [(AVMetadataIdentifier.quickTimeMetadataMake, patch.make), (.quickTimeMetadataModel, patch.model)] {
@@ -134,6 +135,16 @@ public enum MetadataEngine {
             }
         }, onCancel: { operation.cancel() })
         try Task.checkCancellation()
+    }
+
+    /// Read each advertised keyspace, including QuickTime mdta. Common metadata is
+    /// an incomplete view and must not be used as the preservation inventory.
+    private static func containerMetadata(_ asset: AVAsset) async throws -> [AVMetadataItem] {
+        let formats = try await asset.load(.availableMetadataFormats)
+        if formats.isEmpty { return try await asset.load(.metadata) }
+        var items = [AVMetadataItem]()
+        for format in formats { items += try await asset.loadMetadata(for: format) }
+        return items
     }
 
     /// Detect the container brand independently of the filename.

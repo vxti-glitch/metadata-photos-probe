@@ -88,9 +88,22 @@ final class ProbeCoreTests: XCTestCase {
         XCTAssertEqual(result.outputInspection.metadata["lens"], "Probe Lens")
         XCTAssertEqual(result.outputInspection.structure["orientation"], "6")
         XCTAssertEqual(try WholeFileDigest.sha256(source), originalHash)
-        let compressed = result.integrity.checks.first { $0.name == "JPEG compressed scans and coding/color blocks" }
+        let compressed = result.integrity.checks.first { $0.name == "JPEG compressed scans and coding segments" }
         XCTAssertEqual(compressed?.status, .passed)
         XCTAssertNotEqual(result.integrity.status, .verified, "Opaque metadata is still explicitly unqualified")
+    }
+
+    func testJPEGApplicationLossRemainsBlockedWithoutMislabelingRecompression() async throws {
+        let source = folder.appendingPathComponent("source.jpg"), output = folder.appendingPathComponent("output.jpg")
+        try makeImage(output, type: UTType.jpeg.identifier, orientation: 1)
+        let bytes = try Data(contentsOf: output)
+        // Insert a real JPEG COM segment without altering the image's coding/scans.
+        let comment = Data([0xff, 0xfe, 0, 9]) + Data("COMMENT".utf8)
+        try (Data(bytes.prefix(2)) + comment + Data(bytes.dropFirst(2))).write(to: source)
+        let result = try await MediaIntegrity.compare(source: source, output: output)
+        XCTAssertEqual(result.checks.first { $0.name == "JPEG compressed scans and coding segments" }?.status, .passed)
+        XCTAssertEqual(result.checks.first { $0.name == "JPEG non-target application/color blocks" }?.status, .failed)
+        XCTAssertEqual(result.status, .mismatch, "Known non-target loss must remain blocked even when encoded pixels match")
     }
 
     func testIntegrityDetectsUnrequestedLensLossAndChanges() async throws {
@@ -157,24 +170,35 @@ final class ProbeCoreTests: XCTestCase {
             // ImageIO's HEIC metadata-only copy support varies; failure is a valid measured result, never an encoding fallback.
             XCTAssertFalse(detail.isEmpty)
             XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
+            print("HEIC metadata-only write unsupported on this host: \(detail)")
+        } catch ProbeError.readbackFailed(let detail) {
+            XCTAssertTrue(detail.contains("make/model"))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
+            print("HEIC metadata-only write rejected after independent camera readback: \(detail)")
         }
         XCTAssertEqual(try WholeFileDigest.sha256(source), original)
     }
 
-    func testSameContainerMP4AndMOVCameraAndCompressedSamples() async throws {
-        for kind in [MediaKind.mp4, .mov] {
-            let source = folder.appendingPathComponent("source.\(kind.rawValue)")
-            let output = folder.appendingPathComponent("output.\(kind.rawValue)")
-            try await makeVideo(source, kind: kind)
-            let original = try WholeFileDigest.sha256(source)
-            let result = try await MetadataEngine.process(source: source, output: output, patch: CameraPatch(make: "Probe Maker", model: "Probe Video"))
-            XCTAssertEqual(result.outputInspection.kind, kind)
-            XCTAssertEqual(result.outputInspection.metadata["model"], "Probe Video")
-            XCTAssertEqual(try WholeFileDigest.sha256(source), original)
-            XCTAssertTrue(result.integrity.checks.contains { $0.name.contains("compressed data") && $0.status == .passed })
-            XCTAssertFalse(result.integrity.checks.contains { $0.status == .failed })
-            XCTAssertEqual(result.integrity.status, .incomplete)
-        }
+    func testSameContainerMP4CameraAndCompressedSamples() async throws {
+        try await assertVideoCameraAndSamples(.mp4)
+    }
+
+    func testSameContainerMOVCameraAndCompressedSamples() async throws {
+        try await assertVideoCameraAndSamples(.mov)
+    }
+
+    private func assertVideoCameraAndSamples(_ kind: MediaKind) async throws {
+        let source = folder.appendingPathComponent("source.\(kind.rawValue)")
+        let output = folder.appendingPathComponent("output.\(kind.rawValue)")
+        try await makeVideo(source, kind: kind)
+        let original = try WholeFileDigest.sha256(source)
+        let result = try await MetadataEngine.process(source: source, output: output, patch: CameraPatch(make: "Probe Maker", model: "Probe Video"))
+        XCTAssertEqual(result.outputInspection.kind, kind)
+        XCTAssertEqual(result.outputInspection.metadata["model"], "Probe Video")
+        XCTAssertEqual(try WholeFileDigest.sha256(source), original)
+        XCTAssertTrue(result.integrity.checks.contains { $0.name.contains("compressed data") && $0.status == .passed })
+        XCTAssertFalse(result.integrity.checks.contains { $0.status == .failed })
+        XCTAssertEqual(result.integrity.status, .incomplete)
     }
 
     private func syntheticJPEG(exif: String, pixel: UInt8) -> Data {

@@ -45,13 +45,15 @@ final class BufferedFile {
 
 struct JPEGInventory: Equatable {
     let signatures: [String]
+    let codingSignatures: [String]
+    let applicationSignatures: [String]
     let scanCount: Int
     let limitations: [String]
 
     static func read(_ url: URL) throws -> JPEGInventory {
         let reader = try BufferedFile(url)
         guard try reader.requiredByte() == 0xff, try reader.requiredByte() == 0xd8 else { throw ProbeError.malformed("Missing JPEG SOI") }
-        var signatures = [String](), limitations = [String](), scanCount = 0
+        var signatures = [String](), codingSignatures = [String](), applicationSignatures = [String](), limitations = [String](), scanCount = 0
         var pending: UInt8?
         var ended = false
         func signature(_ marker: UInt8, _ payload: Data) -> String {
@@ -74,7 +76,12 @@ struct JPEGInventory: Equatable {
             guard length >= 2 else { throw ProbeError.malformed("JPEG segment length below two") }
             let payload = try reader.bytes(length - 2)
             let isEditedMetadata = marker == 0xe1 && (payload.starts(with: Data("Exif\0\0".utf8)) || payload.starts(with: Data("http://ns.adobe.com/xap/1.0/\0".utf8)))
-            if !isEditedMetadata { signatures.append(signature(marker, payload)) }
+            if !isEditedMetadata {
+                let fingerprint = signature(marker, payload)
+                signatures.append(fingerprint)
+                if (0xe0...0xef).contains(marker) || marker == 0xfe { applicationSignatures.append(fingerprint) }
+                else { codingSignatures.append(fingerprint) }
+            }
             if marker == 0xe2 && payload.starts(with: Data("MPF\0".utf8)) {
                 limitations.append("JPEG MPF/auxiliary images require additional item and offset verification.")
             }
@@ -100,12 +107,13 @@ struct JPEGInventory: Equatable {
                     if chunk.count >= 65_536 { digest.update(data: chunk); chunk.removeAll(keepingCapacity: true) }
                 }
                 digest.update(data: chunk)
-                signatures.append("scan:" + digest.finalize().map { String(format: "%02x", $0) }.joined())
+                let fingerprint = "scan:" + digest.finalize().map { String(format: "%02x", $0) }.joined()
+                signatures.append(fingerprint); codingSignatures.append(fingerprint)
             }
         }
         guard scanCount > 0 else { throw ProbeError.malformed("JPEG has no scan") }
         if try reader.byte() != nil { limitations.append("JPEG has trailing data; additional resources are not qualified.") }
-        return JPEGInventory(signatures: signatures, scanCount: scanCount, limitations: limitations)
+        return JPEGInventory(signatures: signatures, codingSignatures: codingSignatures, applicationSignatures: applicationSignatures, scanCount: scanCount, limitations: limitations)
     }
 }
 

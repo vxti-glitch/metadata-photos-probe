@@ -28,8 +28,10 @@ public enum MediaIntegrity {
             check("ImageIO exposed non-target properties", retained, "Compare properties after excluding only requested camera/lens fields. Unknown private tags are outside this comparison.")
             if before.kind == .jpeg && after.kind == .jpeg {
                 let original = try JPEGInventory.read(source), edited = try JPEGInventory.read(output)
-                check("JPEG compressed scans and coding/color blocks", original.signatures == edited.signatures,
-                    "Independent marker parser compares every scan, coding segment, ICC block and non-EXIF/XMP segment in order.")
+                check("JPEG compressed scans and coding segments", original.codingSignatures == edited.codingSignatures,
+                    "Independent scan/coding comparison. Source markers: \(markerLabels(original.codingSignatures)); output: \(markerLabels(edited.codingSignatures)).")
+                check("JPEG non-target application/color blocks", original.applicationSignatures == edited.applicationSignatures,
+                    "Compare ICC, JFIF, comments and all other non-target APP payloads. Source markers: \(markerLabels(original.applicationSignatures)); output: \(markerLabels(edited.applicationSignatures)).")
                 limitations += Array(Set(original.limitations + edited.limitations)).sorted()
                 limitations.append("Opaque EXIF maker notes and XMP fields not exposed by ImageIO are not fully qualified; this result cannot certify arbitrary originals.")
             } else {
@@ -50,6 +52,10 @@ public enum MediaIntegrity {
         }
         let status: IntegrityStatus = checks.contains { $0.status == .failed } ? .mismatch : (limitations.isEmpty ? .verified : .incomplete)
         return IntegrityComparison(status: status, checks: checks, limitations: limitations)
+    }
+
+    private static func markerLabels(_ signatures: [String]) -> String {
+        signatures.map { String($0.prefix(24)) }.joined(separator: ",")
     }
 
     private static func retainedMetadata(_ metadata: [String: String], patch: CameraPatch?) -> [String: String] {

@@ -18,9 +18,9 @@ mkdir -p build/evidence
 cat build/evidence/toolchain.txt
 python3 scripts/test-build-scripts.py 2>&1 | tee build/evidence/signing-policy-tests.log
 bash scripts/bootstrap-macos.sh 2>&1 | tee build/evidence/project-generation.log
-swift test 2>&1 | tee build/evidence/core-tests.log
 swift run ProbeFixtureGenerator build/ControlledFixtures 2>&1 | tee build/evidence/fixture-generation.log
 ditto -c -k --keepParent build/ControlledFixtures build/MetadataPhotosProbe-ControlledFixtures.zip
+swift test 2>&1 | tee build/evidence/core-tests.log
 task_destination="$(python3 scripts/select-simulator.py 2>build/evidence/simulator.txt)"
 cat build/evidence/simulator.txt
 xcodebuild -project MetadataPhotosProbe.xcodeproj -scheme MetadataPhotosProbe \
