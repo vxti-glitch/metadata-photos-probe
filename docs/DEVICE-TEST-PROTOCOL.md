@@ -64,4 +64,3 @@ Outcomes:
 Export the evidence JSON locally, review it for filenames/GPS/asset identifiers, and share only controlled cases. Attach separately retained Photos Info screenshots using the references in the report. Include the build/installation channel and fixture manifest. No report is uploaded by the app.
 
 After handing over this prototype, development stops until these physical-device results are reviewed. A simulator, code review, unsigned archive or successful CI run cannot establish label-free Photos behavior.
-

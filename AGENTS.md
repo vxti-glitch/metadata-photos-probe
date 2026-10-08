@@ -12,4 +12,3 @@ This repository implements only the native Swift/SwiftUI Photos metadata feasibi
 - An incomplete verifier must remain incomplete. Never substitute codec names, previews or mdat equality for integrity evidence.
 - Source/build/simulator/device results must be reported separately. Signed IPA installation requires actual signing/channel validation.
 - Preserve others' edits. Use focused tests, independent code review and final verification before handoff.
-

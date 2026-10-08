@@ -91,6 +91,8 @@ struct DeviceEvidence: Codable {
 struct ProbeAttempt: Codable, Identifiable {
     var id = UUID()
     var startedAt = Date()
+    var executionDevice: DeviceEvidence?
+    var executionReportedBuild: String?
     var finishedAt: Date?
     var stage: ProbeStage
     var sourceFileURL: URL
@@ -112,19 +114,52 @@ struct ProbeAttempt: Codable, Identifiable {
     var savedCameraChecks: [String: [IntegrityCheck]] = [:]
     var observations: [ManualObservation] = []
     var error: String?
+
+    mutating func beginReadback() {
+        readback = nil
+        savedResourceInspections = [:]
+        savedResourceIntegrity = [:]
+        savedCameraChecks = [:]
+        error = nil
+        finishedAt = nil
+        state = "Photos commit confirmed; fresh readback pending"
+    }
+
+    mutating func recordFailure(_ failure: Error) {
+        error = failure.localizedDescription
+        finishedAt = Date()
+        state = commit == nil ? "Commit not confirmed; inspect Photos before any repeat" :
+            "Photos commit confirmed; report or readback incomplete"
+    }
 }
 
 struct ProbeEvidenceDocument: Codable {
-    let schemaVersion = 1
+    let schemaVersion = 2
     let exportedAt: Date
     let device: DeviceEvidence
     let userReportedBuild: String
     let declaredScope = "Single-file feasibility prototype; no automatic attribution detection or authenticity proof"
     let hardwareVerdict = "Pending supervised physical-device evaluation; manual observations are user-reported evidence"
     let attempts: [ProbeAttempt]
+
+    var recoveredAttempts: [ProbeAttempt] {
+        attempts.map { stored in
+            var recovered = stored
+            // Legacy evidence retains its original document context, never this launch's OS.
+            if recovered.executionDevice == nil { recovered.executionDevice = device }
+            if recovered.executionReportedBuild == nil { recovered.executionReportedBuild = userReportedBuild }
+            return recovered
+        }
+    }
 }
 
 enum ProbeSafetyPolicy {
+    static func patch(make: String, model: String, lens: String, kind: MediaKind) -> CameraPatch {
+        let trimmedLens = lens.trimmingCharacters(in: .whitespacesAndNewlines)
+        return CameraPatch(make: make.trimmingCharacters(in: .whitespacesAndNewlines),
+            model: model.trimmingCharacters(in: .whitespacesAndNewlines),
+            lens: kind.isImage && !trimmedLens.isEmpty ? trimmedLens : nil)
+    }
     static func canTransform(stageAReviewed: Bool, sourcePresent: Bool) -> Bool {
         stageAReviewed && sourcePresent
     }

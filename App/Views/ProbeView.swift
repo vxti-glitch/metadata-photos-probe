@@ -190,7 +190,9 @@ struct ProbeView: View {
             .onChange(of: probe.stage) { _, _ in probe.stageChanged() }
             .onChange(of: probe.route) { _, _ in probe.routeChanged() }
             .sheet(isPresented: $showPhotos) {
-                PhotosPicker(stagingDirectory: probe.stagingDirectory) { result in probe.receivedPhoto(result) }
+                PhotosPicker(stagingDirectory: probe.stagingDirectory,
+                    onAcquisitionStarted: { probe.beginPhotosAcquisition() },
+                    onResult: { generation, result in probe.receivedPhoto(result, acquisitionID: generation) })
             }
             .fileImporter(isPresented: $showFilePicker,
                 allowedContentTypes: [.jpeg, .heic, .mpeg4Movie, .quickTimeMovie], allowsMultipleSelection: false) { result in

@@ -93,6 +93,36 @@ final class ProbeCoreTests: XCTestCase {
         XCTAssertNotEqual(result.integrity.status, .verified, "Opaque metadata is still explicitly unqualified")
     }
 
+    func testIntegrityDetectsUnrequestedLensLossAndChanges() async throws {
+        let source = folder.appendingPathComponent("source.jpg")
+        try makeImage(source, type: UTType.jpeg.identifier, orientation: 1, lens: "Preserved Lens")
+        for (index, lens) in [nil, "Unexpected Lens"].enumerated() {
+            let output = folder.appendingPathComponent("changed-\(index).jpg")
+            try makeImage(output, type: UTType.jpeg.identifier, orientation: 1, lens: lens)
+            let patch = CameraPatch(make: "Source Maker", model: "Source Model", lens: nil)
+            let compared = try await MediaIntegrity.compare(source: source, output: output, patch: patch)
+            XCTAssertEqual(compared.status, .mismatch)
+            XCTAssertEqual(compared.checks.first { $0.name == "retained embedded metadata" }?.status, .failed)
+            XCTAssertEqual(compared.checks.first { $0.name == "ImageIO exposed non-target properties" }?.status, .failed)
+        }
+    }
+
+    func testIntegrityExcludesOnlyAnExplicitlyRequestedLensAndChecksItsValue() async throws {
+        let source = folder.appendingPathComponent("source.jpg"), output = folder.appendingPathComponent("output.jpg")
+        try makeImage(source, type: UTType.jpeg.identifier, orientation: 1, lens: "Old Lens")
+        try makeImage(output, type: UTType.jpeg.identifier, orientation: 1, lens: "Requested Lens")
+        let patch = CameraPatch(make: "Source Maker", model: "Source Model", lens: "Requested Lens")
+        let accepted = try await MediaIntegrity.compare(source: source, output: output, patch: patch)
+        XCTAssertEqual(accepted.checks.first { $0.name == "requested camera metadata" }?.status, .passed)
+        XCTAssertEqual(accepted.checks.first { $0.name == "retained embedded metadata" }?.status, .passed)
+        XCTAssertEqual(accepted.checks.first { $0.name == "ImageIO exposed non-target properties" }?.status, .passed)
+        let exactReadback = try await MediaIntegrity.compare(source: source, output: output)
+        XCTAssertEqual(exactReadback.status, .mismatch, "No patch means camera fields must be preserved exactly")
+        let wrongPatch = CameraPatch(make: "Source Maker", model: "Source Model", lens: "Other Lens")
+        let rejected = try await MediaIntegrity.compare(source: source, output: output, patch: wrongPatch)
+        XCTAssertEqual(rejected.checks.first { $0.name == "requested camera metadata" }?.status, .failed)
+    }
+
     func testExistingOutputAndSameSourceAreNeverOverwritten() async throws {
         let source = folder.appendingPathComponent("source.jpg")
         try makeImage(source, type: UTType.jpeg.identifier, orientation: 1)
@@ -162,15 +192,17 @@ final class ProbeCoreTests: XCTestCase {
         return data
     }
 
-    private func makeImage(_ url: URL, type: String, orientation: Int) throws {
+    private func makeImage(_ url: URL, type: String, orientation: Int, lens: String? = "Source Lens") throws {
         let color = CGColorSpace(name: CGColorSpace.sRGB)!
         let context = CGContext(data: nil, width: 32, height: 16, bitsPerComponent: 8, bytesPerRow: 128, space: color, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
         context.setFillColor(CGColor(red: 0.2, green: 0.6, blue: 0.8, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 32, height: 16))
         let destination = CGImageDestinationCreateWithURL(url as CFURL, type as CFString, 1, nil)!
+        var exif: [String: Any] = [kCGImagePropertyExifDateTimeOriginal as String: "2026:01:02 03:04:05", kCGImagePropertyExifFNumber as String: 2.8]
+        if let lens { exif[kCGImagePropertyExifLensModel as String] = lens }
         let properties: [String: Any] = [
             kCGImagePropertyOrientation as String: orientation,
             kCGImagePropertyTIFFDictionary as String: [kCGImagePropertyTIFFMake as String: "Source Maker", kCGImagePropertyTIFFModel as String: "Source Model"],
-            kCGImagePropertyExifDictionary as String: [kCGImagePropertyExifDateTimeOriginal as String: "2026:01:02 03:04:05", kCGImagePropertyExifFNumber as String: 2.8]
+            kCGImagePropertyExifDictionary as String: exif
         ]
         CGImageDestinationAddImage(destination, context.makeImage()!, properties as CFDictionary)
         guard CGImageDestinationFinalize(destination) else { throw ProbeError.writeFailed("Cannot generate test image") }

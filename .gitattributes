@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.ipa binary
+*.zip binary
+*.jpg binary
+*.heic binary
+*.mov binary
+*.mp4 binary

@@ -75,7 +75,7 @@ public enum MetadataEngine {
             throw ProbeError.readbackFailed("Requested make/model are not present exactly")
         }
         if let lens = patch.lens, outputInspection.metadata["lens"] != lens { throw ProbeError.readbackFailed("Requested lens is not present exactly") }
-        let integrity = try await MediaIntegrity.compare(source: source, output: output)
+        let integrity = try await MediaIntegrity.compare(source: source, output: output, patch: patch)
         completed = true
         return ProcessingResult(outputURL: output, sourceInspection: sourceInspection, outputInspection: outputInspection, integrity: integrity)
     }
@@ -127,15 +127,12 @@ public enum MetadataEngine {
             items.append(item)
         }
         session.metadata = items
+        let operation = ExportOperation(session: session)
         try await withTaskCancellationHandler(operation: {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                session.exportAsynchronously {
-                    if session.status == .completed { continuation.resume() }
-                    else if session.status == .cancelled { continuation.resume(throwing: CancellationError()) }
-                    else { continuation.resume(throwing: session.error ?? ProbeError.writeFailed("Export did not complete")) }
-                }
+                operation.start(continuation)
             }
-        }, onCancel: { session.cancelExport() })
+        }, onCancel: { operation.cancel() })
         try Task.checkCancellation()
     }
 
@@ -150,6 +147,30 @@ public enum MetadataEngine {
         if brand == "qt  " { return .mov }
         if ["isom", "iso2", "mp41", "mp42", "avc1", "M4V ", "MSNV"].contains(brand) { return .mp4 }
         throw ProbeError.unsupported("Unqualified video brand \(brand)")
+    }
+}
+
+/// The configured export session never leaves this lifecycle adapter. A lock serializes
+/// starting/cancelling, including cancellation before the continuation is installed.
+/// AVFoundation completes exports asynchronously; its callback is the only status reader.
+private final class ExportOperation: @unchecked Sendable {
+    private let session: AVAssetExportSession
+    private let lock = NSLock()
+    private var cancelled = false
+    init(session: AVAssetExportSession) { self.session = session }
+    func start(_ continuation: CheckedContinuation<Void, Error>) {
+        lock.lock(); defer { lock.unlock() }
+        guard !cancelled else { continuation.resume(throwing: CancellationError()); return }
+        session.exportAsynchronously { [self] in
+            if session.status == .completed { continuation.resume() }
+            else if session.status == .cancelled { continuation.resume(throwing: CancellationError()) }
+            else { continuation.resume(throwing: session.error ?? ProbeError.writeFailed("Export did not complete")) }
+        }
+    }
+    func cancel() {
+        lock.lock(); defer { lock.unlock() }
+        cancelled = true
+        session.cancelExport()
     }
 }
 

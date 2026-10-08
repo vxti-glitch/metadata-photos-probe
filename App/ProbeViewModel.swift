@@ -3,6 +3,22 @@ import SwiftUI
 import Photos
 import ProbeCore
 
+protocol ProbePhotosAccess: Sendable {
+    func requestReadWriteAuthorization() async throws -> String
+    func importAsset(identifier: String, preferOriginal: Bool, to directory: URL) async throws -> ImportedMediaAsset
+    func commit(fileURL: URL, route: PhotoSaveRoute, existingAssetIdentifier: String?,
+                adjustmentDescription: String, baselineSourceURL: URL?) async throws -> PhotoCommitResult
+    func readBack(assetIdentifier: String, to directory: URL) async throws -> PhotosReadback
+}
+
+extension PhotosService: ProbePhotosAccess {
+    func commit(fileURL: URL, route: PhotoSaveRoute, existingAssetIdentifier: String?,
+                adjustmentDescription: String, baselineSourceURL: URL?) async throws -> PhotoCommitResult {
+        try await save(fileURL: fileURL, route: route, existingAssetIdentifier: existingAssetIdentifier,
+                       adjustmentDescription: adjustmentDescription, baselineSourceURL: baselineSourceURL)
+    }
+}
+
 @MainActor
 final class ProbeViewModel: ObservableObject {
     @Published var stage: ProbeStage = .preparedFiles
@@ -34,16 +50,22 @@ final class ProbeViewModel: ObservableObject {
     @Published var screenshotReference = ""
     @Published var observationNotes = ""
 
-    private let photos = PhotosService()
+    private let photos: any ProbePhotosAccess
+    private let persistWriter: (Data, URL) throws -> Void
     private var work: Task<Void, Never>?
+    private var photosAcquisitionID: UUID?
+    private var photosAcquisitionCanceled = false
     private var outputPatch: CameraPatch?
     private var didCommitCurrentOutput = false
     let device = DeviceEvidence.capture()
     let workspace: URL
 
-    init() {
+    init(workspaceOverride: URL? = nil, photos: any ProbePhotosAccess = PhotosService(),
+         persistWriter: @escaping (Data, URL) throws -> Void = { try $0.write(to: $1, options: [.atomic]) }) {
+        self.photos = photos
+        self.persistWriter = persistWriter
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        workspace = base.appendingPathComponent("PhotosMetadataProbe", isDirectory: true)
+        workspace = workspaceOverride ?? base.appendingPathComponent("PhotosMetadataProbe", isDirectory: true)
         do {
             try prepareWorkspace()
             let url = workspace.appendingPathComponent("evidence.json")
@@ -51,7 +73,8 @@ final class ProbeViewModel: ObservableObject {
                 let values = try url.resourceValues(forKeys: [.fileSizeKey])
                 guard (values.fileSize ?? 0) <= 8 * 1024 * 1024 else { throw ProbeUIError.reportTooLarge }
                 let saved = try JSONDecoder.probe.decode(ProbeEvidenceDocument.self, from: Data(contentsOf: url))
-                attempts = saved.attempts
+                attempts = saved.recoveredAttempts
+                reportedBuild = saved.userReportedBuild
                 selectedAttemptID = attempts.last?.id
             }
         } catch {
@@ -82,7 +105,31 @@ final class ProbeViewModel: ObservableObject {
         }
     }
 
-    func receivedPhoto(_ result: Result<ImportedMediaAsset, Error>) {
+    func beginPhotosAcquisition() -> UUID? {
+        guard !busy else { return nil }
+        let id = UUID()
+        photosAcquisitionID = id
+        photosAcquisitionCanceled = false
+        busy = true
+        errorMessage = nil
+        status = "Downloading the selected Photos representation…"
+        return id
+    }
+
+    func receivedPhoto(_ result: Result<ImportedMediaAsset, Error>, acquisitionID: UUID?) {
+        guard let acquisitionID, acquisitionID == photosAcquisitionID else {
+            discardAcquisition(result)
+            return
+        }
+        let canceled = photosAcquisitionCanceled
+        photosAcquisitionID = nil
+        photosAcquisitionCanceled = false
+        busy = false
+        if canceled {
+            discardAcquisition(result)
+            status = "Canceled Photos acquisition; its staged copy was discarded."
+            return
+        }
         switch result {
         case .success(let value): run("Inspecting selected Photos representation…") { try await self.acceptSource(value) }
         case .failure(let error): errorMessage = error.localizedDescription
@@ -105,10 +152,8 @@ final class ProbeViewModel: ObservableObject {
     }
 
     func transform() {
-        guard canTransform, let source else { return }
-        let intended = CameraPatch(make: make.trimmingCharacters(in: .whitespacesAndNewlines),
-            model: model.trimmingCharacters(in: .whitespacesAndNewlines),
-            lens: lens.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : lens)
+        guard canTransform, let source, let sourceInspection else { return }
+        let intended = ProbeSafetyPolicy.patch(make: make, model: model, lens: lens, kind: sourceInspection.kind)
         run("Writing metadata on this device…") {
             let output = self.stagingDirectory.appendingPathComponent(UUID().uuidString)
                 .appendingPathExtension(source.fileURL.pathExtension)
@@ -129,7 +174,8 @@ final class ProbeViewModel: ObservableObject {
               let comparison else { return }
         let stageSnapshot = stage
         let routeSnapshot = route
-        var attempt = ProbeAttempt(stage: stageSnapshot, sourceFileURL: source.fileURL, outputFileURL: outputURL,
+        var attempt = ProbeAttempt(executionDevice: device, executionReportedBuild: reportedBuild,
+            stage: stageSnapshot, sourceFileURL: source.fileURL, outputFileURL: outputURL,
             sourceRepresentation: source.representation,
             baselineOrigin: baselineOrigin, sourceInspection: sourceInspection,
             outputInspection: outputInspection, requestedPatch: outputPatch,
@@ -147,7 +193,7 @@ final class ProbeViewModel: ObservableObject {
             do {
                 _ = try await self.photos.requestReadWriteAuthorization()
                 try Task.checkCancellation()
-                let commit = try await self.photos.save(fileURL: outputURL, route: routeSnapshot,
+                let commit = try await self.photos.commit(fileURL: outputURL, route: routeSnapshot,
                     existingAssetIdentifier: source.assetIdentifier,
                     adjustmentDescription: self.adjustmentDescription(patch: attempt.requestedPatch, stage: stageSnapshot),
                     baselineSourceURL: source.fileURL)
@@ -167,12 +213,10 @@ final class ProbeViewModel: ObservableObject {
                     self.status = "Save confirmed; resource readback incomplete. Check Photos and use Retry readback."
                 }
             } catch {
-                self.update(attemptID) {
-                    $0.state = "Commit not confirmed; inspect Photos before any repeat"
-                    $0.error = error.localizedDescription
-                    $0.finishedAt = Date()
-                }
-                self.status = "No confirmed save result. The library must be checked; this probe does not automatically retry."
+                self.update(attemptID) { $0.recordFailure(error) }
+                let confirmed = self.attempts.first(where: { $0.id == attemptID })?.commit != nil
+                self.status = confirmed ? "Photos save confirmed; local reporting failed. Preserve the asset identifier and export evidence when storage permits." :
+                    "No confirmed save result. The library must be checked; this probe does not automatically retry."
                 throw error
             }
             try self.persist()
@@ -220,6 +264,11 @@ final class ProbeViewModel: ObservableObject {
 
     func cancel() {
         guard busy else { return }
+        if photosAcquisitionID != nil {
+            photosAcquisitionCanceled = true
+            status = "Photos acquisition canceled. Waiting for the provider to finish before clearing local copies."
+            return
+        }
         work?.cancel()
         status = "Cancellation requested. A native call or committed Photos transaction may still finish."
     }
@@ -236,6 +285,7 @@ final class ProbeViewModel: ObservableObject {
 
     func clearLocalData() {
         guard !busy else { return }
+        photosAcquisitionID = nil
         do {
             guard workspace.lastPathComponent == "PhotosMetadataProbe" else { throw ProbeUIError.invalidWorkspace }
             if FileManager.default.fileExists(atPath: workspace.path) { try FileManager.default.removeItem(at: workspace) }
@@ -255,11 +305,24 @@ final class ProbeViewModel: ObservableObject {
         status = "Source inspected. Stage A: choose a prepared output or unchanged control."
     }
 
+    private func discardAcquisition(_ result: Result<ImportedMediaAsset, Error>) {
+        guard case .success(let acquired) = result,
+              acquired.fileURL.deletingLastPathComponent().standardizedFileURL == stagingDirectory.standardizedFileURL else { return }
+        do { try FileManager.default.removeItem(at: acquired.fileURL) }
+        catch { errorMessage = "Could not discard canceled staged media: \(error.localizedDescription)" }
+    }
+
     private func usePreparedOutput(_ candidate: URL) async throws {
         guard let source, let sourceInspection else { throw ProbeUIError.missingSource }
         let inspected = try await MetadataEngine.inspect(candidate)
         guard inspected.kind == sourceInspection.kind else { throw ProbeUIError.formatChange }
-        let verified = try await MediaIntegrity.compare(source: source.fileURL, output: candidate)
+        let preparedPatch = inspected.metadata["make"].flatMap { make in
+            inspected.metadata["model"].map { model in
+                CameraPatch(make: make, model: model,
+                    lens: inspected.metadata["lens"] != sourceInspection.metadata["lens"] ? inspected.metadata["lens"] : nil)
+            }
+        }
+        let verified = try await MediaIntegrity.compare(source: source.fileURL, output: candidate, patch: preparedPatch)
         try Task.checkCancellation()
         outputURL = candidate; outputInspection = inspected; comparison = verified
         outputPatch = nil; didCommitCurrentOutput = false; incompleteAcknowledged = false
@@ -273,6 +336,8 @@ final class ProbeViewModel: ObservableObject {
         let directory = workspace.appendingPathComponent("readback", isDirectory: true)
             .appendingPathComponent(attemptID.uuidString, isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        update(attemptID) { $0.beginReadback() }
+        do {
         let result = try await photos.readBack(assetIdentifier: commit.assetIdentifier, to: directory)
         update(attemptID) { $0.readback = result }
         for resource in result.resources {
@@ -301,6 +366,11 @@ final class ProbeViewModel: ObservableObject {
         }
         update(attemptID) { $0.state = "Resources checked; Photos UI and attribution unverified"; $0.finishedAt = Date() }
         status = "Saved resources checked. Open Apple Photos, inspect Info, then record the camera display and source label."
+        } catch {
+            update(attemptID) { $0.recordFailure(error) }
+            try? persist()
+            throw error
+        }
     }
 
     private func clearOutput() {
@@ -350,7 +420,7 @@ final class ProbeViewModel: ObservableObject {
     private func persist() throws {
         let bytes = try JSONEncoder.probe.encode(document())
         guard bytes.count <= 8 * 1024 * 1024 else { throw ProbeUIError.reportTooLarge }
-        try bytes.write(to: workspace.appendingPathComponent("evidence.json"), options: [.atomic])
+        try persistWriter(bytes, workspace.appendingPathComponent("evidence.json"))
     }
 }
 

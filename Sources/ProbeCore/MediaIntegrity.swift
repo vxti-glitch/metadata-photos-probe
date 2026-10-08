@@ -4,7 +4,10 @@ import AVFoundation
 import CryptoKit
 
 public enum MediaIntegrity {
-    public static func compare(source: URL, output: URL) async throws -> IntegrityComparison {
+    /// A nil patch means an exact preservation comparison, including camera fields.
+    /// A supplied patch excludes only deliberately edited fields and verifies their new values.
+    public static func compare(source: URL, output: URL, patch: CameraPatch? = nil) async throws -> IntegrityComparison {
+        try patch?.validate()
         let before = try await MetadataEngine.inspect(source)
         let after = try await MetadataEngine.inspect(output)
         var checks = [IntegrityCheck](), limitations = [String]()
@@ -12,9 +15,16 @@ public enum MediaIntegrity {
             checks.append(IntegrityCheck(name: name, status: matches ? .passed : .failed, detail: detail))
         }
         check("container", before.kind == after.kind, "Source \(before.kind.rawValue), output \(after.kind.rawValue)")
+        if let patch {
+            let matches = after.metadata["make"] == patch.make && after.metadata["model"] == patch.model &&
+                (patch.lens == nil || after.metadata["lens"] == patch.lens)
+            check("requested camera metadata", matches, "Read back exactly the requested make/model and any explicitly edited lens.")
+        }
+        check("retained embedded metadata", retainedMetadata(before.metadata, patch: patch) == retainedMetadata(after.metadata, patch: patch),
+              "Preserve inspected non-target fields; a nil patch preserves all inspected camera fields too.")
         if before.kind.isImage {
             check("image presentation", before.structure == after.structure, "Compare dimensions, bit depth, orientation, color model/profile and container type.")
-            let retained = try retainedImageProperties(source) == retainedImageProperties(output)
+            let retained = try retainedImageProperties(source, patch: patch) == retainedImageProperties(output, patch: patch)
             check("ImageIO exposed non-target properties", retained, "Compare properties after excluding only requested camera/lens fields. Unknown private tags are outside this comparison.")
             if before.kind == .jpeg && after.kind == .jpeg {
                 let original = try JPEGInventory.read(source), edited = try JPEGInventory.read(output)
@@ -42,16 +52,26 @@ public enum MediaIntegrity {
         return IntegrityComparison(status: status, checks: checks, limitations: limitations)
     }
 
-    private static func retainedImageProperties(_ url: URL) throws -> String {
+    private static func retainedMetadata(_ metadata: [String: String], patch: CameraPatch?) -> [String: String] {
+        guard let patch else { return metadata }
+        var retained = metadata
+        for key in ["make", "model", AVMetadataIdentifier.quickTimeMetadataMake.rawValue, AVMetadataIdentifier.quickTimeMetadataModel.rawValue] {
+            retained.removeValue(forKey: key)
+        }
+        if patch.lens != nil { retained.removeValue(forKey: "lens") }
+        return retained
+    }
+
+    private static func retainedImageProperties(_ url: URL, patch: CameraPatch?) throws -> String {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               var properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any] else { throw ProbeError.malformed("No image properties") }
-        if var tiff = properties[kCGImagePropertyTIFFDictionary as String] as? [String: Any] {
+        if patch != nil, var tiff = properties[kCGImagePropertyTIFFDictionary as String] as? [String: Any] {
             tiff.removeValue(forKey: kCGImagePropertyTIFFMake as String)
             tiff.removeValue(forKey: kCGImagePropertyTIFFModel as String)
             if tiff.isEmpty { properties.removeValue(forKey: kCGImagePropertyTIFFDictionary as String) }
             else { properties[kCGImagePropertyTIFFDictionary as String] = tiff }
         }
-        if var exif = properties[kCGImagePropertyExifDictionary as String] as? [String: Any] {
+        if patch?.lens != nil, var exif = properties[kCGImagePropertyExifDictionary as String] as? [String: Any] {
             exif.removeValue(forKey: kCGImagePropertyExifLensModel as String)
             if exif.isEmpty { properties.removeValue(forKey: kCGImagePropertyExifDictionary as String) }
             else { properties[kCGImagePropertyExifDictionary as String] = exif }
@@ -98,7 +118,9 @@ public enum MediaIntegrity {
                     }
                     if let format = CMSampleBufferGetFormatDescription(sample) {
                         update("\(CMFormatDescriptionGetMediaType(format)):\(CMFormatDescriptionGetMediaSubType(format))")
-                        update(canonicalValue(CMFormatDescriptionGetExtensions(format) as NSDictionary))
+                        if let extensions = CMFormatDescriptionGetExtensions(format) {
+                            update(canonicalValue(extensions as NSDictionary))
+                        } else { update("no format extensions") }
                     }
                     if let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) {
                         update(canonicalValue(attachments as NSArray))

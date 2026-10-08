@@ -49,4 +49,3 @@ The probe retains staged copies and reports locally until you clear its data or 
 - `.github/workflows`, `scripts`: cloud build, packaging, signing-policy validation and manifests.
 
 No runtime third-party libraries are required. Build-time tooling/action versions are pinned. Stop after this probe and review the user's device evidence before any product work.
-
