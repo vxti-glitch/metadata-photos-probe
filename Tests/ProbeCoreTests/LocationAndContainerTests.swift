@@ -22,10 +22,11 @@ final class LocationAndContainerTests: XCTestCase {
 
     func testMissingAndMalformedGPSAreNotCoordinates() {
         XCTAssertEqual(EmbeddedLocationEvidence.image(gps: nil).state, .notFound)
-        for fields: [String: Any] in [
+        let cases: [[String: Any]] = [
             ["Latitude": 91, "Longitude": 1, "LatitudeRef": "N", "LongitudeRef": "E"],
             ["Latitude": true, "Longitude": 1, "LatitudeRef": "N", "LongitudeRef": "E"],
-            ["Latitude": 1, "Longitude": 1], ["Latitude": Double.nan, "LatitudeRef": "N"]] {
+            ["Latitude": 1, "Longitude": 1], ["Latitude": Double.nan, "LatitudeRef": "N"]]
+        for fields in cases {
             let result = EmbeddedLocationEvidence.image(gps: fields)
             XCTAssertEqual(result.state, .incomplete)
         }
@@ -51,10 +52,11 @@ final class LocationAndContainerTests: XCTestCase {
         context.setFillColor(CGColor(red: 0.2, green: 0.4, blue: 0.6, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 32, height: 16))
         let destination = CGImageDestinationCreateWithURL(source as CFURL, type as CFString, 1, nil)!
         let gps: [String: Any] = ["Latitude": 12.5, "LatitudeRef": "S", "Longitude": 44.25, "LongitudeRef": "W", "Altitude": 23.0, "AltitudeRef": 0]
-        CGImageDestinationAddImage(destination, context.makeImage()!, [kCGImagePropertyOrientation: 6,
-            kCGImagePropertyGPSDictionary: gps,
-            kCGImagePropertyTIFFDictionary: [kCGImagePropertyTIFFMake: "Source", kCGImagePropertyTIFFModel: "Camera"],
-            kCGImagePropertyExifDictionary: [kCGImagePropertyExifLensModel: "Old lens", kCGImagePropertyExifDateTimeOriginal: "2026:01:02 03:04:05"]] as CFDictionary)
+        let properties: [String: Any] = [kCGImagePropertyOrientation as String: 6,
+            kCGImagePropertyGPSDictionary as String: gps,
+            kCGImagePropertyTIFFDictionary as String: [kCGImagePropertyTIFFMake as String: "Source", kCGImagePropertyTIFFModel as String: "Camera"],
+            kCGImagePropertyExifDictionary as String: [kCGImagePropertyExifLensModel as String: "Old lens", kCGImagePropertyExifDateTimeOriginal as String: "2026:01:02 03:04:05"]]
+        CGImageDestinationAddImage(destination, context.makeImage()!, properties as CFDictionary)
         XCTAssertTrue(CGImageDestinationFinalize(destination))
         let before = try await MetadataEngine.inspect(source), hash = try WholeFileDigest.sha256(source)
         let result = try await MetadataEngine.process(source: source, output: output, patch: CameraPatch(make: "Probe", model: "Changed", lens: "New lens"))

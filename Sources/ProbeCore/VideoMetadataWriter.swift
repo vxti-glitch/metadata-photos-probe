@@ -284,7 +284,8 @@ private enum VideoBMFF {
     }
     static func metadataChildren(_ meta: Atom) throws -> (prefix: Data, children: [Atom]) {
         let body = meta.payload
-        let prefixLength = body.count >= 4 && (try u32(body, 0)) == 0 ? 4 : 0
+        var prefixLength = 0
+        if body.count >= 4 { if try u32(body, 0) == 0 { prefixLength = 4 } }
         let children = try atoms(body.subdata(in: prefixLength..<body.count))
         try only(children, ["hdlr", "keys", "ilst", "mhdr", "ctry", "lang", "free"])
         _ = try unique(children, "hdlr")

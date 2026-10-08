@@ -235,8 +235,8 @@ struct ProbeView: View {
                 if let id = exportTrialID { probe.finishFilesExport(id: id, completed: false) }
                 exportTrialID = nil
             }) {
-                if let id = exportTrialID, let trial = probe.fileTrials.first(where: { $0.id == id }) {
-                    FilesExportPicker(fileURL: trial.outputURL) { completed in
+                if let id = exportTrialID, let url = probe.filesExportURL {
+                    FilesExportPicker(fileURL: url) { completed in
                         probe.finishFilesExport(id: id, completed: completed); showFilesExport = false
                     }
                 }

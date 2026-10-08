@@ -152,7 +152,7 @@ private final class HEICContainer {
         }
         guard !children.contains(where: { $0.type == "ipro" }) else { throw ProbeError.unsupported("Protected HEIC items are not editable") }
         let pitm = try unique("pitm"), iinf = try unique("iinf"), iloc = try unique("iloc"), iref = try unique("iref")
-        var primary = Cursor(meta, position: Int(pitm.payload.lowerBound), end: Int(pitm.payload.upperBound))
+        var primary = Cursor(data: meta, position: Int(pitm.payload.lowerBound), end: Int(pitm.payload.upperBound))
         let primaryVersion = try primary.fullBoxVersion(allowed: [0, 1])
         primaryID = UInt32(try primary.number(primaryVersion == 0 ? 2 : 4)); try primary.finish()
         let info = try itemInfo(meta, box: iinf)
@@ -163,7 +163,7 @@ private final class HEICContainer {
         try checkExifReference(meta, box: iref, exifID: exifID, primaryID: primaryID, knownIDs: Set(info.keys))
         let idats = children.filter { $0.type == "idat" }
         guard idats.count <= 1 else { throw ProbeError.unsupported("Multiple idat boxes") }
-        let idat = idats.first.map { (metaOffset + $0.payload.lowerBound)..<(metaOffset + $0.payload.upperBound) }
+        let idat = idats.first.map { (metaBox.start + $0.payload.lowerBound)..<(metaBox.start + $0.payload.upperBound) }
         locations = try itemLocations(meta, box: iloc, knownIDs: Set(info.keys), mdatRanges: top.filter { $0.type == "mdat" }.map(\.payload), idat: idat)
         guard let target = locations.first(where: { $0.id == exifID }), target.extents.count == 1,
               target.mutableFields.contains(where: { $0.role == .offset && $0.width > 0 }),

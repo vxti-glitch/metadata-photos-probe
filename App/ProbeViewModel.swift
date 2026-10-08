@@ -31,6 +31,7 @@ final class ProbeViewModel: ObservableObject {
     @Published var attempts: [ProbeAttempt] = []
     @Published var fileTrials: [FileWorkflowTrial] = []
     @Published var selectedFileTrialID: UUID?
+    @Published private(set) var filesExportURL: URL?
     @Published var busy = false
     @Published var status = "Select one controlled file. Photos display and attribution are not checked automatically."
     @Published var errorMessage: String?
@@ -59,6 +60,7 @@ final class ProbeViewModel: ObservableObject {
     private var photosAcquisitionCanceled = false
     private var outputPatch: CameraPatch?
     private var activeFilesExportID: UUID?
+    private var activeFilesExportTrialID: UUID?
     private var didCommitCurrentOutput = false
     let device = DeviceEvidence.capture()
     let workspace: URL
@@ -284,16 +286,18 @@ final class ProbeViewModel: ObservableObject {
                   FileManager.default.fileExists(atPath: fileTrials[index].outputURL.path) else { throw ProbeUIError.missingSource }
             fileTrials[index].exportState = "Files export requested; completion not yet confirmed"
             try persist()
-            activeFilesExportID = id; busy = true; errorMessage = nil
+            let operationID = UUID()
+            activeFilesExportID = operationID; activeFilesExportTrialID = id
+            filesExportURL = fileTrials[index].outputURL; busy = true; errorMessage = nil
             status = "Choose a destination in Files. This copies the staged file; it does not upload to Photos."
-            return id
+            return operationID
         } catch { errorMessage = error.localizedDescription; return nil }
     }
 
     func finishFilesExport(id: UUID, completed: Bool) {
-        guard id == activeFilesExportID else { return }
-        activeFilesExportID = nil; busy = false
-        if let index = fileTrials.firstIndex(where: { $0.id == id }) {
+        guard id == activeFilesExportID, let trialID = activeFilesExportTrialID else { return }
+        activeFilesExportID = nil; activeFilesExportTrialID = nil; filesExportURL = nil; busy = false
+        if let index = fileTrials.firstIndex(where: { $0.id == trialID }) {
             fileTrials[index].exportState = completed ? "System Files exporter confirmed a copy" : "Files export canceled or dismissed"
             fileTrials[index].exportCompletedAt = completed ? Date() : nil
         }

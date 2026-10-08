@@ -72,6 +72,18 @@ final class FileWorkflowTests: XCTestCase {
         let commits = await photos.commits; XCTAssertEqual(commits, 0)
     }
 
+    func testRepeatedExportOfSameTrialIgnoresOldOperationCompletion() async throws {
+        let value = try await model(photos: CountingFilePhotos())
+        let first = try XCTUnwrap(value.beginFilesExport())
+        value.finishFilesExport(id: first, completed: false)
+        let second = try XCTUnwrap(value.beginFilesExport())
+        XCTAssertNotEqual(first, second)
+        value.finishFilesExport(id: first, completed: true)
+        XCTAssertTrue(value.busy); XCTAssertNil(value.fileTrials[0].exportCompletedAt)
+        value.finishFilesExport(id: second, completed: false)
+        XCTAssertFalse(value.busy)
+    }
+
     func testExportPersistenceFailureDoesNotLaunchExporterOrCommit() async throws {
         let photos = CountingFilePhotos()
         let value = try await model(photos: photos, writer: { _, _ in throw NSError(domain: "Storage full", code: 1) })
