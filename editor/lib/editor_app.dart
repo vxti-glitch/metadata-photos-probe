@@ -755,7 +755,7 @@ class _ResultReview extends StatelessWidget {
             key: const Key('openICloud'),
             onPressed: controller.busy ? null : controller.openICloud,
             icon: const Icon(Icons.open_in_browser_rounded),
-            label: const Text('Open iCloud Photos in Safari'),
+            label: const Text('Open iCloud Photos'),
           ),
           const SizedBox(height: 10),
           const Text(
@@ -875,7 +875,7 @@ class _WorkflowNote extends StatelessWidget {
         ),
         SizedBox(height: 8),
         Text(
-          'Requires iCloud Photos, a browser upload and an internet connection.',
+          'Requires iCloud Photos, a browser upload and an internet connection. If the button opens another browser, open Safari manually for the tested upload workflow.',
           style: TextStyle(color: _muted, fontSize: 11, height: 1.4),
         ),
       ],
