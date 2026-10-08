@@ -227,7 +227,13 @@ private enum VideoBMFF {
             guard try u32(dref, 0) == 0, dref.count >= 8 else { throw ProbeError.malformed("Invalid dref") }
             let references = try atoms(dref.subdata(in: 8..<dref.count))
             guard references.count == Int(try u32(dref, 4)), !references.isEmpty else { throw ProbeError.malformed("Data-reference count mismatch") }
-            guard references.allSatisfy({ $0.type == code("url ") && $0.payload == number(1) }) else {
+            // Apple's media-data reference contract permits a self-reference flag
+            // for an alias as well as a URL. AVAssetWriter MOV controls use `alis`.
+            // Accept version 0 / flag 1 only, with no external alias/URL payload.
+            // https://developer.apple.com/documentation/quicktime-file-format/media_data_reference_atom/data_references
+            guard references.allSatisfy({
+                ($0.type == code("url ") || $0.type == code("alis")) && $0.payload == number(1)
+            }) else {
                 throw ProbeError.unsupported("External or unqualified data references")
             }
             chunkCount += try validateSampleTable(atoms(unique(minf, "stbl").payload), references: references.count, media: media)
