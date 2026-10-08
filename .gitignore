@@ -6,8 +6,15 @@ __pycache__/
 DerivedData/
 build/
 dist/
+.tools/
 *.xcodeproj/
 *.xcworkspace/
+# Flutter's generated starter project is the editor's committed build input.
+# The probe's XcodeGen project and generated Pods remain ignored.
+!editor/ios/Runner.xcodeproj/
+!editor/ios/Runner.xcodeproj/**
+!editor/ios/Runner.xcworkspace/
+!editor/ios/Runner.xcworkspace/**
 *.ipa
 *.xcarchive/
 *.xcresult/

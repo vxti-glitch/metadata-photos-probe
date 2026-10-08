@@ -1,8 +1,8 @@
-# Feasibility probe scope
+# Native probe and Flutter editor scope
 
-This repository implements only the native Swift/SwiftUI Photos metadata feasibility probe. The parent `Zlarp-Metadata-Editor-iPhone-First-Revision.md` is the specification; a portable copy is in docs/SPECIFICATION.md.
+The existing native Swift/SwiftUI feasibility probe remains a preserved diagnostic application. The user has now authorized the main application with a Flutter interface and a Swift media engine, and the owner accepted manual Files/Safari/iCloud export. Build the editor additively under `editor/`; retain the canonical Swift engine and its tests. The parent planning research and docs/SPECIFICATION.md remain relevant; the latest user architecture/workflow instruction supersedes their SwiftUI production-interface recommendation.
 
-- Do not add bulk processing, randomization/presets, commercial UI, accounts or Zlarp integration.
+- Preserve the probe's scope. The first editor milestone is single-file import, inspection, qualified editing, integrity review and Files export/recovery. Presets, randomization, bulk and broader field/removal support remain later planned milestones; accounts and live Zlarp integration require a concrete owner contract.
 - Use public Apple APIs. Do not manipulate Photos databases or app-origin attribution.
 - Treat embedded metadata, compressed/presentation integrity, and actual Photos UI/attribution as distinct evidence.
 - Never infer attribution absence from PHAsset.sourceType or a successful save.

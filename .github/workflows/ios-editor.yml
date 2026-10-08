@@ -1,0 +1,62 @@
+name: Flutter and Swift metadata editor
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - 'editor/**'
+      - 'Sources/ProbeCore/**'
+      - 'Tests/ProbeCoreTests/**'
+      - 'Package.swift'
+      - 'scripts/editor-*'
+      - 'scripts/build-editor-macos.sh'
+      - '.github/workflows/ios-editor.yml'
+  pull_request:
+    paths:
+      - 'editor/**'
+      - 'Sources/ProbeCore/**'
+      - 'Tests/ProbeCoreTests/**'
+      - 'Package.swift'
+      - 'scripts/editor-*'
+      - 'scripts/build-editor-macos.sh'
+      - '.github/workflows/ios-editor.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-editor-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Test Flutter and Swift; archive unsigned editor
+    runs-on: macos-15
+    timeout-minutes: 80
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Cache pinned Flutter checkout and engine artifacts
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .tools/flutter-3.47.6
+          key: editor-flutter-${{ runner.os }}-${{ runner.arch }}-5fc346839b5d0eef006ed8404392afb4dfae428d-v1
+      - name: Test, launch simulator and compile arm64 device archive
+        shell: bash
+        run: bash scripts/build-editor-macos.sh
+      - name: Upload editor and verification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: editor-unsigned-${{ github.run_number }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            build/editor/evidence/
+            build/editor/*.ipa
+            build/editor/*.zip
+            build/editor/*.json
+            build/editor/NativeTests.xcresult/
