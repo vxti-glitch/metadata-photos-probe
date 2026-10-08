@@ -1,6 +1,30 @@
 # Validation status
 
-## Current prototype 0.2.0 / build 2
+## Current prototype 0.2.1 / build 3
+
+Validated October 8, 2026. [GitHub macOS run 37753929324](https://github.com/vxti-glitch/metadata-photos-probe/actions/runs/37753929324) **succeeded** at implementation revision `612fac1b11957804b41adf16eaf1bd352b0c144d`. Subsequent documentation-only commits do not change the compiled app. Independent code review found no blocking issue; final verification separately checks tests, packaging and evidence boundaries.
+
+| Layer | Current evidence |
+|---|---|
+| Local actual-file diagnosis | The supplied HEIC has one EXIF item describing its primary image and a tone-map representation whose ordered inputs are that primary and an auxiliary gain-map grid. Read-only structural checks matched the narrow supported topology and verified item extents/TIFF bounds. The original's hash remained unchanged. Actual photo, filename, EXIF/GPS payload and local reports were not uploaded to CI. |
+| Engine tests | **50 macOS tests passed**, including three new shared-EXIF tests with both TIFF byte orders and either descriptive destination order, raw reference/property/item preservation, 20 invalid graph cases and three unqualified item types. Shared graph fixtures are invented diagnostic payloads; they are not playable Adaptive HDR captures. Existing ImageIO integration tests use independently encoded HEIC. |
+| App tests | **27 hosted simulator tests passed**, including the failed-write regression: end progress, clear active staged result and keep historical files, leaving save/export unavailable for the failed operation. |
+| Build/signing policy | **11 portable tests passed** locally and in CI. Total **88 tests**, zero failures; simulator tests and generic iOS Release archive succeeded. |
+| Toolchain | macOS 15.7.9 arm64, Xcode 16.4 (16F6), Swift 6.1.2 / Swift 5 mode, iOS SDK 18.5; iPhone SE (3rd generation) simulator runtime iOS 26.2. No iOS 27.2 execution is claimed. |
+| Integrity limits | Image data, gain-map/tone-map payloads, reference/property bytes and original TIFF body remain preserved by the narrow writer and independent comparisons. Requested ImageIO camera readback remains mandatory. Opaque MakerNotes/HDR semantics remain incomplete; this is not universal lossless or authenticity certification. |
+| Package | IPA, archive, source ZIP and fixture ZIP matched manifest byte counts/SHA-256; all ten generated original/processed fixture file hashes matched. Actual IPA is arm64, version 0.2.1/build 3/minimum iOS 17.0, unsigned without a profile or signature. Source ZIP contains no actual media or private device report. |
+| Signing / actual photo processing | Signed export skipped. Same authorized signing method as previous builds is required. The new native writer has **not** been run on the supplied physical photo; Windows diagnosis and synthetic/cloud tests are separate evidence. |
+| Device/display/provenance | Actual 0.2.1 install, successful same-photo write/readback, Photos camera indexing, HDR appearance, location and synchronized attribution remain phone gates. Direct native attribution suppression remains unverified; existing manual Safari results remain recorded below. |
+
+The compatibility patch supports only the qualified primary/tone-map association. It does not remove safety checks, flatten HDR, decode/re-encode pixels, change Photos provenance or add full-editor features. Repeated writes affect the unique shared EXIF for both described representations, disclosed through integrity limitations; unused original EXIF bytes remain in the file.
+
+Artifacts: `probe-unsigned-13-1`, `probe-controlled-fixtures-13-1` (14-day GitHub retention), retained under `dist/verified-612fac1/`. IPA SHA-256: `6f2657b8f72de690afcc3adf28839b36f5fbc61228772744d17315050da0bbbe`.
+
+See [the focused same-photo retry](PROTOTYPE-0.2.1-HEIC-FIX.md). Sign/install 0.2.1/build 3, choose the same HEIC, repeat Stage B camera writing, then use Files/Safari upload only if exact camera readback succeeds and no known integrity check fails. Inspect actual camera, label, location, orientation and HDR appearance on the target iPhone 15 Pro Max/reported iOS 27.2. Unsupported outcomes remain findings, not permission to convert or bypass checks. Development stops for that result.
+
+The earlier 0.2 and 0.1 snapshots below are preserved as historical evidence.
+
+## Historical prototype 0.2.0 / build 2
 
 Validated October 8, 2026. [Final GitHub macOS run 37751001638](https://github.com/vxti-glitch/metadata-photos-probe/actions/runs/37751001638) **succeeded** for exact implementation revision `363a494ab955c3586ceaefc9c54e2468a7fe167e`. Documentation-only updates after that revision do not change the compiled implementation. Signed export was skipped.
 
