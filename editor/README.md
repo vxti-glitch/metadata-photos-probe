@@ -1,4 +1,4 @@
-# Zlarp Metadata Editor — Flutter + Swift
+# Metadata Editor — Flutter + Swift
 
 The owner accepted local editing followed by **Files -> manual Safari/iCloud Photos upload -> sync**. The user authorized this main-app architecture on October 8, 2026. This first editor milestone uses Flutter for the interface and the canonical separately tested Swift media engine through a versioned native channel. The original SwiftUI probe remains available in the parent directory as a diagnostic reference.
 
@@ -35,6 +35,8 @@ flutter test
 
 The new `Flutter and Swift metadata editor` GitHub workflow runs the canonical engine tests, Flutter checks, native simulator tests, a real simulator launch and an arm64 iOS archive on macOS. The existing native probe workflow is preserved. macOS runs `bash scripts/build-editor-macos.sh`; its project synchronization script registers new native files and the canonical package without changing Flutter's generated SPM/UIScene integration. Actual SDK/toolchain, exact source revision, logs, framework architectures and checksums accompany artifacts.
 
-The output `Zlarp-Metadata-Editor-UNSIGNED-NOT-INSTALLABLE.ipa` needs valid signing through the user's authorized existing channel. Flutter `--no-codesign` creates an archive but skips signed IPA export; the workflow packages its real device app explicitly. A packaged app, simulator success and successful signed installation are separate evidence. The editor's distinct bundle identifier is `com.vxtiglitch.zlarpMetadataEditor`; it does not replace the probe.
+The output `Metadata-Editor-UNSIGNED-NOT-INSTALLABLE.ipa` needs valid signing through the user's authorized existing channel. Flutter `--no-codesign` creates an archive but skips signed IPA export; the workflow packages its real device app explicitly. A packaged app, simulator success and successful signed installation are separate evidence. The editor's distinct bundle identifier is `com.vxtiglitch.metadataeditor`; it does not replace the probe.
+
+The product's plain name is **Metadata Editor**, with the subtitle **Photo & Video Metadata** and an original frame/metadata-row icon. The user requested a straightforward listing name and independent source/product identity. See `branding/DECISION.md` for the competitor research and final direction; Zlarp remains distribution/project context.
 
 See `docs/VALIDATION.md` for the actual completed run and limitations, and `docs/DEVICE-TESTS.md` for the physical editor test. User media/GPS, local diagnostic reports and signing secrets never enter source or CI.

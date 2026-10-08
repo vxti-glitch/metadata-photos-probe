@@ -13,7 +13,9 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
-BUNDLE_ID = "com.vxtiglitch.zlarpMetadataEditor"
+BUNDLE_ID = "com.vxtiglitch.metadataeditor"
+DISPLAY_NAME = "Metadata Editor"
+BUNDLE_NAME = "metadata_editor"
 FLUTTER_COMMIT = "5fc346839b5d0eef006ed8404392afb4dfae428d"
 
 
@@ -155,6 +157,7 @@ def inspect_app(app):
     required = {
         "CFBundleIdentifier": BUNDLE_ID, "CFBundleShortVersionString": version,
         "CFBundleVersion": build,
+        "CFBundleDisplayName": DISPLAY_NAME, "CFBundleName": BUNDLE_NAME,
     }
     for key, value in required.items():
         if info.get(key) != value:
@@ -192,7 +195,8 @@ def inspect_app(app):
         raise ValueError("An identity-signed app was produced in the unsigned build path.")
     return {
         "bundle_identifier": info["CFBundleIdentifier"], "version": version, "build_number": build,
-        "display_name": info.get("CFBundleDisplayName"), "minimum_os": info.get("MinimumOSVersion"),
+        "display_name": info["CFBundleDisplayName"], "bundle_name": info["CFBundleName"],
+        "minimum_os": info.get("MinimumOSVersion"),
         "sdk": info.get("DTSDKName"), "platform": info.get("DTPlatformName"),
         "xcode_build": info.get("DTXcodeBuild"), "framework_binaries": binaries,
         "app_signature": "ad-hoc; must re-sign for device" if signature.returncode == 0 else "unsigned",
@@ -243,8 +247,8 @@ def main():
     inspection = inspect_app(app)
     (output / "evidence").mkdir(exist_ok=True)
     (output / "evidence/archive-inspection.json").write_text(json.dumps(inspection, indent=2) + "\n", encoding="utf-8")
-    ipa = output / "Zlarp-Metadata-Editor-UNSIGNED-NOT-INSTALLABLE.ipa"
-    archive_zip = output / "Zlarp-Metadata-Editor-unsigned-archive.zip"
+    ipa = output / "Metadata-Editor-UNSIGNED-NOT-INSTALLABLE.ipa"
+    archive_zip = output / "Metadata-Editor-xcarchive.zip"
     if ipa.exists() or archive_zip.exists():
         raise ValueError("Build outputs already exist; use a fresh build directory.")
     with tempfile.TemporaryDirectory(prefix="editor-payload-", dir=output) as temporary:

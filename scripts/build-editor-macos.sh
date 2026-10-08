@@ -66,14 +66,14 @@ if ! xcrun simctl list devices booted | grep -Fq "$task_simulator_id"; then
 fi
 xcrun simctl bootstatus "$task_simulator_id" -b
 xcrun simctl install "$task_simulator_id" "$task_simulator_app"
-task_launch="$(xcrun simctl launch "$task_simulator_id" com.vxtiglitch.zlarpMetadataEditor)"
+task_launch="$(xcrun simctl launch "$task_simulator_id" com.vxtiglitch.metadataeditor)"
 printf '%s\n' "$task_launch" | tee "$task_build/evidence/simulator-launch.txt"
 # Allow first-frame rendering; a screenshot documents simulator UI, never Photos provenance.
 sleep 5
-xcrun simctl spawn "$task_simulator_id" launchctl list | grep -F com.vxtiglitch.zlarpMetadataEditor > "$task_build/evidence/simulator-running.txt"
+xcrun simctl spawn "$task_simulator_id" launchctl list | grep -F com.vxtiglitch.metadataeditor > "$task_build/evidence/simulator-running.txt"
 xcrun simctl io "$task_simulator_id" screenshot "$task_build/evidence/simulator-editor.png"
 "$task_flutter" --suppress-analytics build ipa --release --no-codesign 2>&1 | tee "$task_build/evidence/unsigned-archive.log"
 cd "$task_root"
 python3 scripts/editor-package.py --archive editor/build/ios/archive/Runner.xcarchive --output build/editor
-git archive --format=zip --output="$task_build/Zlarp-Metadata-Editor-source.zip" HEAD
+git archive --format=zip --output="$task_build/Metadata-Editor-source.zip" HEAD
 python3 scripts/editor-package.py --manifest-only --output build/editor

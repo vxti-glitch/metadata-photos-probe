@@ -1,13 +1,14 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zlarp_metadata_editor/media_bridge.dart';
-import 'package:zlarp_metadata_editor/media_models.dart';
+import 'package:metadata_editor/app_brand.dart';
+import 'package:metadata_editor/media_bridge.dart';
+import 'package:metadata_editor/media_models.dart';
 
 import 'fake_media_bridge.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  const channel = MethodChannel('dev.zlarp.metadata/media_v1');
+  const channel = MethodChannel(AppBrand.bridgeChannel);
   final bridge = NativeMediaBridge(channel: channel);
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;

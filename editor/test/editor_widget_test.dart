@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zlarp_metadata_editor/editor_app.dart';
-import 'package:zlarp_metadata_editor/editor_controller.dart';
-import 'package:zlarp_metadata_editor/media_models.dart';
+import 'package:metadata_editor/editor_app.dart';
+import 'package:metadata_editor/editor_controller.dart';
+import 'package:metadata_editor/media_models.dart';
 
 import 'fake_media_bridge.dart';
 
@@ -18,7 +18,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     final controller = EditorController(bridge);
     addTearDown(controller.dispose);
-    await tester.pumpWidget(ZlarpApp(controller: controller));
+    await tester.pumpWidget(MetadataEditorApp(controller: controller));
     await tester.pumpAndSettle();
     return controller;
   }

@@ -1,4 +1,4 @@
-name: zlarp_metadata_editor
+name: metadata_editor
 description: "On-device metadata editing with a native Swift media engine."
 publish_to: 'none'
 version: 0.3.0+4

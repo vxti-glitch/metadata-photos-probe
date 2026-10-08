@@ -2,8 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zlarp_metadata_editor/editor_controller.dart';
-import 'package:zlarp_metadata_editor/media_models.dart';
+import 'package:metadata_editor/editor_controller.dart';
+import 'package:metadata_editor/media_models.dart';
 
 import 'fake_media_bridge.dart';
 

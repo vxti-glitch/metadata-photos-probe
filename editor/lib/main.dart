@@ -4,5 +4,5 @@ import 'editor_app.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const ZlarpApp());
+  runApp(const MetadataEditorApp());
 }

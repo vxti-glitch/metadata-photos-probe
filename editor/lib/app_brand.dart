@@ -1,0 +1,10 @@
+/// App identity shared by the interface and its versioned native bridge.
+abstract final class AppBrand {
+  static const name = 'Metadata Editor';
+  static const header = 'METADATA EDITOR';
+  static const subtitle = 'Photo & Video Metadata';
+  static const headerSubtitle = 'PHOTO & VIDEO';
+  static const tagline = 'Your media. Your metadata.';
+  static const headline = 'Your media.\nYour metadata.';
+  static const bridgeChannel = 'com.vxtiglitch.metadataeditor/media_v1';
+}

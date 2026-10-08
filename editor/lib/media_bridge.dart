@@ -1,5 +1,6 @@
 import 'package:flutter/services.dart';
 
+import 'app_brand.dart';
 import 'media_models.dart';
 
 abstract interface class MediaBridge {
@@ -20,7 +21,7 @@ abstract interface class MediaBridge {
 
 class NativeMediaBridge implements MediaBridge {
   NativeMediaBridge({MethodChannel? channel})
-    : _channel = channel ?? const MethodChannel('dev.zlarp.metadata/media_v1');
+    : _channel = channel ?? const MethodChannel(AppBrand.bridgeChannel);
   final MethodChannel _channel;
 
   @override

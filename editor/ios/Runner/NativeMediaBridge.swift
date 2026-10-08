@@ -38,7 +38,7 @@ final class NativeMediaBridge: NSObject {
     private weak var presentedPicker: UIViewController?
 
     init(messenger: FlutterBinaryMessenger) {
-        channel = FlutterMethodChannel(name: "dev.zlarp.metadata/media_v1", binaryMessenger: messenger)
+        channel = FlutterMethodChannel(name: "com.vxtiglitch.metadataeditor/media_v1", binaryMessenger: messenger)
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         store = NativeSessionStore(root: support.appendingPathComponent("NativeMediaSessions", isDirectory: true),

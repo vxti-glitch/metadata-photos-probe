@@ -25,6 +25,7 @@ class EditorPackagingTests(unittest.TestCase):
         self.info = {
             "CFBundleIdentifier": package.BUNDLE_ID, "CFBundleShortVersionString": "0.3.0",
             "CFBundleVersion": "4", "CFBundleExecutable": "Runner", "MinimumOSVersion": "17.0",
+            "CFBundleDisplayName": package.DISPLAY_NAME, "CFBundleName": package.BUNDLE_NAME,
             "DTPlatformName": "iphoneos",
             "NSPhotoLibraryUsageDescription": "Test description",
             "UIApplicationSceneManifest": {"UIApplicationSupportsMultipleScenes": False},
@@ -109,6 +110,18 @@ class EditorPackagingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Photos"):
             self.inspect()
 
+    def test_old_branding_rejected_even_when_identifier_and_version_match(self):
+        for key, old_value in [("CFBundleDisplayName", "Zlarp Metadata"),
+                               ("CFBundleName", "zlarp_metadata_editor"),
+                               ("CFBundleDisplayName", "Framevell"), ("CFBundleName", "framevell")]:
+            with self.subTest(key=key):
+                original = self.info[key]
+                self.info[key] = old_value
+                self.write_info()
+                with self.assertRaisesRegex(ValueError, key):
+                    self.inspect()
+                self.info[key] = original
+                self.write_info()
     def test_missing_flutter_engine_rejected(self):
         self.binaries[1].unlink()
         with self.assertRaisesRegex(ValueError, "Flutter.framework"):

@@ -1,6 +1,6 @@
 # Flutter / Swift media contract, version 1
 
-Channel: `dev.zlarp.metadata/media_v1`, StandardMethodCodec. Swift owns media and opaque session identifiers; Dart never sends paths or media bytes. Return JSON-compatible maps/lists/primitives. Only thumbnail paths created inside the app's cache may cross for display. Native output remains immutable for a frozen processing identifier. No automatic media upload or Photos write is included.
+Channel: `com.vxtiglitch.metadataeditor/media_v1`, StandardMethodCodec. Swift owns media and opaque session identifiers; Dart never sends paths or media bytes. Return JSON-compatible maps/lists/primitives. Only thumbnail paths created inside the app's cache may cross for display. Native output remains immutable for a frozen processing identifier. No automatic media upload or Photos write is included.
 
 - `capabilities`: `{protocolVersion:1, formats:[jpeg,heic,mp4,mov], editableFields:[make,model,lens], videoStatus:provisional}`. Lens is image-only; HEIC changed camera strings are ASCII-only.
 - `listSessions`: list of Session maps, most recent first, from a bounded versioned atomic local manifest. Recover original/output references, not active OS operations.

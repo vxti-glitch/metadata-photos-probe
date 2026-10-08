@@ -47,7 +47,7 @@ end
     configuration.build_settings['SWIFT_VERSION'] = '5.0'
     configuration.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'
     configuration.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = directory == 'Runner' ?
-      'com.vxtiglitch.zlarpMetadataEditor' : 'com.vxtiglitch.zlarpMetadataEditor.RunnerTests'
+      'com.vxtiglitch.metadataeditor' : 'com.vxtiglitch.metadataeditor.RunnerTests'
   end
 end
 project.build_configurations.each do |configuration|

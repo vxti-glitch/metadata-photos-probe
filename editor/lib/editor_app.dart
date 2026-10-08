@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import 'app_brand.dart';
 import 'editor_controller.dart';
 import 'media_bridge.dart';
 import 'media_models.dart';
@@ -11,12 +12,12 @@ const _surface = Color(0xFF191E25);
 const _accent = Color(0xFF84E4C7);
 const _muted = Color(0xFF9BA6B4);
 
-class ZlarpApp extends StatelessWidget {
-  const ZlarpApp({super.key, this.controller});
+class MetadataEditorApp extends StatelessWidget {
+  const MetadataEditorApp({super.key, this.controller});
   final EditorController? controller;
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: 'Zlarp Metadata Editor',
+    title: AppBrand.name,
     debugShowCheckedModeBanner: false,
     theme: ThemeData(
       brightness: Brightness.dark,
@@ -124,28 +125,35 @@ class _EditorHomeState extends State<EditorHome> {
               ),
         title: const Row(
           children: [
-            _BrandMark(),
+            _MetadataMark(),
             SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'ZLARP',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 2,
-                  ),
+            Expanded(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      AppBrand.header,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 2,
+                      ),
+                    ),
+                    Text(
+                      AppBrand.headerSubtitle,
+                      style: TextStyle(
+                        fontSize: 9,
+                        color: _muted,
+                        letterSpacing: 1.1,
+                      ),
+                    ),
+                  ],
                 ),
-                Text(
-                  'METADATA EDITOR',
-                  style: TextStyle(
-                    fontSize: 9,
-                    color: _muted,
-                    letterSpacing: 1.5,
-                  ),
-                ),
-              ],
+              ),
             ),
           ],
         ),
@@ -219,27 +227,57 @@ class _EditorHomeState extends State<EditorHome> {
   }
 }
 
-class _BrandMark extends StatelessWidget {
-  const _BrandMark();
+class _MetadataMark extends StatelessWidget {
+  const _MetadataMark();
   @override
-  Widget build(BuildContext context) => Container(
-    width: 34,
-    height: 34,
-    decoration: BoxDecoration(
-      color: _accent,
-      borderRadius: BorderRadius.circular(10),
-    ),
-    child: const Center(
-      child: Text(
-        'Z',
-        style: TextStyle(
-          color: Color(0xFF102C25),
-          fontSize: 23,
-          fontWeight: FontWeight.w900,
-        ),
-      ),
-    ),
+  Widget build(BuildContext context) => const ExcludeSemantics(
+    child: CustomPaint(size: Size(34, 34), painter: _MetadataMarkPainter()),
   );
+}
+
+/// Neutral vector: four frame corners surrounding three metadata rows.
+/// Geometry uses a 32-unit canvas so the app icon can share the same construction.
+class _MetadataMarkPainter extends CustomPainter {
+  const _MetadataMarkPainter();
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.save();
+    canvas.scale(size.width / 32, size.height / 32);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        const Rect.fromLTWH(0, 0, 32, 32),
+        const Radius.circular(8),
+      ),
+      Paint()..color = _background,
+    );
+    final stroke = Paint()
+      ..color = _accent
+      ..strokeWidth = 1.8
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..style = PaintingStyle.stroke;
+    final corners = Path()
+      ..moveTo(10, 4)
+      ..lineTo(4, 4)
+      ..lineTo(4, 10)
+      ..moveTo(22, 4)
+      ..lineTo(28, 4)
+      ..lineTo(28, 10)
+      ..moveTo(4, 22)
+      ..lineTo(4, 28)
+      ..lineTo(10, 28)
+      ..moveTo(22, 28)
+      ..lineTo(28, 28)
+      ..lineTo(28, 22);
+    canvas.drawPath(corners, stroke);
+    canvas.drawLine(const Offset(11, 10), const Offset(23, 10), stroke);
+    canvas.drawLine(const Offset(11, 17), const Offset(20, 17), stroke);
+    canvas.drawLine(const Offset(11, 24), const Offset(17, 24), stroke);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _MetadataMarkPainter oldDelegate) => false;
 }
 
 class _Projects extends StatelessWidget {
@@ -251,7 +289,7 @@ class _Projects extends StatelessWidget {
     children: [
       const SizedBox(height: 14),
       const Text(
-        'Your media.\nYour metadata.',
+        AppBrand.headline,
         style: TextStyle(
           fontSize: 32,
           height: 1.12,
@@ -988,7 +1026,7 @@ Future<bool> _confirm(
 void _showAbout(BuildContext context) => showDialog<void>(
   context: context,
   builder: (context) => AlertDialog(
-    title: const Text('Zlarp Metadata Editor'),
+    title: const Text(AppBrand.name),
     content: const SingleChildScrollView(
       child: Text(
         '0.3.0 · First editing milestone\n\nFlutter interface · Swift media engine\n\n'

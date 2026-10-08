@@ -1,7 +1,7 @@
 import 'dart:async';
 
-import 'package:zlarp_metadata_editor/media_bridge.dart';
-import 'package:zlarp_metadata_editor/media_models.dart';
+import 'package:metadata_editor/media_bridge.dart';
+import 'package:metadata_editor/media_models.dart';
 
 const sourceId = '00000000-0000-4000-8000-000000000001';
 const outputId = '00000000-0000-4000-8000-000000000002';

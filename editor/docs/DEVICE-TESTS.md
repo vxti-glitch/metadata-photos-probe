@@ -1,6 +1,6 @@
 # First Flutter/Swift editor device check
 
-Sign the delivered unsigned IPA using the same authorized channel as before. Install the **Zlarp Metadata** editor alongside Metadata Probe. Confirm version **0.3.0 / build 4** and the phone's actual iOS version/build. Cloud/simulator results do not replace this integration test.
+Sign the delivered unsigned IPA using the same authorized channel as before. Install **Metadata Editor** alongside Metadata Probe. Confirm version **0.3.0 / build 4** and the phone's actual iOS version/build. Cloud/simulator results do not replace this integration test.
 
 1. Choose a disposable JPEG or the previously working HEIC through Photos, then another through Files. Confirm the source name, origin, camera details and preview identify the intended file. Photos-original import intentionally excludes prior visible edits and refuses Live Photos; those restrictions must be clear rather than silently converting.
 2. Change make/model and optionally the image lens. Blank lens preserves the existing value; ordinary ASCII changes are required for HEIC. Run the write and inspect the frozen output's camera fields, location/presentation and independent quality result. Known mismatch must block export. A disclosed incomplete result remains incomplete even after acknowledgment.
