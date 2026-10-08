@@ -209,7 +209,7 @@ struct ProbeView: View {
             .navigationTitle("Photos Metadata Probe")
             .onChange(of: probe.stage) { _, _ in probe.stageChanged() }
             .onChange(of: probe.route) { _, _ in probe.routeChanged() }
-            .onChange(of: probe.selectedFileTrialID) { _, _ in probe.resetObservationForm() }
+            .onChange(of: probe.selectedFileTrialID) { _, _ in probe.resetFileObservationForm() }
             .onChange(of: probe.selectedAttemptID) { _, _ in probe.resetObservationForm() }
             .sheet(isPresented: $showPhotos) {
                 let returnTarget = returnedTrialID
@@ -237,6 +237,7 @@ struct ProbeView: View {
             }) {
                 if let id = exportTrialID, let url = probe.filesExportURL {
                     FilesExportPicker(fileURL: url) { completed in
+                        guard exportTrialID == id else { return }
                         probe.finishFilesExport(id: id, completed: completed); showFilesExport = false
                     }
                 }
@@ -360,18 +361,18 @@ private struct FileEvidenceSection: View {
                 ForEach(result.checks, id: \.name) { CheckRow(check: $0) }
                 ForEach(result.limitations, id: \.self) { Text($0).font(.caption) }
             }
-            Picker("Observation time", selection: $probe.observationPhase) {
+            Picker("Observation time", selection: $probe.fileObservationPhase) {
                 ForEach(ObservationPhase.allCases) { Text($0.rawValue).tag($0) }
             }
-            Picker("Photos source label", selection: $probe.attribution) {
+            Picker("Photos source label", selection: $probe.fileAttribution) {
                 ForEach(AttributionObservation.allCases) { Text($0.rawValue).tag($0) }
             }
-            TextField("Exact label, if present", text: $probe.attributionText)
-            Picker("Photos camera display", selection: $probe.observedCamera) {
+            TextField("Exact label, if present", text: $probe.fileAttributionText)
+            Picker("Photos camera display", selection: $probe.fileObservedCamera) {
                 ForEach(CameraObservation.allCases) { Text($0.rawValue).tag($0) }
             }
-            TextField("Camera values actually displayed", text: $probe.observedCameraText)
-            TextField("Notes / screenshot reference", text: $probe.observationNotes)
+            TextField("Camera values actually displayed", text: $probe.fileObservedCameraText)
+            TextField("Notes / screenshot reference", text: $probe.fileObservationNotes)
             Button("Record this external-upload observation") { probe.addFileObservation() }
             Text("Upload completion, source labels and camera display are your observations. They are not automatically detected.").font(.footnote)
             ForEach(trial.observations) { observation in

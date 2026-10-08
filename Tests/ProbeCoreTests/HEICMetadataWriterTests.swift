@@ -50,6 +50,46 @@ final class HEICMetadataWriterTests: XCTestCase {
         XCTAssertEqual(ascii(tiff, directory: 74, tag: 0xa434), "Old lens")
     }
 
+    func testOutOfLineCameraValuesAreWordAlignedAfterOddTIFFAndStrings() throws {
+        for little in [false, true] {
+            // Existing values/IFDs are aligned; an opaque trailing byte makes
+            // the original TIFF length odd without changing any field offset.
+            let fixture = Fixture(little: little, oddTIFFLength: true)
+            XCTAssertEqual(fixture.tiff.count % 2, 1)
+            let source = folder.appendingPathComponent("odd-source-\(little).heic")
+            let output = folder.appendingPathComponent("odd-output-\(little).heic")
+            try fixture.bytes.write(to: source)
+            let sourceHash = try WholeFileDigest.sha256(source)
+            let patch = CameraPatch(make: "Maker6", model: "Model6", lens: "Lens44")
+            XCTAssertEqual((patch.make.utf8.count + 1) % 2, 1)
+            try HEICMetadataWriter.write(source: source, output: output, patch: patch)
+            let tiff = fixture.exifTIFF(in: try Data(contentsOf: output))
+            let root = Int(number(tiff, 4, 4, little))
+            let exifPointer = try XCTUnwrap(entry(tiff, directory: root, tag: 0x8769, little: little))
+            let exif = Int(number(exifPointer, 8, 4, little))
+            XCTAssertEqual(root % 2, 0)
+            XCTAssertEqual(exif % 2, 0)
+            var offsets = [Int]()
+            for (directory, tag, value) in [(root, UInt64(0x010f), patch.make), (root, UInt64(0x0110), patch.model), (exif, UInt64(0xa434), patch.lens!)] {
+                let field = try XCTUnwrap(entry(tiff, directory: directory, tag: tag, little: little))
+                let count = Int(number(field, 4, 4, little))
+                let offset = Int(number(field, 8, 4, little))
+                XCTAssertGreaterThan(count, 4)
+                XCTAssertEqual(count % 2, 1)
+                XCTAssertEqual(offset % 2, 0, "ASCII tag \(tag) must have an aligned Value Offset")
+                XCTAssertEqual(ascii(tiff, directory: directory, tag: tag, little: little), value)
+                offsets.append(offset)
+            }
+            // Padding is required both before the first value and between each
+            // pair of odd-length strings; it must not overwrite original bytes.
+            XCTAssertEqual(offsets, [fixture.tiff.count + 1, fixture.tiff.count + 9, fixture.tiff.count + 17])
+            for offset in offsets { XCTAssertEqual(tiff[offset - 1], 0) }
+            XCTAssertEqual(Data(tiff[8..<fixture.tiff.count]), Data(fixture.tiff[8...]))
+            XCTAssertEqual(try HEICMetadataWriter.inventory(source), try HEICMetadataWriter.inventory(output))
+            XCTAssertEqual(try WholeFileDigest.sha256(source), sourceHash)
+        }
+    }
+
     func testMissingOrMultipleExifItemsRefusedWithoutAnyOutput() throws {
         for (index, types) in [[UInt32(2): "mime"], [UInt32(3): "Exif"]].enumerated() {
             let fixture = Fixture(typeOverrides: types)
@@ -133,9 +173,11 @@ private struct Fixture {
     let ilocCountField: Int
     let propertyValueField: Int
 
-    init(little: Bool = false, typeOverrides: [UInt32: String] = [:], exifTargets: [UInt16] = [1]) {
+    init(little: Bool = false, typeOverrides: [UInt32: String] = [:], exifTargets: [UInt16] = [1], oddTIFFLength: Bool = false) {
         self.little = little
-        tiff = makeTIFF(little: little)
+        var originalTIFF = makeTIFF(little: little)
+        if oddTIFFLength && originalTIFF.count % 2 == 0 { originalTIFF.append(0xa5) }
+        tiff = originalTIFF
         let exif = Data([0,0,0,6]) + Data("Exif\0\0".utf8) + tiff
         let payloads: [(UInt32, Data)] = [(1, Data("coded-primary-diagnostic".utf8)), (2, exif), (3, Data("auxiliary-HDR-depth-diagnostic".utf8)), (4, Data("<unknown:opaque xmlns:unknown='urn:probe'>keep</unknown:opaque>".utf8))]
         let ftyp = box("ftyp", Data("heic".utf8) + Data(repeating: 0, count: 4) + Data("mif1heic".utf8))
@@ -188,7 +230,10 @@ private func makeTIFF(little: Bool) -> Data {
     data.replaceSubrange(0..<2, with: Data((little ? "II" : "MM").utf8))
     put(42, 2, 2, &data, little); put(8, 4, 4, &data, little)
     put(5, 2, 8, &data, little); put(2, 2, 74, &data, little); put(5, 2, 104, &data, little)
-    func payload(_ value: Data) -> Int { let offset = data.count; data.append(value); return offset }
+    func payload(_ value: Data) -> Int {
+        if data.count % 2 != 0 { data.append(0) }
+        let offset = data.count; data.append(value); return offset
+    }
     func record(_ position: Int, _ tag: UInt64, _ type: UInt64, _ count: UInt64, _ value: UInt64) {
         put(tag, 2, position, &data, little); put(type, 2, position + 2, &data, little)
         put(count, 4, position + 4, &data, little); put(value, 4, position + 8, &data, little)

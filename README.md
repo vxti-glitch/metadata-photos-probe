@@ -6,7 +6,7 @@ The revised development specification is preserved in [docs/SPECIFICATION.md](do
 
 ## What is included
 
-- JPEG, HEIC, MP4 and MOV inspection and controlled save experiments. Candidate camera make/model changes use ImageIO or same-container AVFoundation passthrough and must pass exact readback. Format support is measured rather than assumed; see [actual results](docs/VALIDATION-STATUS.md). Image lens changes are optional; video lens editing is refused.
+- JPEG, HEIC, MP4 and MOV inspection and controlled save experiments. JPEG changes use ImageIO with compressed-data checks; HEIC/video changes use bounded metadata-only container writers and must pass native framework readback. Format support is measured rather than assumed; see [actual results](docs/VALIDATION-STATUS.md). Image lens changes are optional; video lens editing is refused.
 - Single-selection Photos picker and coordinated Files staging. Deliberate original/current PhotoKit resource acquisition.
 - New asset creation through file resources and file-URL factories.
 - Supported existing-asset content editing with baseline identity verification, exact rendered type and versioned diagnostic adjustment data. Previously adjusted, orientation-dependent or incompatible assets are refused.
@@ -24,7 +24,7 @@ Windows can edit the source and dispatch the workflow. It cannot compile PhotoKi
 
 ## Device experiment
 
-Follow [DEVICE-TEST-PROTOCOL.md](docs/DEVICE-TEST-PROTOCOL.md). Stage A imports a prepared counterpart or unchanged control to isolate Photos behavior. Stage B performs the camera change on the device after you acknowledge reviewing a Stage A result for the selected format/route.
+For version 0.2 follow [PROTOTYPE-0.2-TESTS.md](docs/PROTOTYPE-0.2-TESTS.md): perform an actual on-device camera change, export through Files, then upload manually through Safari/iCloud. [DEVICE-TEST-PROTOCOL.md](docs/DEVICE-TEST-PROTOCOL.md) preserves the original direct PhotoKit experiment. Stage A imports a prepared counterpart or unchanged control; Stage B performs the camera change on the device after acknowledging the baseline result.
 
 The two new-asset routes and existing-content-edit route are independent tests. User-recorded label absence is not automatically a full feasibility verdict. Genuine camera, existing iCloud-upload and previously app-attributed controls must be characterized on hardware.
 
@@ -49,3 +49,6 @@ The probe retains staged copies and reports locally until you clear its data or 
 - `.github/workflows`, `scripts`: cloud build, packaging, signing-policy validation and manifests.
 
 No runtime third-party libraries are required. Build-time tooling/action versions are pinned. Stop after this probe and review the user's device evidence before any product work.
+# Prototype 0.2 follow-up
+
+The current follow-up adds Files/iCloud evidence, separate embedded/library location diagnostics, optional returned-original inspection and bounded HEIC/video metadata-only writers. See [the focused 0.2 hardware protocol](docs/PROTOTYPE-0.2-TESTS.md). Original PhotoKit test documentation remains available for historical context; final cloud validation and remaining device limits are recorded in [validation status](docs/VALIDATION-STATUS.md).

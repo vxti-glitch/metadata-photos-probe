@@ -387,7 +387,13 @@ private enum HEICTIFFEditor {
         try storeInteger(tag, width: 2, at: 0, in: &entry, little: little); try storeInteger(2, width: 2, at: 2, in: &entry, little: little)
         try storeInteger(UInt64(bytes.count), width: 4, at: 4, in: &entry, little: little)
         if bytes.count <= 4 { entry.replaceSubrange(8..<8 + bytes.count, with: bytes) }
-        else { try storeInteger(UInt64(tiff.count), width: 4, at: 8, in: &entry, little: little); tiff.append(bytes) }
+        else {
+            // TIFF Value Offsets are word-aligned, including ASCII payloads.
+            // Each preceding string may itself have an odd byte count.
+            if tiff.count % 2 != 0 { tiff.append(0) }
+            try storeInteger(UInt64(tiff.count), width: 4, at: 8, in: &entry, little: little)
+            tiff.append(bytes)
+        }
         entries.removeAll { (try? integer($0, at: 0, width: 2, little: little)) == tag }; entries.append(entry)
     }
     private static func appendIFD(_ entries: [Data], next: UInt64, to tiff: inout Data, little: Bool) throws -> Int {

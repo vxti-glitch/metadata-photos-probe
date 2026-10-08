@@ -52,6 +52,13 @@ final class ProbeViewModel: ObservableObject {
     @Published var observedCameraText = ""
     @Published var screenshotReference = ""
     @Published var observationNotes = ""
+    @Published var fileObservationPhase: ObservationPhase = .immediate
+    @Published var fileAttribution: AttributionObservation = .notChecked
+    @Published var fileAttributionText = ""
+    @Published var fileObservedCamera: CameraObservation = .notChecked
+    @Published var fileObservedCameraText = ""
+    @Published var fileScreenshotReference = ""
+    @Published var fileObservationNotes = ""
 
     private let photos: any ProbePhotosAccess
     private let persistWriter: (Data, URL) throws -> Void
@@ -344,10 +351,10 @@ final class ProbeViewModel: ObservableObject {
 
     func addFileObservation() {
         guard !busy, let index = fileTrials.firstIndex(where: { $0.id == selectedFileTrialID }) else { return }
-        let value = ManualObservation(phase: observationPhase, attribution: attribution,
-            attributionText: String(attributionText.prefix(2000)), camera: observedCamera,
-            cameraText: String(observedCameraText.prefix(2000)), screenshotReference: String(screenshotReference.prefix(1000)),
-            notes: String(observationNotes.prefix(4000)))
+        let value = ManualObservation(phase: fileObservationPhase, attribution: fileAttribution,
+            attributionText: String(fileAttributionText.prefix(2000)), camera: fileObservedCamera,
+            cameraText: String(fileObservedCameraText.prefix(2000)), screenshotReference: String(fileScreenshotReference.prefix(1000)),
+            notes: String(fileObservationNotes.prefix(4000)))
         guard value.hasMeaningfulObservation else { errorMessage = "Choose the source-label or camera result you actually observed."; return }
         fileTrials[index].observations.append(value)
         do { try persist(); status = "External-upload observation recorded as user-reported evidence." }
@@ -355,8 +362,15 @@ final class ProbeViewModel: ObservableObject {
     }
 
     func resetObservationForm() {
+        observationPhase = .immediate
         attribution = .notChecked; attributionText = ""; observedCamera = .notChecked
         observedCameraText = ""; screenshotReference = ""; observationNotes = ""
+    }
+
+    func resetFileObservationForm() {
+        fileObservationPhase = .immediate
+        fileAttribution = .notChecked; fileAttributionText = ""; fileObservedCamera = .notChecked
+        fileObservedCameraText = ""; fileScreenshotReference = ""; fileObservationNotes = ""
     }
 
     @discardableResult
@@ -402,6 +416,7 @@ final class ProbeViewModel: ObservableObject {
             try prepareWorkspace()
             source = nil; sourceInspection = nil; clearOutput()
             attempts = []; selectedAttemptID = nil; fileTrials = []; selectedFileTrialID = nil; shareURL = nil
+            resetObservationForm(); resetFileObservationForm()
             stageAReviewed = false; existingEditConsented = false
             status = "Local probe copies and reports removed. Photos assets and provider files were not changed."
         } catch { errorMessage = error.localizedDescription }

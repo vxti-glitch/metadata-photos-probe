@@ -95,11 +95,11 @@ final class FileWorkflowTests: XCTestCase {
         let photos = CountingFilePhotos()
         let value = try await model(photos: photos)
         value.addFileObservation(); XCTAssertTrue(value.fileTrials[0].observations.isEmpty)
-        value.attribution = .absent; value.addFileObservation()
+        value.fileAttribution = .absent; value.addFileObservation()
         XCTAssertEqual(value.fileTrials[0].observations.first?.attribution, .absent)
         XCTAssertNil(value.fileTrials[0].returnedIntegrity)
         XCTAssertTrue(value.attempts.isEmpty)
-        value.resetObservationForm(); XCTAssertEqual(value.attribution, .notChecked)
+        value.resetFileObservationForm(); XCTAssertEqual(value.fileAttribution, .notChecked)
     }
 
     func testLegacyEvidenceWithoutFileTrialsOrEmbeddedLocationStillDecodes() throws {
@@ -111,6 +111,32 @@ final class FileWorkflowTests: XCTestCase {
         XCTAssertNil(recovered.fileTrials); XCTAssertEqual(recovered.userReportedBuild, "legacy")
         let media = Data(#"{"kind":"jpeg","byteCount":1,"metadata":{},"notes":[],"structure":{}}"#.utf8)
         XCTAssertNil(try JSONDecoder().decode(MediaInspection.self, from: media).location)
+    }
+
+    func testFilesAndNativeObservationDraftsCannotCrossRecord() async throws {
+        let value = try await model(photos: CountingFilePhotos())
+        let file = try XCTUnwrap(value.selectedFileTrial)
+        let attempt = ProbeAttempt(stage: file.stage, sourceFileURL: file.source.fileURL,
+            outputFileURL: file.outputURL, sourceRepresentation: "Fixture", baselineOrigin: "Synthetic",
+            sourceInspection: file.sourceInspection, outputInspection: file.outputInspection,
+            requestedPatch: nil, stagedIntegrity: file.integrity, route: .resourceCreation,
+            stageAReviewAcknowledged: false, incompleteIntegrityAcknowledged: false, state: "Prepared")
+        value.attempts = [attempt]; value.selectedAttemptID = attempt.id
+        value.attribution = .present; value.attributionText = "Native app label"
+        value.observedCamera = .differs; value.observationNotes = "Native draft"
+        value.addFileObservation()
+        XCTAssertTrue(value.fileTrials[0].observations.isEmpty)
+        value.fileAttribution = .absent; value.fileObservedCamera = .matches
+        value.fileObservationNotes = "Safari result"; value.addFileObservation(); value.addObservation()
+        XCTAssertEqual(value.fileTrials[0].observations[0].attribution, .absent)
+        XCTAssertEqual(value.fileTrials[0].observations[0].notes, "Safari result")
+        XCTAssertEqual(value.attempts[0].observations[0].attributionText, "Native app label")
+        XCTAssertEqual(value.attempts[0].observations[0].notes, "Native draft")
+        value.resetObservationForm()
+        XCTAssertEqual(value.fileAttribution, .absent)
+        value.attribution = .present; value.resetFileObservationForm()
+        XCTAssertEqual(value.attribution, .present)
+        XCTAssertEqual(value.fileAttribution, .notChecked)
     }
 }
 
