@@ -1,5 +1,44 @@
 # Validation status
 
+## Current prototype 0.2.0 / build 2
+
+Validated October 8, 2026. [Final GitHub macOS run 37751001638](https://github.com/vxti-glitch/metadata-photos-probe/actions/runs/37751001638) **succeeded** for exact implementation revision `363a494ab955c3586ceaefc9c54e2468a7fe167e`. Documentation-only updates after that revision do not change the compiled implementation. Signed export was skipped.
+
+| Layer | Current evidence |
+|---|---|
+| Portable build/signing policy | 11 tests passed locally and in the final cloud run. |
+| Native engine | 47 macOS XCTest cases passed with zero failures, including strict JPEG/HEIC/MP4/MOV camera writes, retained exposed location/orientation, media integrity and adversarial container/TIFF controls. |
+| Hosted iOS app | 26 tests passed with zero failures, including separate Files/native observation drafts, frozen returned-original reference, no PhotoKit commit during Files work, persistence failure and stale export callbacks. Simulator tests do not execute physical Photos behavior. |
+| Toolchain | macOS 15.7.9 arm64, Xcode 16.4 (16F6), Swift 6.1.2 driver / Swift 5 mode, iOS SDK 18.5. iPhone SE (3rd generation) simulator runtime iOS 26.2. No iOS 27.2 SDK/runtime test is claimed. |
+| Controlled fixtures | JPEG, HEIC, MP4 and MOV processed counterparts all passed exact requested make/model readback. Image lens changes are covered separately; video lens writes are refused. Synthetic H.264 videos have no audio and do not qualify real HEVC/HDR/audio/metadata tracks. |
+| Integrity | Coded image/media payloads, item graph or video track/sample/timing/format/transform evidence and exposed non-target metadata are independently compared. All five generated processed controls remain **incomplete** for opaque metadata/container/HDR semantics, rather than universally lossless. Known mismatches remain blocked. |
+| Packaging | Generic iOS Release archive succeeded. Downloaded IPA, archive, source ZIP and fixture ZIP match manifest byte counts/SHA-256. Fixture file checksums also matched. IPA contains arm64 Mach-O, version 0.2.0/build 2/minimum iOS 17.0, no provisioning profile or code signature. |
+| Signing/install | Repository signing secrets/variables remain absent. The package is **unsigned and not ordinarily installable**. Use the authorized signing method used for the first IPA or configure the documented team workflow. No 0.2 installation is claimed. |
+| Physical 0.2 tests | Not run. iPhone 15 Pro Max / reported iOS 27.2 remains the primary target. |
+| Full editor | Not implemented; only the authorized feasibility follow-up. |
+
+The final run passed **84 tests** (47 engine + 26 hosted app + 11 portable). Code review identified TIFF string alignment, shared observation drafts and a stale exporter presentation callback; all were corrected and independently re-reviewed. Final verification separately confirmed scope, tests, packaging and remaining evidence limits.
+
+### Existing physical evidence, distinct from this new build
+
+The user installed a re-signed version 0.1/build 1 on the reported target phone. JPEG camera edits worked, while new assets saved directly by the app displayed **Saved from Metadata Probe**. Existing-asset experiments were blocked by prior-adjustment/orientation guards; they did not establish successful editing or native label-free behavior.
+
+The user's manual Files -> Safari/iCloud.com Photos -> synchronized Photos workflow showed changed JPEG camera information without an unwanted source label. Screenshots showed equal dimensions and rounded size, which do not alone prove unchanged compressed data. The user also reported no unwanted source labels for HEIC, MP4 and MOV uploads. Those latter trials established a save-route observation, not successful on-phone metadata writing by version 0.2. Duplicate warnings remain inconclusive for any trial that does not create an identifiable result.
+
+The JPEG screenshots showed a source location map and a processed image without a map. The new diagnostics expose embedded GPS and library location separately; no location loss cause or automatic repair is claimed. Returned-original inspection is optional and never creates another Photos asset.
+
+### Delivered 0.2 artifacts
+
+GitHub artifacts: `probe-unsigned-12-1` and `probe-controlled-fixtures-12-1` (14-day retention). Verified local copies: `dist/verified-363a494/`. Build evidence and logs accompany the package. IPA SHA-256: `d2fd353b825b24f1361d38d754246221cf0bb5dbe748223039fcb31622f2a811`.
+
+See [the focused phone test](PROTOTYPE-0.2-TESTS.md) and [build/signing instructions](BUILD-AND-INSTALL.md). Start with an actual disposable HEIC camera patch, export the processed file to Files and upload manually through Safari. Then test camera-patched MOV/MP4 and real-camera video playback/audio/orientation. Do not repeat unchanged-file uploads merely to reproduce the already reported label absence. No undocumented iCloud integration or native attribution suppression was added.
+
+Remaining physical gates include correct camera display, stable attribution after relaunch/sync, GPS-layer interpretation, real HEIC auxiliary/HDR/MakerNotes semantics, HEVC/HDR/audio and opaque video tracks, rotated/large/cloud-only media, permissions/storage/cancellation, eligible existing edits and Revert. This build preserves strict unsupported outcomes; it does not broaden existing-image edits beyond the original upright/unadjusted constraint. Development stops for the user's device results before further application work.
+
+## Historical prototype 0.1 validation
+
+The sections below describe the original delivered implementation and verification date. Their original 'not tested' statements and HEIC/MP4 refusals refer to that earlier validation snapshot; they are superseded by the separately identified current evidence above.
+
 Validated October 7, 2026 (America/New_York). [GitHub macOS run 37722017789](https://github.com/vxti-glitch/metadata-photos-probe/actions/runs/37722017789) **succeeded** for source commit `ae139066fed4c10ae5f3a8c9141dc4d2a905608c`. Its UTC logs are dated October 8. The signed-export job was skipped.
 
 | Layer | Current evidence |
