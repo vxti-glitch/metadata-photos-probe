@@ -87,9 +87,10 @@ public enum MetadataEngine {
               let destination = CGImageDestinationCreateWithURL(output as CFURL, type, 1, nil) else {
             throw ProbeError.writeFailed("ImageIO source or destination could not be opened")
         }
-        let metadata: CGMutableImageMetadata
-        if let original = CGImageSourceCopyMetadataAtIndex(image, 0, nil), let copy = CGImageMetadataCreateMutableCopy(original) { metadata = copy }
-        else { metadata = CGImageMetadataCreateMutable() }
+        // Supply only deliberate changes. Copying the entire original metadata into
+        // a merge request can make ImageIO reserialize/reconcile unrelated namespaces.
+        // MergeMetadata retains the source fields; independent checks still reject loss.
+        let metadata = CGImageMetadataCreateMutable()
         guard CGImageMetadataSetValueMatchingImageProperty(metadata, kCGImagePropertyTIFFDictionary, kCGImagePropertyTIFFMake, patch.make as CFString),
               CGImageMetadataSetValueMatchingImageProperty(metadata, kCGImagePropertyTIFFDictionary, kCGImagePropertyTIFFModel, patch.model as CFString) else {
             throw ProbeError.writeFailed("ImageIO does not support requested camera tags for this source")

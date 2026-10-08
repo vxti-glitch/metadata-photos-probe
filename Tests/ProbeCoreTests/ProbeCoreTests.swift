@@ -87,6 +87,12 @@ final class ProbeCoreTests: XCTestCase {
         XCTAssertEqual(result.outputInspection.metadata["model"], "Probe Model")
         XCTAssertEqual(result.outputInspection.metadata["lens"], "Probe Lens")
         XCTAssertEqual(result.outputInspection.structure["orientation"], "6")
+        let sourceProperties = CGImageSourceCopyPropertiesAtIndex(CGImageSourceCreateWithURL(source as CFURL, nil)!, 0, nil)! as NSDictionary
+        let outputProperties = CGImageSourceCopyPropertiesAtIndex(CGImageSourceCreateWithURL(output as CFURL, nil)!, 0, nil)! as NSDictionary
+        let sourceEXIF = sourceProperties[kCGImagePropertyExifDictionary] as! NSDictionary
+        let outputEXIF = outputProperties[kCGImagePropertyExifDictionary] as! NSDictionary
+        XCTAssertEqual(sourceEXIF[kCGImagePropertyExifDateTimeOriginal] as? String, outputEXIF[kCGImagePropertyExifDateTimeOriginal] as? String)
+        XCTAssertEqual(sourceEXIF[kCGImagePropertyExifFNumber] as? NSNumber, outputEXIF[kCGImagePropertyExifFNumber] as? NSNumber)
         XCTAssertEqual(try WholeFileDigest.sha256(source), originalHash)
         let compressed = result.integrity.checks.first { $0.name == "JPEG compressed scans and coding segments" }
         XCTAssertEqual(compressed?.status, .passed)
@@ -127,6 +133,7 @@ final class ProbeCoreTests: XCTestCase {
         let result = try await MetadataEngine.process(source: source, output: output, patch: CameraPatch(make: "Probe", model: "Undated Camera"))
         XCTAssertEqual(try WholeFileDigest.sha256(source), original)
         XCTAssertEqual(result.outputInspection.metadata["model"], "Undated Camera")
+        XCTAssertEqual(result.outputInspection.metadata["lens"], "Source Lens", "An omitted lens edit must preserve the original lens")
         XCTAssertFalse(result.integrity.checks.contains { $0.status == .failed }, "Undated fixture remains a separate experiment; real input dates must never be stripped to obtain this result")
         XCTAssertEqual(result.integrity.status, .incomplete, "Opaque tags remain unqualified even for the clean synthetic probe")
     }
