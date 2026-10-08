@@ -120,6 +120,42 @@ final class ProbeCoreTests: XCTestCase {
         }
     }
 
+    func testUndatedJPEGControlledCameraProbeRetainsKnownStructure() async throws {
+        let source = folder.appendingPathComponent("undated.jpg"), output = folder.appendingPathComponent("undated-output.jpg")
+        try makeImage(source, type: UTType.jpeg.identifier, orientation: 1, includeDate: false)
+        let original = try WholeFileDigest.sha256(source)
+        let result = try await MetadataEngine.process(source: source, output: output, patch: CameraPatch(make: "Probe", model: "Undated Camera"))
+        XCTAssertEqual(try WholeFileDigest.sha256(source), original)
+        XCTAssertEqual(result.outputInspection.metadata["model"], "Undated Camera")
+        XCTAssertFalse(result.integrity.checks.contains { $0.status == .failed }, "Undated fixture remains a separate experiment; real input dates must never be stripped to obtain this result")
+        XCTAssertEqual(result.integrity.status, .incomplete, "Opaque tags remain unqualified even for the clean synthetic probe")
+    }
+
+    func testExactNoOpCopyProvesOpaqueFileBytesWithoutMakingPhotosClaims() async throws {
+        let source = folder.appendingPathComponent("source.jpg"), output = folder.appendingPathComponent("unchanged.jpg")
+        try makeImage(source, type: UTType.jpeg.identifier, orientation: 6)
+        try FileManager.default.copyItem(at: source, to: output)
+        let result = try await MediaIntegrity.compare(source: source, output: output)
+        XCTAssertEqual(result.status, .verified)
+        XCTAssertEqual(result.checks.first { $0.name == "exact complete file bytes" }?.status, .passed)
+        XCTAssertTrue(result.limitations.isEmpty)
+    }
+
+    func testKnownTrackLossAndDurationChangeFailBeforeOpaqueSampleQualification() {
+        func inspection(_ count: String, _ types: String, _ duration: String) -> MediaInspection {
+            MediaInspection(kind: .mov, byteCount: 100, metadata: [:], notes: [],
+                structure: ["tracks": count, "trackTypes": types, "duration": duration])
+        }
+        let source = inspection("2", "vide,soun", "1/1@0")
+        let noAudio = inspection("1", "vide", "1/1@0")
+        let loss = MediaIntegrity.videoStructureChecks(source: source, output: noAudio)
+        XCTAssertEqual(loss.first { $0.name == "video exposed track inventory" }?.status, .failed)
+        let changedType = inspection("2", "vide,meta", "1/1@0")
+        XCTAssertEqual(MediaIntegrity.videoStructureChecks(source: source, output: changedType).first?.status, .failed)
+        let shorter = inspection("2", "vide,soun", "1/2@0")
+        XCTAssertEqual(MediaIntegrity.videoStructureChecks(source: source, output: shorter).last?.status, .failed)
+    }
+
     func testIntegrityExcludesOnlyAnExplicitlyRequestedLensAndChecksItsValue() async throws {
         let source = folder.appendingPathComponent("source.jpg"), output = folder.appendingPathComponent("output.jpg")
         try makeImage(source, type: UTType.jpeg.identifier, orientation: 1, lens: "Old Lens")
@@ -192,7 +228,16 @@ final class ProbeCoreTests: XCTestCase {
         let output = folder.appendingPathComponent("output.\(kind.rawValue)")
         try await makeVideo(source, kind: kind)
         let original = try WholeFileDigest.sha256(source)
-        let result = try await MetadataEngine.process(source: source, output: output, patch: CameraPatch(make: "Probe Maker", model: "Probe Video"))
+        let result: ProcessingResult
+        do {
+            result = try await MetadataEngine.process(source: source, output: output, patch: CameraPatch(make: "Probe Maker", model: "Probe Video"))
+        } catch ProbeError.readbackFailed(let detail) where kind == .mp4 {
+            XCTAssertTrue(detail.contains("make/model"))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
+            XCTAssertEqual(try WholeFileDigest.sha256(source), original)
+            print("MP4 metadata-only camera write unsupported on this host; no successful output retained: \(detail)")
+            return
+        }
         XCTAssertEqual(result.outputInspection.kind, kind)
         XCTAssertEqual(result.outputInspection.metadata["model"], "Probe Video")
         XCTAssertEqual(try WholeFileDigest.sha256(source), original)
@@ -216,12 +261,13 @@ final class ProbeCoreTests: XCTestCase {
         return data
     }
 
-    private func makeImage(_ url: URL, type: String, orientation: Int, lens: String? = "Source Lens") throws {
+    private func makeImage(_ url: URL, type: String, orientation: Int, lens: String? = "Source Lens", includeDate: Bool = true) throws {
         let color = CGColorSpace(name: CGColorSpace.sRGB)!
         let context = CGContext(data: nil, width: 32, height: 16, bitsPerComponent: 8, bytesPerRow: 128, space: color, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
         context.setFillColor(CGColor(red: 0.2, green: 0.6, blue: 0.8, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 32, height: 16))
         let destination = CGImageDestinationCreateWithURL(url as CFURL, type as CFString, 1, nil)!
-        var exif: [String: Any] = [kCGImagePropertyExifDateTimeOriginal as String: "2026:01:02 03:04:05", kCGImagePropertyExifFNumber as String: 2.8]
+        var exif: [String: Any] = [kCGImagePropertyExifFNumber as String: 2.8]
+        if includeDate { exif[kCGImagePropertyExifDateTimeOriginal as String] = "2026:01:02 03:04:05" }
         if let lens { exif[kCGImagePropertyExifLensModel as String] = lens }
         let properties: [String: Any] = [
             kCGImagePropertyOrientation as String: orientation,

@@ -1,12 +1,12 @@
 # Photos Metadata Feasibility Probe
 
-Single-file SwiftUI/iOS diagnostic app for an iPhone 15 Pro Max running iOS 27.2. It tests embedded camera metadata, source/output integrity and public PhotoKit save routes. **It does not suppress attribution or automatically inspect Apple Photos' interface.**
+Single-file SwiftUI/iOS diagnostic app for an iPhone 15 Pro Max running reported iOS 27.2. It tests embedded camera metadata, source/output integrity and public PhotoKit save routes. **It does not suppress attribution or automatically inspect Apple Photos' interface.**
 
 The revised development specification is preserved in [docs/SPECIFICATION.md](docs/SPECIFICATION.md). This repository covers only its first feasibility experiment, not the full editor.
 
 ## What is included
 
-- JPEG, HEIC, MP4 and MOV file inspection and fixed camera make/model changes using ImageIO or same-container AVFoundation passthrough. Image lens changes are optional; video lens editing is refused.
+- JPEG, HEIC, MP4 and MOV inspection and controlled save experiments. Candidate camera make/model changes use ImageIO or same-container AVFoundation passthrough and must pass exact readback. Format support is measured rather than assumed; see [actual results](docs/VALIDATION-STATUS.md). Image lens changes are optional; video lens editing is refused.
 - Single-selection Photos picker and coordinated Files staging. Deliberate original/current PhotoKit resource acquisition.
 - New asset creation through file resources and file-URL factories.
 - Supported existing-asset content editing with baseline identity verification, exact rendered type and versioned diagnostic adjustment data. Previously adjusted, orientation-dependent or incompatible assets are refused.

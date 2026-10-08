@@ -11,15 +11,15 @@ Keep this prototype in a **private** repository. The workflow starts an unsigned
 Open **Actions → iOS feasibility probe → Run workflow** to rerun. Leave **signed_export** off until your team signing inputs exist. From Windows GitHub CLI:
 
 ```powershell
-gh workflow run ios-probe.yml --repo OWNER/REPOSITORY --ref YOUR_BRANCH
-gh run list --repo OWNER/REPOSITORY --workflow ios-probe.yml --limit 5
-gh run watch RUN_ID --repo OWNER/REPOSITORY --exit-status
-gh run download RUN_ID --repo OWNER/REPOSITORY --dir .\downloaded-build
+gh workflow run ios-probe.yml --repo vxti-glitch/metadata-photos-probe --ref codex/metadata-feasibility
+gh run list --repo vxti-glitch/metadata-photos-probe --workflow ios-probe.yml --limit 5
+gh run watch RUN_ID --repo vxti-glitch/metadata-photos-probe --exit-status
+gh run download RUN_ID --repo vxti-glitch/metadata-photos-probe --dir .\downloaded-build
 ```
 
 The unsigned artifact contains an actual device `.app` archive, an IPA-shaped container explicitly named `UNSIGNED-NOT-INSTALLABLE.ipa`, exact source ZIP, logs, simulator `.xcresult` and checksums. **The unsigned IPA cannot be installed on an ordinary iPhone.** It is useful for compilation review and later authorized signing; do not treat it as a delivered test build. On failure, an artifact may contain only diagnostics.
 
-After package tests, the workflow runs `swift run ProbeFixtureGenerator build/ControlledFixtures` and uploads a separate `probe-controlled-fixtures-*` artifact. This contains small synthetic original/edited JPEG, HEIC, MP4 and MOV pairs and measured metadata/integrity results where the engine supports each operation. Generating a synthetic original necessarily encodes newly invented image/video content; this is fixture creation, not recompression of imported customer media. The edited pairs must still pass the engine's preservation checks, or their manifest must report unsupported/failure. A generator error fails the workflow; a format-specific unsupported result remains explicit in the fixture report. A successful macOS fixture operation is useful engine evidence, not proof that the same media operation or Photos UI behavior succeeds on your iPhone. Transfer the fixture ZIP through Files/iCloud Drive and extract on the phone; preserve its manifest alongside the case reports.
+Before package tests, the workflow runs `swift run ProbeFixtureGenerator build/ControlledFixtures` and uploads a separate `probe-controlled-fixtures-*` artifact. This contains small synthetic original/edited JPEG, HEIC, MP4 and MOV pairs and measured metadata/integrity results where the engine supports each operation. Generating a synthetic original necessarily encodes newly invented image/video content; this is fixture creation, not recompression of imported customer media. The edited pairs must still pass the engine's preservation checks, or their manifest must report unsupported/failure. A generator error fails the workflow; a format-specific unsupported result remains explicit in the fixture report. A successful macOS fixture operation is useful engine evidence, not proof that the same media operation or Photos UI behavior succeeds on your iPhone. Transfer the fixture ZIP through Files/iCloud Drive and extract on the phone; preserve its manifest alongside the case reports.
 
 The runner label is `macos-15`; its installed Xcode image is a provider-managed input, not a pinned SDK. `build/evidence/toolchain.txt` records the actual versions and available SDKs. Set repository variable `PROBE_DEVELOPER_DIR` to an installed Xcode path if a specific version is required. The workflow fails for an unavailable configured path. A compatible selected SDK and simulator must actually pass compilation; no iOS 27.2 SDK availability is assumed. An iOS 17 minimum lets public baseline APIs be compiled by supported Xcode versions; APIs requiring newer systems must be availability-gated.
 
@@ -55,17 +55,17 @@ From Windows, enter the Base64 content directly into a secret without printing i
 
 ```powershell
 $certificateValue = [Convert]::ToBase64String([IO.File]::ReadAllBytes('C:\private\authorized-certificate.p12'))
-$certificateValue | gh secret set BUILD_CERTIFICATE_BASE64 --env ios-signing --repo OWNER/REPOSITORY
+$certificateValue | gh secret set BUILD_CERTIFICATE_BASE64 --env ios-signing --repo vxti-glitch/metadata-photos-probe
 $profileValue = [Convert]::ToBase64String([IO.File]::ReadAllBytes('C:\private\probe.mobileprovision'))
-$profileValue | gh secret set BUILD_PROVISION_PROFILE_BASE64 --env ios-signing --repo OWNER/REPOSITORY
-gh secret set P12_PASSWORD --env ios-signing --repo OWNER/REPOSITORY
+$profileValue | gh secret set BUILD_PROVISION_PROFILE_BASE64 --env ios-signing --repo vxti-glitch/metadata-photos-probe
+gh secret set P12_PASSWORD --env ios-signing --repo vxti-glitch/metadata-photos-probe
 Remove-Variable certificateValue,profileValue
 ```
 
 Then dispatch the reviewed branch:
 
 ```powershell
-gh workflow run ios-probe.yml --repo OWNER/REPOSITORY --ref YOUR_BRANCH -f signed_export=true -f export_method=release-testing
+gh workflow run ios-probe.yml --repo vxti-glitch/metadata-photos-probe --ref codex/metadata-feasibility -f signed_export=true -f export_method=release-testing
 ```
 
 Signing runs only after verification succeeds. The job validates the team, explicit bundle ID, entitlement identity, expiry and profile channel; imports credentials into an ephemeral runner keychain; archives/exports with manual signing; verifies the exported signature and profile; then removes keychain/profile/temp files on completion or failure. It does not use `-allowProvisioningUpdates` or your Apple password. The signed artifact includes device eligibility in its embedded profile; treat it as private.

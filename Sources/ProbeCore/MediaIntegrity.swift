@@ -22,6 +22,11 @@ public enum MediaIntegrity {
         }
         check("retained embedded metadata", retainedMetadata(before.metadata, patch: patch) == retainedMetadata(after.metadata, patch: patch),
               "Preserve inspected non-target fields; a nil patch preserves all inspected camera fields too.")
+        if before.byteCount == after.byteCount,
+           try WholeFileDigest.sha256(source) == WholeFileDigest.sha256(output) {
+            check("exact complete file bytes", true, "Whole-file SHA-256 and byte count match. No container, compressed media or opaque metadata bytes changed. Photos UI/provenance remains a separate device observation.")
+            return IntegrityComparison(status: checks.contains { $0.status == .failed } ? .mismatch : .verified, checks: checks, limitations: [])
+        }
         if before.kind.isImage {
             check("image presentation", before.structure == after.structure, "Compare dimensions, bit depth, orientation, color model/profile and container type.")
             let retained = try retainedImageProperties(source, patch: patch) == retainedImageProperties(output, patch: patch)
@@ -42,16 +47,36 @@ public enum MediaIntegrity {
                 limitations.append("HEIC iloc/iinf/iref/iprp item graph, primary item, transformations, tiles, auxiliary images, depth and HDR gain maps require an independent full HEIF verifier.")
             }
         } else if !after.kind.isImage {
-            let original = try await videoFingerprints(source), edited = try await videoFingerprints(output)
-            check("video track count", original.count == edited.count, "Inventory every AVFoundation-exposed track, including audio and metadata.")
-            for index in 0..<min(original.count, edited.count) {
-                check("track \(index + 1) compressed data / timing / format", original[index] == edited[index],
-                    "Uncompressed-reader settings are never used. Compare encoded sample bytes, per-sample sizes/counts, timing, attachments, format extensions and track transforms.")
+            // Known inventory loss remains a failure even if an opaque sample stops
+            // compressed verification later. Never put these checks in that catch.
+            checks += videoStructureChecks(source: before, output: after)
+            do {
+                let original = try await videoFingerprints(source), edited = try await videoFingerprints(output)
+                check("video track count", original.count == edited.count, "Inventory every AVFoundation-exposed track, including audio and metadata.")
+                for index in 0..<min(original.count, edited.count) {
+                    check("track \(index + 1) compressed data / timing / format", original[index] == edited[index],
+                        "Compare encoded samples/timing/format/transform. Source: \(original[index].payloadBytes) encoded bytes, \(original[index].sampleBuffers) buffers, \(original[index].emptyMarkers) empty no-image markers; output: \(edited[index].payloadBytes) encoded bytes, \(edited[index].sampleBuffers) buffers, \(edited[index].emptyMarkers) empty no-image markers. Empty markers have no compressed bytes to verify.")
+                }
+            } catch ProbeError.unsupported(let detail) {
+                checks.append(IntegrityCheck(name: "video compressed samples", status: .notChecked, detail: detail))
+                limitations.append("Compressed verification unsupported for this structure: \(detail)")
             }
             limitations.append("Track signatures do not prove preservation of all opaque container atoms, edit-list semantics, Dolby Vision/HDR side data, metadata namespaces or AVFoundation-invisible tracks.")
         }
         let status: IntegrityStatus = checks.contains { $0.status == .failed } ? .mismatch : (limitations.isEmpty ? .verified : .incomplete)
         return IntegrityComparison(status: status, checks: checks, limitations: limitations)
+    }
+
+    static func videoStructureChecks(source: MediaInspection, output: MediaInspection) -> [IntegrityCheck] {
+        let tracksMatch = source.structure["tracks"] == output.structure["tracks"] &&
+            source.structure["trackTypes"] == output.structure["trackTypes"]
+        let durationMatches = source.structure["duration"] == output.structure["duration"]
+        return [
+            IntegrityCheck(name: "video exposed track inventory", status: tracksMatch ? .passed : .failed,
+                detail: "Source tracks/types: \(source.structure["tracks"] ?? "missing") / \(source.structure["trackTypes"] ?? "missing"); output: \(output.structure["tracks"] ?? "missing") / \(output.structure["trackTypes"] ?? "missing"). Independent of compressed sample support."),
+            IntegrityCheck(name: "video exposed duration", status: durationMatches ? .passed : .failed,
+                detail: "Source \(source.structure["duration"] ?? "missing"), output \(output.structure["duration"] ?? "missing"). Independent of compressed sample support.")
+        ]
     }
 
     private static func markerLabels(_ signatures: [String]) -> String {
@@ -85,11 +110,18 @@ public enum MediaIntegrity {
         return canonicalValue(properties)
     }
 
-    private static func videoFingerprints(_ url: URL) async throws -> [String] {
+    private struct TrackFingerprint: Equatable {
+        let hash: String
+        let payloadBytes: Int64
+        let sampleBuffers: Int
+        let emptyMarkers: Int
+    }
+
+    private static func videoFingerprints(_ url: URL) async throws -> [TrackFingerprint] {
         let asset = AVURLAsset(url: url)
         let tracks = try await asset.load(.tracks)
         guard tracks.count <= 64 else { throw ProbeError.unsupported("More than 64 tracks exceeds controlled-fixture bounds") }
-        var fingerprints = [String]()
+        var fingerprints = [TrackFingerprint]()
         for track in tracks {
             try Task.checkCancellation()
             let reader = try AVAssetReader(asset: asset)
@@ -100,7 +132,8 @@ public enum MediaIntegrity {
             let range = try await track.load(.timeRange)
             let transform = try await track.load(.preferredTransform)
             let dimensions = try await track.load(.naturalSize)
-            var digest = SHA256(), count = 0
+            var digest = SHA256(), count = 0, emptyMarkers = 0
+            var payloadBytes: Int64 = 0
             func update(_ string: String) { digest.update(data: Data((string + "\n").utf8)) }
             update(track.mediaType.rawValue)
             update(canonicalTime(range.start)); update(canonicalTime(range.duration))
@@ -133,6 +166,7 @@ public enum MediaIntegrity {
                     }
                     if let block = CMSampleBufferGetDataBuffer(sample) {
                         let length = CMBlockBufferGetDataLength(block)
+                        payloadBytes += Int64(length)
                         var offset = 0
                         while offset < length {
                             let amount = min(1_048_576, length - offset)
@@ -143,12 +177,20 @@ public enum MediaIntegrity {
                             guard status == noErr else { throw ProbeError.malformed("Cannot inspect compressed sample bytes: \(status)") }
                             digest.update(data: bytes); offset += amount
                         }
-                    } else { throw ProbeError.unsupported("Track sample has no compressed data block") }
+                    } else {
+                        let totalSize = CMSampleBufferGetTotalSampleSize(sample)
+                        let hasImage = CMSampleBufferGetImageBuffer(sample) != nil
+                        guard totalSize == 0, !hasImage else {
+                            throw ProbeError.unsupported("Track \(track.trackID) sample \(count) lacks a compressed data block: count=\(CMSampleBufferGetNumSamples(sample)), totalSize=\(totalSize), imageBuffer=\(hasImage), mediaType=\(track.mediaType.rawValue). Decoded/opaque data cannot be certified.")
+                        }
+                        emptyMarkers += 1
+                        update("empty-no-image-marker")
+                    }
                 }
                 guard reader.status == .completed else { throw reader.error ?? ProbeError.malformed("Compressed reader did not complete") }
             } catch { reader.cancelReading(); throw error }
             update("total \(count)")
-            fingerprints.append(digest.finalize().map { String(format: "%02x", $0) }.joined())
+            fingerprints.append(TrackFingerprint(hash: digest.finalize().map { String(format: "%02x", $0) }.joined(), payloadBytes: payloadBytes, sampleBuffers: count, emptyMarkers: emptyMarkers))
         }
         return fingerprints
     }

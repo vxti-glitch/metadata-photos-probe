@@ -10,6 +10,7 @@ import CoreVideo
 
 private struct FixtureRecord: Codable {
     let format: MediaKind
+    let variant: String
     var sourceFilename: String?
     var editedFilename: String?
     var sourceSHA256: String?
@@ -40,12 +41,15 @@ struct FixtureGenerator {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let patch = CameraPatch(make: "Feasibility Test Maker", model: "Controlled Synthetic Model")
             var records = [FixtureRecord]()
-            for kind in MediaKind.allCases {
-                let source = folder.appendingPathComponent("original.\(kind.rawValue)")
-                let edited = folder.appendingPathComponent("processed.\(kind.rawValue)")
-                var record = FixtureRecord(format: kind)
+            let fixtures = MediaKind.allCases.map { ($0, true) } + [(MediaKind.jpeg, false)]
+            for (kind, includeDate) in fixtures {
+                let variant = includeDate ? "baseline" : "undated-camera-control"
+                let suffix = includeDate ? "" : "-undated"
+                let source = folder.appendingPathComponent("original\(suffix).\(kind.rawValue)")
+                let edited = folder.appendingPathComponent("processed\(suffix).\(kind.rawValue)")
+                var record = FixtureRecord(format: kind, variant: variant)
                 do {
-                    if kind.isImage { try makeImage(source, kind: kind) }
+                    if kind.isImage { try makeImage(source, kind: kind, includeDate: includeDate) }
                     else { try await makeVideo(source, kind: kind) }
                     record.sourceFilename = source.lastPathComponent
                     record.sourceSHA256 = try WholeFileDigest.sha256(source)
@@ -64,13 +68,13 @@ struct FixtureGenerator {
                 records.append(record)
             }
             let manifest = Manifest(generatedAt: Date(), generatorOS: ProcessInfo.processInfo.operatingSystemVersionString,
-                statement: "These are small, generated synthetic fixtures, not camera captures or authentic camera provenance. Originals were encoded once solely to create fixtures; processing uses only the engine's metadata-only routes. No Photos save, Photos display, device quality or attribution result is established by this manifest. Unsupported encoders/writers are recorded without conversion fallback. Real iPhone camera fixtures, rotated media, audio/HDR/auxiliary and existing-edited media remain separate tests.",
+                statement: "These are small, generated synthetic fixtures, not camera captures or authentic camera provenance. Originals were encoded once solely to create fixtures; processing uses only the engine's metadata-only routes. The undated JPEG is a separate synthetic control, not removal of dates from any real input; the dated baseline and its integrity findings remain recorded. No Photos save, Photos display, device quality or attribution result is established by this manifest. Unsupported encoders/writers are recorded without conversion fallback. Real iPhone camera fixtures, rotated media, audio/HDR/auxiliary and existing-edited media remain separate tests.",
                 patch: patch, files: records)
             let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601
             try encoder.encode(manifest).write(to: folder.appendingPathComponent("manifest.json"), options: .atomic)
             print("Controlled fixtures and manifest: \(folder.path)")
             for record in records {
-                print("\(record.format.rawValue): original=\(record.sourceFilename ?? "unavailable"), processed=\(record.editedFilename ?? "unsupported"), integrity=\(record.processing?.integrity.status.rawValue ?? "not tested")")
+                print("\(record.format.rawValue) \(record.variant): original=\(record.sourceFilename ?? "unavailable"), processed=\(record.editedFilename ?? "unsupported"), integrity=\(record.processing?.integrity.status.rawValue ?? "not tested")")
             }
         } catch {
             FileHandle.standardError.write(Data(("Fixture generation failed: \(error.localizedDescription)\n").utf8))
@@ -78,7 +82,7 @@ struct FixtureGenerator {
         }
     }
 
-    private static func makeImage(_ url: URL, kind: MediaKind) throws {
+    private static func makeImage(_ url: URL, kind: MediaKind, includeDate: Bool) throws {
         let type = kind == .jpeg ? UTType.jpeg.identifier : UTType.heic.identifier
         guard (CGImageDestinationCopyTypeIdentifiers() as! [String]).contains(type) else { throw ProbeError.unsupported("\(kind.rawValue) encoder unavailable") }
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
@@ -87,10 +91,12 @@ struct FixtureGenerator {
         context.setFillColor(CGColor(red: 0.1, green: 0.4, blue: 0.8, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 160, height: 96))
         context.setFillColor(CGColor(red: 0.9, green: 0.7, blue: 0.1, alpha: 1)); context.fill(CGRect(x: 16, y: 12, width: 48, height: 24))
         guard let image = context.makeImage() else { throw ProbeError.writeFailed("Image fixture unavailable") }
+        var exif: [String: Any] = [kCGImagePropertyExifFNumber as String: 2.8, kCGImagePropertyExifFocalLength as String: 24.0, kCGImagePropertyExifLensModel as String: "Synthetic Source Lens"]
+        if includeDate { exif[kCGImagePropertyExifDateTimeOriginal as String] = "2026:01:02 03:04:05" }
         let properties: [String: Any] = [
             kCGImagePropertyOrientation as String: 1,
             kCGImagePropertyTIFFDictionary as String: [kCGImagePropertyTIFFMake as String: "Synthetic Source Maker", kCGImagePropertyTIFFModel as String: "Synthetic Source Model"],
-            kCGImagePropertyExifDictionary as String: [kCGImagePropertyExifDateTimeOriginal as String: "2026:01:02 03:04:05", kCGImagePropertyExifFNumber as String: 2.8, kCGImagePropertyExifFocalLength as String: 24.0, kCGImagePropertyExifLensModel as String: "Synthetic Source Lens"]
+            kCGImagePropertyExifDictionary as String: exif
         ]
         CGImageDestinationAddImage(destination, image, properties as CFDictionary)
         guard CGImageDestinationFinalize(destination) else { throw ProbeError.writeFailed("\(kind.rawValue) fixture encoding failed") }

@@ -186,7 +186,12 @@ final class ProbeViewModel: ObservableObject {
         attempt.state = "Commit requested; result unknown until completion"
         attempts.append(attempt)
         selectedAttemptID = attempt.id
-        do { try persist() } catch { attempts.removeLast(); errorMessage = error.localizedDescription; return }
+        do { try persist() } catch {
+            attempts.removeLast()
+            selectedAttemptID = attempts.last?.id
+            errorMessage = error.localizedDescription
+            return
+        }
         didCommitCurrentOutput = true
         let attemptID = attempt.id
         run("Saving through the selected public PhotoKit route…") {
@@ -340,10 +345,10 @@ final class ProbeViewModel: ObservableObject {
         do {
         let result = try await photos.readBack(assetIdentifier: commit.assetIdentifier, to: directory)
         update(attemptID) { $0.readback = result }
-        for resource in result.resources {
+        for (resourceIndex, resource) in result.resources.enumerated() {
             guard ["jpg", "jpeg", "heic", "heif", "mp4", "mov"].contains(resource.url.pathExtension.lowercased()) else { continue }
             try Task.checkCancellation()
-            let key = "\(resource.type):\(resource.filename)"
+            let key = "\(resourceIndex):\(resource.type):\(resource.filename)"
             let original = resource.typeRawValue == PHAssetResourceType.photo.rawValue ||
                 resource.typeRawValue == PHAssetResourceType.video.rawValue
             let preservesOriginal = attempt.route == .existingContentEdit && original
