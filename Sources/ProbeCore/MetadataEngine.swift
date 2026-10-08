@@ -58,7 +58,7 @@ public enum MetadataEngine {
             }
         }
         return MediaInspection(kind: kind, byteCount: size, metadata: metadata,
-            notes: ["QuickTime camera fields are embedded tags; whether Photos shows them is unverified.", "Passthrough is not proof of preservation of every container, HDR or opaque-track semantic."],
+            notes: ["QuickTime camera fields are embedded tags; whether Photos shows them is unverified.", "Metadata-only container rewriting and sample checks do not certify every HDR or opaque-track semantic."],
             structure: ["duration": canonicalTime(duration), "tracks": String(tracks.count), "trackTypes": tracks.map { $0.mediaType.rawValue }.joined(separator: ","), "boxes": inventory.types.joined(separator: ","), "metadataFormats": metadataFormats.map { $0.rawValue }.joined(separator: ",")],
             location: EmbeddedLocationEvidence.video(metadata: metadata))
     }

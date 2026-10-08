@@ -273,10 +273,14 @@ final class ProbeCoreTests: XCTestCase {
         try await assertVideoCameraAndSamples(.mov)
     }
 
-    private func assertVideoCameraAndSamples(_ kind: MediaKind) async throws {
+    func testMOVCanAddCameraToSourceWithoutMetadata() async throws {
+        try await assertVideoCameraAndSamples(.mov, includeMetadata: false)
+    }
+
+    private func assertVideoCameraAndSamples(_ kind: MediaKind, includeMetadata: Bool = true) async throws {
         let source = folder.appendingPathComponent("source.\(kind.rawValue)")
         let output = folder.appendingPathComponent("output.\(kind.rawValue)")
-        try await makeVideo(source, kind: kind)
+        try await makeVideo(source, kind: kind, includeMetadata: includeMetadata)
         let original = try WholeFileDigest.sha256(source)
         let result = try await MetadataEngine.process(source: source, output: output, patch: CameraPatch(make: "Probe Maker", model: "Probe Video"))
         XCTAssertEqual(result.outputInspection.kind, kind)
@@ -319,8 +323,15 @@ final class ProbeCoreTests: XCTestCase {
         guard CGImageDestinationFinalize(destination) else { throw ProbeError.writeFailed("Cannot generate test image") }
     }
 
-    private func makeVideo(_ url: URL, kind: MediaKind) async throws {
+    private func makeVideo(_ url: URL, kind: MediaKind, includeMetadata: Bool = true) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: kind == .mp4 ? .mp4 : .mov)
+        if includeMetadata {
+            writer.metadata = [(.quickTimeMetadataMake, "Source Maker"), (.quickTimeMetadataModel, "Source Movie"),
+                (.quickTimeMetadataLocationISO6709, "+12.5000-044.2500/")].map { identifier, value in
+                let item = AVMutableMetadataItem(); item.identifier = identifier; item.value = value as NSString
+                item.dataType = "com.apple.metadata.datatype.UTF-8"; return item
+            }
+        }
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 32, AVVideoHeightKey: 32])
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA, kCVPixelBufferWidthKey as String: 32, kCVPixelBufferHeightKey as String: 32])
         guard writer.canAdd(input) else { throw ProbeError.writeFailed("Cannot generate test video") }

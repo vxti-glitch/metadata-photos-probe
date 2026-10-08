@@ -72,7 +72,9 @@ public enum VideoMetadataWriter {
             } else { rebuilt.append(child.raw) }
         }
         guard metadataCount <= 1 else { throw ProbeError.unsupported("Ambiguous multiple movie-level mdta containers") }
-        if metadataCount == 0 { rebuilt.append(try VideoBMFF.newMetadata(patch, fullBox: !isMOV)) }
+        // This is Apple's QuickTime mdta atom, not the versioned ISO item-meta box.
+        // AVFoundation requires the unversioned mdta layout in our MP4/MOV controls.
+        if metadataCount == 0 { rebuilt.append(try VideoBMFF.newMetadata(patch, fullBox: false)) }
         let newMovie = try VideoBMFF.atom("moov", rebuilt)
         guard newMovie.count <= Int(VideoBMFF.maxMovieBytes) else { throw ProbeError.unsupported("Edited movie header exceeds 16 MiB budget") }
         try Task.checkCancellation()
@@ -177,7 +179,8 @@ private enum VideoBMFF {
     static func only(_ list: [Atom], _ allowed: [String]) throws {
         let accepted = Set(allowed.map(code))
         guard list.allSatisfy({ accepted.contains($0.type) }) else {
-            throw ProbeError.unsupported("Unknown/protected/relative-offset movie structure; no relocation attempted")
+            let names = list.filter { !accepted.contains($0.type) }.map { String(decoding: number($0.type), as: UTF8.self) }
+            throw ProbeError.unsupported("Unqualified movie atoms: \(names.joined(separator: ", ")); no relocation attempted")
         }
     }
     static func validateUserData(_ data: Data) throws {
@@ -199,17 +202,25 @@ private enum VideoBMFF {
             guard child.type == code("trak") else { continue }
             trackCount += 1
             let track = try atoms(child.payload)
-            try only(track, ["tkhd", "mdia", "edts", "tref", "udta", "meta", "free"])
+            try only(track, ["tkhd", "mdia", "edts", "tref", "tapt", "udta", "meta", "free"])
             _ = try unique(track, "tkhd")
             for item in track {
                 if item.type == code("udta") { try validateUserData(item.payload) }
                 if item.type == code("meta") { _ = try metadataChildren(item) }
                 if item.type == code("edts") { try only(atoms(item.payload), ["elst"]) }
+                if item.type == code("tapt") {
+                    let apertures = try atoms(item.payload)
+                    try only(apertures, ["clef", "prof", "enof"])
+                    guard Set(apertures.map(\.type)).count == apertures.count else { throw ProbeError.malformed("Duplicate aperture atom") }
+                    for aperture in apertures {
+                        guard aperture.payload.count == 12, try u32(aperture.payload, 0) == 0 else { throw ProbeError.unsupported("Unqualified aperture layout") }
+                    }
+                }
             }
             let mdia = try atoms(unique(track, "mdia").payload)
             try only(mdia, ["mdhd", "hdlr", "minf", "elng", "udta", "meta", "free"])
             let minf = try atoms(unique(mdia, "minf").payload)
-            try only(minf, ["vmhd", "smhd", "nmhd", "gmhd", "dinf", "stbl", "free"])
+            try only(minf, ["vmhd", "smhd", "nmhd", "gmhd", "hdlr", "dinf", "stbl", "free"])
             let dinf = try atoms(unique(minf, "dinf").payload)
             try only(dinf, ["dref", "free"])
             let dref = try unique(dinf, "dref").payload
