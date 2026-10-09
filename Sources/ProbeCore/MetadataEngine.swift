@@ -76,7 +76,9 @@ public enum MetadataEngine {
         guard !FileManager.default.fileExists(atPath: output.path) else { throw ProbeError.outputExists }
         let before = try await inspect(source)
         guard patch.targetedKeys.isSubset(of: Set(MetadataPatch.supportedKeys(for: before.kind))) else { throw ProbeError.unsupported("One or more selected fields are unavailable for this format") }
-        var completed = false; defer { if !completed { try? FileManager.default.removeItem(at: output) } }
+        var completed = false; defer {
+            if !completed, FileManager.default.fileExists(atPath: output.path) { try? FileManager.default.removeItem(at: output) }
+        }
         if patch.targetedKeys.isEmpty { try FileManager.default.copyItem(at: source, to: output) }
         else if before.kind.isImage { try StillContainerMetadata.write(source: source, output: output, kind: before.kind, patch: patch) }
         else { _ = try await VideoMetadataWriter.write(source: source, output: output, patch: patch) }

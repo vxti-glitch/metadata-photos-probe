@@ -195,6 +195,14 @@ public enum MediaIntegrity {
             if !metadataPatch.targetedKeys.isDisjoint(with: Set(gpsKeys.keys)) { gps.removeValue(forKey: kCGImagePropertyGPSVersion as String) }
             if gps.isEmpty { properties.removeValue(forKey: kCGImagePropertyGPSDictionary as String) } else { properties[kCGImagePropertyGPSDictionary as String] = gps }
         }
+        // ImageIO mirrors the selected EXIF Software into the PNG dictionary,
+        // even when no text chunk was written. The independent PNG fingerprint
+        // still compares every original non-eXIf chunk byte, including text.
+        if metadataPatch.targetedKeys.contains("software"), var png = properties[kCGImagePropertyPNGDictionary as String] as? [String: Any] {
+            png.removeValue(forKey: kCGImagePropertyPNGSoftware as String)
+            if png.isEmpty { properties.removeValue(forKey: kCGImagePropertyPNGDictionary as String) }
+            else { properties[kCGImagePropertyPNGDictionary as String] = png }
+        }
         return canonicalValue(properties)
     }
 

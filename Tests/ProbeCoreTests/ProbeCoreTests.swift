@@ -336,12 +336,15 @@ final class ProbeCoreTests: XCTestCase {
                     stage = "container readback"; print("Synthetic removed fields: \(try VideoMetadataWriter.inspect(diagnostic))")
                     stage = "Apple inspection"; let inspection = try await MetadataEngine.inspect(diagnostic)
                     stage = "target readback"; try removal.validateReadback(inspection)
-                    stage = "integrity"; print("Synthetic removal checks: \(try await MediaIntegrity.compareMetadata(source: output, output: diagnostic, patch: removal).checks)")
+                    stage = "integrity"
+                    print("Synthetic removal source metadata: \(try await MetadataEngine.inspect(output).metadata)")
+                    print("Synthetic removal checks: \(try await MediaIntegrity.compareMetadata(source: output, output: diagnostic, patch: removal).checks)")
                 } catch { print("Synthetic removal failed stage \(stage): \(error)") }
                 throw error
             }
             for key in removal.removals { XCTAssertNil(deleted.outputInspection.metadata[key]) }
             XCTAssertEqual(deleted.outputInspection.metadata["model"], "iPhone 15 Pro Max")
+            XCTAssertTrue(deleted.integrity.checks.contains { $0.name.contains("compressed data") && $0.status == .passed })
         }
     }
 

@@ -78,7 +78,8 @@ public enum VideoMetadataWriter {
                 }
                 rebuilt.append(try VideoBMFF.atom("udta", userData))
             } else if child.type == VideoBMFF.code("trak") {
-                rebuilt.append(try VideoBMFF.editTrack(child, patch: patch, values: trackValues))
+                rebuilt.append(try VideoBMFF.editTrack(child, patch: patch, values: trackValues,
+                    locationValues: movieValues.filter { $0.key == VideoMetadataFields.locationKey }))
             } else if child.type == VideoBMFF.code("mvhd") {
                 rebuilt.append(try VideoBMFF.editDates(child, patch: patch, create: "movieCreateDate", modify: "movieModifyDate"))
             } else { rebuilt.append(child.raw) }
@@ -330,8 +331,22 @@ private enum VideoBMFF {
         return (Data(body.prefix(prefixLength)), children)
     }
     static func retainUserData(_ item: Atom, patch: MetadataPatch) throws -> Data {
-        if !patch.removals.isEmpty, item.type == code("XMP_") || item.type == code("loci") {
-            throw ProbeError.unsupported("Removal is refused for a movie containing additional XMP/ISO location metadata")
+        let changesLocation = !patch.targetedKeys.isDisjoint(with: VideoMetadataFields.gpsKeys)
+        if item.type == code("XMP_"), !patch.removals.isEmpty || changesLocation {
+            throw ProbeError.unsupported("Removal or location editing is refused for a movie containing additional XMP metadata")
+        }
+        if item.type == code("loci") {
+            // ISO location is a second representation of the coordinate tuple.
+            // Whole-coordinate removal must retire it alongside mdta/legacy GPS;
+            // unrelated edits retain its original bytes. Its altitude cannot be
+            // edited independently without a qualified ISO location parser.
+            if patch.removals.contains("latitude") || patch.removals.contains("longitude") { return Data() }
+            if patch.removals.contains("altitude") {
+                throw ProbeError.unsupported("Altitude-only removal is refused for a movie containing ISO location metadata")
+            }
+            // A new coordinate tuple is written to mdta. Do not leave the old ISO
+            // tuple for an independent reader to report as a competing location.
+            if changesLocation { return Data() }
         }
         let legacy: [UInt32: Set<String>] = [0xa96d616b: ["make"], 0xa96d6f64: ["model"], 0xa9737772: ["software"], 0xa978797a: VideoMetadataFields.gpsKeys, 0xa96e616d: ["title"], 0xa9637079: ["copyright"], 0xa9415254: ["artist"], 0xa9636d74: ["description"]]
         if let fields = legacy[item.type], !fields.isDisjoint(with: patch.targetedKeys) { return Data() }
@@ -360,10 +375,16 @@ private enum VideoBMFF {
         }
         return try atom(item.type, payload)
     }
-    static func editTrack(_ item: Atom, patch: MetadataPatch, values: [String: String?]) throws -> Data {
-        guard !values.isEmpty || !patch.targetedKeys.isDisjoint(with: Set(["trackCreateDate", "trackModifyDate", "mediaCreateDate", "mediaModifyDate"])) else { return item.raw }
+    static func editTrack(_ item: Atom, patch: MetadataPatch, values: [String: String?], locationValues: [String: String?]) throws -> Data {
+        let changesLocation = !patch.targetedKeys.isDisjoint(with: VideoMetadataFields.gpsKeys)
+        guard !values.isEmpty || !patch.removals.isEmpty || changesLocation || !patch.targetedKeys.isDisjoint(with: Set(["trackCreateDate", "trackModifyDate", "mediaCreateDate", "mediaModifyDate"])) else { return item.raw }
         let children = try atoms(item.payload), mdia = try atoms(unique(children, "mdia").payload)
-        let video = try u32(unique(mdia, "hdlr").payload, 8) == code("vide")
+        let mediaType = try u32(unique(mdia, "hdlr").payload, 8)
+        if changesLocation, [code("meta"), code("mdta")].contains(mediaType) {
+            throw ProbeError.unsupported("Location editing is refused for a movie containing timed metadata tracks")
+        }
+        let video = mediaType == code("vide")
+        let scopedValues = (video ? values : [:]).merging(locationValues, uniquingKeysWith: { _, new in new })
         var body = Data(), count = 0
         for child in children {
             if child.type == code("tkhd") { body.append(try editDates(child, patch: patch, create: "trackCreateDate", modify: "trackModifyDate")) }
@@ -371,16 +392,30 @@ private enum VideoBMFF {
                 var data = Data()
                 for entry in mdia {
                     if entry.type == code("mdhd") { data.append(try editDates(entry, patch: patch, create: "mediaCreateDate", modify: "mediaModifyDate")) }
+                    else if entry.type == code("udta") {
+                        var userData = Data()
+                        for record in try atoms(entry.payload) {
+                            if record.type == code("meta"), changesLocation || !patch.removals.isEmpty {
+                                throw ProbeError.unsupported("Removal or location editing is refused for a movie containing unqualified media-level metadata")
+                            }
+                            userData.append(try retainUserData(record, patch: patch))
+                        }
+                        data.append(try atom("udta", userData))
+                    } else if entry.type == code("meta"), changesLocation || !patch.removals.isEmpty {
+                        throw ProbeError.unsupported("Removal or location editing is refused for a movie containing unqualified media-level metadata")
+                    }
                     else { data.append(entry.raw) }
                 }
                 body.append(try atom("mdia", data))
-            } else if video, child.type == code("meta"), !values.isEmpty {
-                count += 1; body.append(try editMetadata(child, values: values))
+            } else if child.type == code("meta"), !scopedValues.isEmpty {
+                count += 1; body.append(try editMetadata(child, values: scopedValues))
             } else if child.type == code("udta") {
                 var data = Data()
                 for entry in try atoms(child.payload) {
-                    if video, entry.type == code("meta"), !values.isEmpty, try handler(entry) == code("mdta") {
-                        count += 1; data.append(try editMetadata(entry, values: values))
+                    if entry.type == code("meta"), !scopedValues.isEmpty, try handler(entry) == code("mdta") {
+                        count += 1; data.append(try editMetadata(entry, values: scopedValues))
+                    } else if entry.type == code("meta"), changesLocation {
+                        throw ProbeError.unsupported("Location editing is refused for a movie containing unqualified track metadata")
                     } else { data.append(try retainUserData(entry, patch: patch)) }
                 }
                 body.append(try atom("udta", data))

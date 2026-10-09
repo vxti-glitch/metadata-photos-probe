@@ -60,6 +60,95 @@ final class VideoMetadataWriterTests: XCTestCase {
         try await assertRefused(structuralMovie(referenceType: "rsrc"))
     }
 
+    func testCoordinateRemovalRetiresISOLocationAndPreservesOtherUserDataAndMedia() async throws {
+        let retained = box("chpl", Data("retained chapter bytes".utf8))
+        let original = structuralMovie(userData: box("loci", Data("opaque ISO location".utf8)) + retained)
+        let source = directory.appendingPathComponent("iso-source.mov"), output = directory.appendingPathComponent("iso-removed.mov")
+        try original.write(to: source)
+        _ = try await VideoMetadataWriter.write(source: source, output: output,
+            patch: MetadataPatch(removals: ["latitude", "longitude", "altitude"]))
+        let edited = try Data(contentsOf: output)
+        XCTAssertEqual(try movieUserData(edited), retained)
+        let media = try XCTUnwrap(boxes(original).first { $0.type == "mdat" })
+        XCTAssertEqual(edited.subdata(in: media.range), original.subdata(in: media.range))
+        XCTAssertEqual(try Data(contentsOf: source), original)
+    }
+
+    func testUnrelatedRemovalPreservesISOLocationBytes() async throws {
+        let location = box("loci", Data("opaque ISO location".utf8))
+        let source = directory.appendingPathComponent("iso-source.mov"), output = directory.appendingPathComponent("software-removed.mov")
+        try structuralMovie(userData: location).write(to: source)
+        _ = try await VideoMetadataWriter.write(source: source, output: output, patch: MetadataPatch(removals: ["software"]))
+        XCTAssertEqual(try movieUserData(Data(contentsOf: output)), location)
+    }
+
+    func testCoordinateEditsRetireISORecordsAtMovieTrackAndMediaScopes() async throws {
+        let location = box("loci", Data("old opaque ISO location".utf8))
+        let retained = box("chpl", Data("retained chapter bytes".utf8))
+        let original = structuralMovie(userData: location + retained, trackUserData: location + retained, mediaUserData: location + retained)
+        let source = directory.appendingPathComponent("nested-iso-source.mov")
+        try original.write(to: source)
+        let patches = [MetadataPatch(removals: ["latitude", "longitude", "altitude"]),
+                       MetadataPatch(values: ["latitude": .number(-12.5), "longitude": .number(44.25), "altitude": .number(-10)])]
+        for (index, patch) in patches.enumerated() {
+            let output = directory.appendingPathComponent("nested-iso-edited-\(index).mov")
+            _ = try await VideoMetadataWriter.write(source: source, output: output, patch: patch)
+            let edited = try Data(contentsOf: output)
+            let movie = try XCTUnwrap(boxes(edited).last { $0.type == "moov" })
+            let movieData = edited.subdata(in: movie.payload)
+            let track = try XCTUnwrap(boxes(movieData).first { $0.type == "trak" })
+            let trackData = movieData.subdata(in: track.payload)
+            let media = try XCTUnwrap(boxes(trackData).first { $0.type == "mdia" })
+            for scope in [movieData, trackData, trackData.subdata(in: media.payload)] {
+                let userData = try XCTUnwrap(boxes(scope).first { $0.type == "udta" })
+                XCTAssertEqual(scope.subdata(in: userData.payload), retained)
+            }
+            let mdat = try XCTUnwrap(boxes(original).first { $0.type == "mdat" })
+            XCTAssertEqual(edited.subdata(in: mdat.range), original.subdata(in: mdat.range))
+            let readback = try VideoMetadataWriter.inspect(output)
+            if index == 0 { XCTAssertNil(readback["latitude"]); XCTAssertNil(readback["longitude"]); XCTAssertNil(readback["altitude"]) }
+            else { XCTAssertEqual(readback["latitude"], "-12.5"); XCTAssertEqual(readback["longitude"], "44.25"); XCTAssertEqual(readback["altitude"], "-10") }
+        }
+        XCTAssertEqual(try Data(contentsOf: source), original)
+    }
+
+    func testGPSChangesRefuseTimedMetadataTrackWithoutDeletingSamples() async throws {
+        let source = directory.appendingPathComponent("timed-source.mov"), output = directory.appendingPathComponent("timed-refused.mov")
+        let original = structuralMovie(userData: Data(), mediaHandler: "meta")
+        try original.write(to: source)
+        do {
+            _ = try await VideoMetadataWriter.write(source: source, output: output, patch: MetadataPatch(removals: ["latitude", "longitude"]))
+            XCTFail("GPS changes must refuse unqualified timed metadata")
+        } catch ProbeError.unsupported { }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
+        XCTAssertEqual(try Data(contentsOf: source), original)
+    }
+
+    func testAltitudeOnlyISOLocationAndOpaqueXMPRemovalRemainRefused() async throws {
+        let source = directory.appendingPathComponent("iso-source.mov"), seeded = directory.appendingPathComponent("iso-seeded.mov")
+        try structuralMovie(userData: box("loci", Data("opaque ISO location".utf8))).write(to: source)
+        _ = try await VideoMetadataWriter.write(source: source, output: seeded,
+            patch: MetadataPatch(values: ["latitude": .number(12.5), "longitude": .number(44.25), "altitude": .number(10)]))
+        // Add a competing legacy tuple to the generated container after seeding:
+        // GPS setting intentionally removes it, so it must be restored for this
+        // altitude-only refusal control to reach the unqualified ISO record.
+        var seededBytes = try Data(contentsOf: seeded)
+        let movie = try XCTUnwrap(boxes(seededBytes).last { $0.type == "moov" })
+        let restoredMovie = box("moov", seededBytes.subdata(in: movie.payload) + box("udta", box("loci", Data("opaque ISO location".utf8))))
+        seededBytes.replaceSubrange(movie.range, with: restoredMovie)
+        try seededBytes.write(to: seeded)
+        for (name, input, patch) in [("altitude", seeded, MetadataPatch(removals: ["altitude"])),
+                                      ("xmp", directory.appendingPathComponent("xmp-source.mov"), MetadataPatch(removals: ["software"]))] {
+            if name == "xmp" { try structuralMovie(userData: box("XMP_", Data("opaque XMP".utf8))).write(to: input) }
+            let output = directory.appendingPathComponent("\(name)-refused.mov")
+            do {
+                _ = try await VideoMetadataWriter.write(source: input, output: output, patch: patch)
+                XCTFail("Unqualified partial/opaque metadata removal must be refused")
+            } catch ProbeError.unsupported { }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
+        }
+    }
+
     func testChunksOutsideMediaOrCrossingMediaBoundaryAreRefused() async throws {
         try await assertRefused(structuralMovie(chunkOffset: 0))
         try await assertRefused(structuralMovie(chunkOffset: 34))
@@ -204,8 +293,17 @@ final class VideoMetadataWriterTests: XCTestCase {
     }
     private func box(_ type: String, _ payload: Data) -> Data { word(UInt32(payload.count + 8)) + Data(type.utf8) + payload }
 
+    private func movieUserData(_ data: Data) throws -> Data {
+        let movie = try XCTUnwrap(boxes(data).last { $0.type == "moov" })
+        let children = data.subdata(in: movie.payload)
+        let userData = try XCTUnwrap(boxes(children).first { $0.type == "udta" })
+        return children.subdata(in: userData.payload)
+    }
+
     private func structuralMovie(referenceType: String = "url ", referencePayload: Data? = nil,
-                                 chunkOffset: UInt32 = 32, sampleSize: UInt32 = 4, sampleCount: UInt32 = 1) -> Data {
+                                 chunkOffset: UInt32 = 32, sampleSize: UInt32 = 4, sampleCount: UInt32 = 1,
+                                 userData: Data? = nil, trackUserData: Data? = nil, mediaUserData: Data? = nil,
+                                 mediaHandler: String = "vide") -> Data {
         let ftyp = box("ftyp", Data("qt  ".utf8) + word(0) + Data("qt  ".utf8) + word(0))
         let mdat = box("mdat", Data([1,2,3,4]))
         let dref = box("dref", word(0) + word(1) + box(referenceType, referencePayload ?? word(1)))
@@ -216,7 +314,13 @@ final class VideoMetadataWriterTests: XCTestCase {
         let stco = box("stco", word(0) + word(1) + word(chunkOffset))
         let stbl = box("stbl", stsd + stsc + stsz + stco)
         let minf = box("minf", box("dinf", dref) + stbl)
-        let track = box("trak", box("tkhd", Data()) + box("mdia", minf))
-        return ftyp + mdat + box("moov", box("mvhd", Data()) + track)
+        // Date headers make the ISO location controls inspectable by the bounded
+        // metadata reader. These remain structural controls, not playable media.
+        let hasMetadata = userData != nil || trackUserData != nil || mediaUserData != nil
+        let dates = hasMetadata ? Data(repeating: 0, count: 12) : Data()
+        let handler = hasMetadata ? box("hdlr", word(0) + word(0) + Data(mediaHandler.utf8) + Data(repeating: 0, count: 12)) : Data()
+        let media = minf + handler + (mediaUserData.map { box("udta", $0) } ?? Data())
+        let track = box("trak", box("tkhd", dates) + box("mdia", media) + (trackUserData.map { box("udta", $0) } ?? Data()))
+        return ftyp + mdat + box("moov", box("mvhd", dates) + track + (userData.map { box("udta", $0) } ?? Data()))
     }
 }
