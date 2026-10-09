@@ -320,6 +320,7 @@ final class ProbeCoreTests: XCTestCase {
             try await makeVideo(source, kind: kind)
             let values: [String: MetadataValue] = ["make": .string("Apple"), "model": .string("iPhone 15 Pro Max"), "software": .string("17.5.1"), "lensModel": .string("Main Camera - 24 mm f/1.78"), "focalLength35mm": .number(24), "latitude": .number(-12.5), "longitude": .number(44.25), "altitude": .number(-10.2), "dateTimeOriginal": .string("2026-04-05T06:07:08-04:00"), "movieCreateDate": .string("2026-04-05T06:07:08-04:00"), "movieModifyDate": .string("2026-04-05T06:07:08-04:00"), "trackCreateDate": .string("2026-04-05T06:07:08-04:00"), "trackModifyDate": .string("2026-04-05T06:07:08-04:00"), "mediaCreateDate": .string("2026-04-05T06:07:08-04:00"), "mediaModifyDate": .string("2026-04-05T06:07:08-04:00")]
             var allValues = values
+            allValues["altitude"] = .number(-10.2004)
             allValues["iso"] = .number(800); allValues["exposureTime"] = .number(1.0 / 120); allValues["fNumber"] = .number(1.78)
             let fullPatch = MetadataPatch(values: allValues)
             let result: ProcessingResult

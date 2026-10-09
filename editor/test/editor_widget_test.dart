@@ -5,6 +5,8 @@ import 'package:metadata_editor/editor_app.dart';
 import 'package:metadata_editor/editor_controller.dart';
 import 'package:metadata_editor/camera_profiles.dart';
 import 'package:metadata_editor/media_models.dart';
+import 'package:metadata_editor/metadata_form.dart';
+import 'package:metadata_editor/metadata_patch.dart';
 
 import 'fake_media_bridge.dart';
 
@@ -176,6 +178,113 @@ void main() {
     );
     await tester.pumpAndSettle();
   }
+
+  testWidgets(
+    'bulk preserves explicit ISO equal to the displayed profile value',
+    (tester) async {
+      final bridge = FakeMediaBridge()
+        ..sessions = [fixture(), fixture(id: nextOutputId)];
+      final controller = await launch(tester, bridge);
+      for (final source in controller.sessions) {
+        controller.toggleBatch(source, true);
+      }
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: MetadataForm(
+                controller: controller,
+                session: controller.sessions.first,
+                batch: true,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await chooseProfile(tester);
+      await tester.tap(find.text('Edit').first);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Exposure').first);
+      await tester.tap(find.text('Exposure').first);
+      await tester.pumpAndSettle();
+      final isoInput = find.byKey(const Key('iso'));
+      final displayedISO = tester.widget<TextField>(isoInput).controller!.text;
+      await tester.ensureVisible(isoInput);
+      await tester.enterText(isoInput, '');
+      await tester.enterText(isoInput, displayedISO);
+      await tap(tester, 'process');
+      expect(bridge.processes, 2);
+      for (final source in bridge.sessions) {
+        expect(
+          source.processing!.metadataPatch!.values['iso'],
+          num.parse(displayedISO),
+        );
+      }
+    },
+  );
+
+  testWidgets('mixed recipe keeps movie-only overrides with an image first', (
+    tester,
+  ) async {
+    final bridge = FakeMediaBridge()
+      ..sessions = [fixture(), fixture(id: nextOutputId, kind: MediaKind.mov)]
+      ..fieldsByFormat = {
+        'heic': ['make', 'model'],
+        'mov': ['make', 'model', 'movieCreateDate'],
+      };
+    final controller = await launch(tester, bridge);
+    final profile = (await loadCameraProfiles()).firstWhere(
+      (p) => p.model == 'iPhone 15 Pro Max',
+    );
+    const fixedDate = '2026-04-05T06:07:08Z';
+    controller.presets = [
+      SavedPreset(
+        sourceId,
+        'Mixed recipe',
+        MetadataPatch(values: {'make': 'Apple'}),
+        recipe: ProfileRecipe(
+          profile.id,
+          profile.cameras.first.id,
+          const RandomizationSettings(),
+          overrides: MetadataPatch(values: {'movieCreateDate': fixedDate}),
+        ),
+      ),
+    ];
+    for (final source in controller.sessions) {
+      controller.toggleBatch(source, true);
+    }
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: MetadataForm(
+              controller: controller,
+              session: controller.sessions.first,
+              batch: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Mixed recipe'));
+    await tester.tap(find.text('Mixed recipe'));
+    await tester.pumpAndSettle();
+    await tap(tester, 'process');
+    expect(bridge.processes, 2);
+    final image = bridge.sessions.firstWhere((s) => s.inspection.kind.isImage);
+    final movie = bridge.sessions.firstWhere((s) => !s.inspection.kind.isImage);
+    expect(
+      image.processing!.metadataPatch!.values.containsKey('movieCreateDate'),
+      isFalse,
+    );
+    expect(
+      movie.processing!.metadataPatch!.values['movieCreateDate'],
+      fixedDate,
+    );
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'turning automatic dates off after applying profile removes random date writes',

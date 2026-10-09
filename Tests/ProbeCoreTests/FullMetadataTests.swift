@@ -115,9 +115,19 @@ final class FullMetadataTests: XCTestCase {
         let patch = MetadataPatch(values: ["latitude": .number(-12.5), "longitude": .number(44.25), "altitude": .number(-10.2)])
         let values = try VideoMetadataFields.values(patch, existing: [:], track: false)
         let text = try XCTUnwrap(values[VideoMetadataFields.locationKey] ?? nil)
-        XCTAssertEqual(text, "-12.500000+044.250000-10.200/")
+        XCTAssertEqual(text, "-12.500000+044.250000-10.200000/")
         XCTAssertEqual(VideoMetadataFields.decodeLocation(text), ["latitude": "-12.5", "longitude": "44.25", "altitude": "-10.2"])
         let removed = try VideoMetadataFields.values(MetadataPatch(removals: ["altitude"]), existing: ["latitude": "-12.5", "longitude": "44.25"], track: false)
         XCTAssertNil(VideoMetadataFields.decodeLocation(try XCTUnwrap(removed[VideoMetadataFields.locationKey] ?? nil))["altitude"])
+    }
+    func testVideoFractionalAltitudeRoundtripMatchesValidatedTolerance() throws {
+        for altitude in [-10.2004, 12.345678901, -0.0000007, 99999.87654321] {
+            let patch = MetadataPatch(values: ["latitude": .number(-12.5), "longitude": .number(44.25), "altitude": .number(altitude)])
+            let values = try VideoMetadataFields.values(patch, existing: [:], track: false)
+            let decoded = VideoMetadataFields.decodeLocation(try XCTUnwrap(values[VideoMetadataFields.locationKey] ?? nil))
+            let actual = try XCTUnwrap(decoded["altitude"].flatMap(Double.init))
+            XCTAssertEqual(actual, altitude, accuracy: MetadataPatch.numericTolerance(for: "altitude", value: altitude))
+            try patch.validateReadback(MediaInspection(kind: .mp4, byteCount: 0, metadata: decoded, notes: [], structure: [:]))
+        }
     }
 }

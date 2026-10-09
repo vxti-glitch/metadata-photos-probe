@@ -96,11 +96,11 @@ class _MetadataFormState extends State<MetadataForm> {
     if (notify) setState(() {});
   }
 
-  MetadataPatch _patch({bool allowEmpty = false}) {
+  MetadataPatch _patch({bool allowEmpty = false, Set<String>? fields}) {
     final values = <String, Object>{};
     final removed = <String>[];
     for (final f in metadataFields) {
-      if (!supported.contains(f.key)) continue;
+      if (!(fields ?? supported).contains(f.key)) continue;
       if (modes[f.key] == 'remove') {
         removed.add(f.key);
       } else if (modes[f.key] == 'set') {
@@ -293,7 +293,16 @@ class _MetadataFormState extends State<MetadataForm> {
         final sources = widget.controller.sessions.where(
           (s) => widget.controller.batchSelection.contains(s.id),
         );
-        final manual = _patch(allowEmpty: settings.randomizeDates);
+        final manual = _patch(
+          allowEmpty: settings.randomizeDates,
+          fields: sources
+              .expand(
+                (s) => widget.controller.capabilities!.fieldsFor(
+                  s.inspection.kind,
+                ),
+              )
+              .toSet(),
+        );
         final patches = <String, MetadataPatch>{};
         for (final source in sources) {
           if (profile != null && camera != null && profileBaseline != null) {
@@ -313,7 +322,9 @@ class _MetadataFormState extends State<MetadataForm> {
                 values.remove(key);
                 removals.remove(key);
               } else if (intent == 'set' &&
-                  manual.values[key] != profileBaseline!.values[key]) {
+                  manual.values.containsKey(key) &&
+                  (explicitOverrides.contains(key) ||
+                      manual.values[key] != profileBaseline!.values[key])) {
                 values[key] = manual.values[key]!;
                 removals.remove(key);
               } else if (intent == 'remove') {

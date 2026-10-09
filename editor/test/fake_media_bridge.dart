@@ -95,6 +95,7 @@ class FakeMediaBridge implements MediaBridge {
   Object? importError;
   Object? processError;
   Object? startupError;
+  Map<String, List<String>> fieldsByFormat = const {};
   Object? historyError;
   Object? deleteAfterCommitError;
   Object? clearAfterCommitError;
@@ -118,6 +119,7 @@ class FakeMediaBridge implements MediaBridge {
       ['jpeg', 'heic', 'png', 'mp4', 'mov'],
       metadataFields.map((f) => f.key).toList(),
       'provisional',
+      fieldsByFormat,
     );
   }
 

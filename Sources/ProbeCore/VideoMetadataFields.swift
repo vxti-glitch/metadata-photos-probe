@@ -44,7 +44,7 @@ enum VideoMetadataFields {
                     return (value.sign == .minus ? "-" : "+") + degrees + "." + parts[1]
                 }
                 let base = coordinate(lat, digits: 2) + coordinate(lon, digits: 3)
-                result[locationKey] = .some(base + (altitude.map { ($0.sign == .minus ? "-" : "+") + String(format: "%.3f", abs($0)) } ?? "") + "/")
+                result[locationKey] = .some(base + (altitude.map { ($0.sign == .minus ? "-" : "+") + String(format: "%.6f", abs($0)) } ?? "") + "/")
             }
         }
         return result

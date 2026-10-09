@@ -6,6 +6,8 @@ Flutter owns the phone interface, validated form/state models and presentation. 
 
 ## Milestone 1: working single-file editor foundation
 
+Historical status: version 0.3/build 4 completed this foundation. The restrictions described below belong to that release, not the expanded editor. Version 0.4/build 5 implements milestones 2–4 for the qualified format/field registry; cloud verification and fresh physical-device acceptance are required before calling that expansion complete. See CONFIRMED-FULL-SCOPE.md and DEVICE-TESTS.md for current acceptance criteria. Automatic date/time randomization can be switched off for manual calendar/time entry; bulk processing freezes each item's plan independently.
+
 - Native Photos-original and Files import for JPEG, HEIC, MP4 and MOV, with explicit original/current and Live Photo restrictions.
 - Inspect current camera fields, exposed location, dimensions/orientation/profile and known readable capture metadata.
 - Edit qualified make/model and image lens; field validation and format-specific unsupported outcomes are enforced natively as well as in Flutter. Blank lens preserves the existing field. HEIC changed camera strings are ASCII-only in the current writer; videos do not expose an editable lens.
