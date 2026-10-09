@@ -26,8 +26,11 @@ class MetadataEditorApp extends StatelessWidget {
       colorScheme: const ColorScheme.dark(
         primary: _accent,
         surface: _surface,
-        onPrimary: Color(0xFF102C25),
+        onPrimary: Color(0xFF0F1B2E),
         onSurface: Color(0xFFE7EDF4),
+        secondary: Color(0xFF7A9AE0),
+        secondaryContainer: Color(0xFF243044),
+        onSecondaryContainer: Color(0xFFDCE6F8),
       ),
       appBarTheme: const AppBarTheme(
         backgroundColor: _background,
@@ -371,107 +374,218 @@ class _Projects extends StatelessWidget {
         ],
       ),
       const SizedBox(height: 10),
-      if (controller.batchSelection.isNotEmpty) ...[
-        Text('${controller.batchSelection.length} selected'),
-        FilledButton(
-          onPressed: controller.busy
-              ? null
-              : () => showModalBottomSheet<void>(
-                  context: context,
-                  isScrollControlled: true,
-                  builder: (context) => SafeArea(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.all(20),
-                      child: MetadataForm(
-                        controller: controller,
-                        session: controller.sessions.firstWhere(
-                          (s) => controller.batchSelection.contains(s.id),
-                        ),
-                        batch: true,
+      if (controller.batchSelection.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: _Panel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      '${controller.batchSelection.length} selected',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                        color: Color(0xFF9CB5FF),
                       ),
                     ),
-                  ),
+                    TextButton(
+                      onPressed: controller.busy
+                          ? null
+                          : () {
+                              final allSelected = controller.sessions.every(
+                                (s) => controller.batchSelection.contains(s.id),
+                              );
+                              for (final s in controller.sessions) {
+                                controller.toggleBatch(s, !allSelected);
+                              }
+                            },
+                      child: Text(
+                        controller.sessions.every(
+                          (s) => controller.batchSelection.contains(s.id),
+                        )
+                            ? 'Deselect all'
+                            : 'Select all',
+                      ),
+                    ),
+                  ],
                 ),
-          child: const Text('Edit selected files'),
-        ),
-        TextButton(
-          onPressed: controller.busy
-              ? null
-              : () async {
-                  final chosen = controller.sessions.where(
-                    (s) => controller.batchSelection.contains(s.id),
-                  );
-                  final needs = chosen.any(
-                    (s) => s.processing?.integrity.needsAcknowledgment ?? false,
-                  );
-                  var acknowledgment = false;
-                  if (needs) {
-                    acknowledgment =
-                        await showDialog<bool>(
+                const SizedBox(height: 8),
+                FilledButton.icon(
+                  onPressed: controller.busy
+                      ? null
+                      : () => showModalBottomSheet<void>(
                           context: context,
-                          builder: (context) => AlertDialog(
-                            title: const Text('Export with limitations?'),
-                            content: SingleChildScrollView(
-                              child: Text(
-                                chosen
-                                    .expand(
-                                      (s) =>
-                                          s.processing?.integrity.limitations ??
-                                          <String>[],
-                                    )
-                                    .toSet()
-                                    .join('\n'),
+                          isScrollControlled: true,
+                          builder: (context) => SafeArea(
+                            child: SingleChildScrollView(
+                              padding: const EdgeInsets.all(20),
+                              child: MetadataForm(
+                                controller: controller,
+                                session: controller.sessions.firstWhere(
+                                  (s) => controller.batchSelection.contains(s.id),
+                                ),
+                                batch: true,
                               ),
                             ),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(context, false),
-                                child: const Text('Cancel'),
-                              ),
-                              TextButton(
-                                onPressed: () => Navigator.pop(context, true),
-                                child: const Text('Accept & export'),
-                              ),
-                            ],
                           ),
-                        ) ??
-                        false;
-                    if (!acknowledgment) return;
-                  }
-                  await controller.exportSelectedBatch(
-                    acknowledgeIncomplete: acknowledgment,
-                  );
-                },
-          child: const Text('Export selected copies'),
-        ),
-      ],
-      if (controller.queue.isNotEmpty)
-        ExpansionTile(
-          title: Text(
-            'Batch: ${controller.queue.where((q) => q.status == "completed").length}/${controller.queue.length} ready',
+                        ),
+                  icon: const Icon(Icons.edit_note_rounded, size: 20),
+                  label: const Text('Edit selected files'),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: controller.busy
+                            ? null
+                            : () => _exportBatch(context, controller),
+                        icon: const Icon(Icons.folder_shared_outlined, size: 16),
+                        label: const Text('Export selected copies'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: controller.busy
+                            ? null
+                            : () => _shareBatch(context, controller),
+                        icon: const Icon(Icons.ios_share_rounded, size: 16),
+                        label: const Text('Share selected copies'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
-          children: [
-            for (final item in controller.queue)
-              ListTile(
-                title: Text(
-                  controller.sessions
-                          .where((s) => s.id == item.sessionId)
-                          .firstOrNull
-                          ?.displayName ??
-                      'Local file',
+        ),
+      if (controller.queue.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: _Panel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Batch Queue',
+                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                    ),
+                    Text(
+                      '${controller.queueCompletedCount}/${controller.queueTotal} ready',
+                      style: const TextStyle(color: Color(0xFF9CB5FF), fontSize: 12),
+                    ),
+                  ],
                 ),
-                subtitle: Text(
-                  '${item.status}${item.message == null ? '' : ' · ${item.message}'}',
+                if (controller.queueFailedCount > 0) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    '${controller.queueFailedCount} failed or interrupted',
+                    style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: controller.queueTotal > 0
+                        ? controller.queueCompletedCount / controller.queueTotal
+                        : 0,
+                    minHeight: 6,
+                    backgroundColor: const Color(0xFF141C28),
+                    color: const Color(0xFF9CB5FF),
+                  ),
                 ),
-              ),
-            if (controller.queue.any(
-              (q) => q.status == 'failed' || q.status == 'interrupted',
-            ))
-              TextButton(
-                onPressed: controller.busy ? null : controller.retryBatch,
-                child: const Text('Retry unfinished files'),
-              ),
-          ],
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    if (controller.queueCompletedCount > 0) ...[
+                      Expanded(
+                        child: FilledButton.tonal(
+                          onPressed: controller.busy
+                              ? null
+                              : () => _exportBatch(context, controller, onlyReady: true),
+                          child: const Text('Export ready'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: controller.busy
+                              ? null
+                              : () => _shareBatch(context, controller, onlyReady: true),
+                          child: const Text('Share ready'),
+                        ),
+                      ),
+                    ],
+                    if (controller.queueFailedCount > 0) ...[
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: controller.busy ? null : controller.retryBatch,
+                          child: const Text('Retry unfinished files'),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 10),
+                ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  title: Text(
+                    'Batch: ${controller.queue.where((q) => q.status == "completed").length}/${controller.queue.length} ready',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  children: [
+                    for (final item in controller.queue)
+                      ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                          item.status == 'completed'
+                              ? Icons.check_circle_outline
+                              : item.status == 'failed' || item.status == 'interrupted'
+                                  ? Icons.error_outline
+                                  : Icons.hourglass_top_outlined,
+                          size: 18,
+                          color: item.status == 'completed'
+                              ? const Color(0xFF9CB5FF)
+                              : item.status == 'failed' || item.status == 'interrupted'
+                                  ? Colors.redAccent
+                                  : Colors.white60,
+                        ),
+                        title: Text(
+                          controller.sessions
+                                  .where((s) => s.id == item.sessionId)
+                                  .firstOrNull
+                                  ?.displayName ??
+                              'Local file',
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                        subtitle: Text(
+                          '${item.status}${item.message == null ? '' : ' · ${item.message}'}',
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                      ),
+                    if (controller.queue.any(
+                      (q) => q.status == 'failed' || q.status == 'interrupted',
+                    ))
+                      TextButton(
+                        onPressed: controller.busy ? null : controller.retryBatch,
+                        child: const Text('Retry unfinished files'),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
         ),
       if (controller.sessions.isEmpty)
         const _Panel(
@@ -575,8 +689,9 @@ class _WorkflowNote extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.all(14),
     decoration: BoxDecoration(
-      color: const Color(0xFF132720),
+      color: const Color(0xFF141C28),
       borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: const Color(0xFF233658)),
     ),
     child: const Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -620,8 +735,11 @@ class _Message extends StatelessWidget {
     child: Container(
       padding: const EdgeInsets.fromLTRB(14, 10, 4, 10),
       decoration: BoxDecoration(
-        color: error ? const Color(0xFF352025) : const Color(0xFF1B302B),
+        color: error ? const Color(0xFF352025) : const Color(0xFF152238),
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: error ? const Color(0xFF5A2530) : const Color(0xFF233658),
+        ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -706,6 +824,134 @@ Future<bool> _confirm(
       ),
     ) ??
     false;
+
+Future<void> _exportBatch(
+  BuildContext context,
+  EditorController controller, {
+  bool onlyReady = false,
+}) async {
+  final completedIds = controller.queue
+      .where((q) => q.status == 'completed')
+      .map((q) => q.sessionId)
+      .toSet();
+  final chosen = onlyReady && completedIds.isNotEmpty
+      ? controller.sessions.where((s) => completedIds.contains(s.id)).toList()
+      : controller.sessions
+          .where((s) => controller.batchSelection.contains(s.id))
+          .toList();
+  final targets = onlyReady
+      ? chosen
+          .where(
+            (s) =>
+                s.processing != null && !s.processing!.integrity.hasMismatch,
+          )
+          .toList()
+      : chosen.toList();
+  final needs = targets.any(
+    (s) => s.processing?.integrity.needsAcknowledgment ?? false,
+  );
+  var acknowledgment = false;
+  if (needs) {
+    acknowledgment =
+        await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Export with limitations?'),
+            content: SingleChildScrollView(
+              child: Text(
+                targets
+                    .expand(
+                      (s) =>
+                          s.processing?.integrity.limitations ?? <String>[],
+                    )
+                    .toSet()
+                    .join('\n'),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Accept & export'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!acknowledgment) return;
+  }
+  await controller.exportSelectedBatch(
+    acknowledgeIncomplete: acknowledgment,
+    onlyReady: onlyReady,
+  );
+}
+
+Future<void> _shareBatch(
+  BuildContext context,
+  EditorController controller, {
+  bool onlyReady = false,
+}) async {
+  final completedIds = controller.queue
+      .where((q) => q.status == 'completed')
+      .map((q) => q.sessionId)
+      .toSet();
+  final chosen = onlyReady && completedIds.isNotEmpty
+      ? controller.sessions.where((s) => completedIds.contains(s.id)).toList()
+      : controller.sessions
+          .where((s) => controller.batchSelection.contains(s.id))
+          .toList();
+  final targets = onlyReady
+      ? chosen
+          .where(
+            (s) =>
+                s.processing != null && !s.processing!.integrity.hasMismatch,
+          )
+          .toList()
+      : chosen.toList();
+  final needs = targets.any(
+    (s) => s.processing?.integrity.needsAcknowledgment ?? false,
+  );
+  var acknowledgment = false;
+  if (needs) {
+    acknowledgment =
+        await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Share with limitations?'),
+            content: SingleChildScrollView(
+              child: Text(
+                targets
+                    .expand(
+                      (s) =>
+                          s.processing?.integrity.limitations ?? <String>[],
+                    )
+                    .toSet()
+                    .join('\n'),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Accept & share'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!acknowledgment) return;
+  }
+  await controller.shareSelectedBatch(
+    acknowledgeIncomplete: acknowledgment,
+    onlyReady: onlyReady,
+  );
+}
 
 void _showAbout(BuildContext context) => showDialog<void>(
   context: context,

@@ -476,29 +476,57 @@ class EditorController extends ChangeNotifier {
     }, reconcileOnFailure: true);
   }
 
+  int get queueTotal => queue.length;
+  int get queueCompletedCount =>
+      queue.where((q) => q.status == 'completed').length;
+  int get queueFailedCount => queue
+      .where((q) => q.status == 'failed' || q.status == 'interrupted')
+      .length;
+  int get queueRunningCount =>
+      queue.where((q) => q.status == 'running').length;
+
   Future<void> retryBatch() => processBatch({
     for (final item in queue)
       if (item.status != 'completed') item.sessionId: item.patch,
   }, retry: true);
-  Future<void> exportSelectedBatch({bool acknowledgeIncomplete = false}) =>
+  Future<void> exportSelectedBatch({
+    bool acknowledgeIncomplete = false,
+    bool onlyReady = false,
+  }) =>
       _run(EditorOperation.exporting, (_) async {
-        final chosen = sessions
-            .where((s) => batchSelection.contains(s.id))
-            .toList();
-        if (chosen.isEmpty ||
-            chosen.any(
-              (s) =>
-                  s.processing == null ||
-                  s.processing!.integrity.hasMismatch ||
-                  (s.processing!.integrity.needsAcknowledgment &&
-                      !acknowledgeIncomplete),
-            )) {
+        final completedIds = queue
+            .where((q) => q.status == 'completed')
+            .map((q) => q.sessionId)
+            .toSet();
+        final chosen = onlyReady && completedIds.isNotEmpty
+            ? sessions.where((s) => completedIds.contains(s.id)).toList()
+            : sessions.where((s) => batchSelection.contains(s.id)).toList();
+        final targets = onlyReady
+            ? chosen
+                .where(
+                  (s) =>
+                      s.processing != null &&
+                      !s.processing!.integrity.hasMismatch &&
+                      (!s.processing!.integrity.needsAcknowledgment ||
+                          acknowledgeIncomplete),
+                )
+                .toList()
+            : chosen;
+        if (targets.isEmpty ||
+            (!onlyReady &&
+                chosen.any(
+                  (s) =>
+                      s.processing == null ||
+                      s.processing!.integrity.hasMismatch ||
+                      (s.processing!.integrity.needsAcknowledgment &&
+                          !acknowledgeIncomplete),
+                ))) {
           throw const FormatException(
             'The batch contains unprocessed or unqualified copies.',
           );
         }
         final completed = await bridge.exportBatch(
-          chosen
+          targets
               .map(
                 (s) => <String, Object?>{
                   'sessionId': s.id,
@@ -511,6 +539,56 @@ class EditorController extends ChangeNotifier {
         notice = completed
             ? 'Copies saved to Files. Upload in Safari to finish.'
             : 'Export canceled.';
+      }, reconcileOnFailure: true);
+
+  Future<void> shareSelectedBatch({
+    bool acknowledgeIncomplete = false,
+    bool onlyReady = false,
+  }) =>
+      _run(EditorOperation.exporting, (_) async {
+        final completedIds = queue
+            .where((q) => q.status == 'completed')
+            .map((q) => q.sessionId)
+            .toSet();
+        final chosen = onlyReady && completedIds.isNotEmpty
+            ? sessions.where((s) => completedIds.contains(s.id)).toList()
+            : sessions.where((s) => batchSelection.contains(s.id)).toList();
+        final targets = onlyReady
+            ? chosen
+                .where(
+                  (s) =>
+                      s.processing != null &&
+                      !s.processing!.integrity.hasMismatch &&
+                      (!s.processing!.integrity.needsAcknowledgment ||
+                          acknowledgeIncomplete),
+                )
+                .toList()
+            : chosen;
+        if (targets.isEmpty ||
+            (!onlyReady &&
+                chosen.any(
+                  (s) =>
+                      s.processing == null ||
+                      s.processing!.integrity.hasMismatch ||
+                      (s.processing!.integrity.needsAcknowledgment &&
+                          !acknowledgeIncomplete),
+                ))) {
+          throw const FormatException(
+            'The batch contains unprocessed or unqualified copies.',
+          );
+        }
+        final completed = await bridge.shareBatch(
+          targets
+              .map(
+                (s) => <String, Object?>{
+                  'sessionId': s.id,
+                  'processingId': s.processing!.id,
+                  'acknowledgeIncomplete': acknowledgeIncomplete,
+                },
+              )
+              .toList(),
+        );
+        notice = completed ? 'Batch shared.' : 'Share canceled.';
       }, reconcileOnFailure: true);
   Future<void> process(CameraPatch patch) async {
     final source = selected;
@@ -563,6 +641,24 @@ class EditorController extends ChangeNotifier {
       notice = completed
           ? 'Copy saved to Files. Upload it in Safari to finish the Photos workflow.'
           : 'Export canceled. Your processed copy is still available here.';
+    }, reconcileOnFailure: true);
+  }
+
+  Future<void> shareFiles() async {
+    if (!canExport) return;
+    final source = selected!;
+    final processing = source.processing!;
+    final acknowledged = acknowledgedProcessingId == processing.id;
+    await _run(EditorOperation.exporting, (generation) async {
+      final completed = await bridge.shareFiles(
+        source.id,
+        processing.id,
+        acknowledged,
+      );
+      if (!_current(generation)) return;
+      notice = completed
+          ? 'Share sheet completed.'
+          : 'Share canceled. Your processed copy is still available here.';
     }, reconcileOnFailure: true);
   }
 
