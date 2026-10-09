@@ -548,7 +548,7 @@ class _MetadataFormState extends State<MetadataForm> {
                     Row(
                       children: [
                         Text(
-                          'Select Model',
+                          'Select Camera Model',
                           style: Theme.of(context).textTheme.titleMedium?.copyWith(
                                 fontWeight: FontWeight.w700,
                               ),
@@ -761,20 +761,23 @@ class _MetadataFormState extends State<MetadataForm> {
           ],
           if (needsAck) ...[
             const SizedBox(height: 12),
-            CheckboxListTile(
-              key: const Key('acknowledge'),
-              contentPadding: EdgeInsets.zero,
-              value: controller.acknowledged,
-              onChanged: controller.busy
-                  ? null
-                  : (v) => controller.acknowledge(v ?? false),
-              title: const Text(
-                'I accept the stated preservation limitations',
-                style: TextStyle(fontSize: 13),
-              ),
-              subtitle: Text(
-                output.integrity.limitations.join('\n'),
-                style: const TextStyle(fontSize: 12, color: Colors.white60),
+            Material(
+              color: Colors.transparent,
+              child: CheckboxListTile(
+                key: const Key('acknowledge'),
+                contentPadding: EdgeInsets.zero,
+                value: controller.acknowledged,
+                onChanged: controller.busy
+                    ? null
+                    : (v) => controller.acknowledge(v ?? false),
+                title: const Text(
+                  'I accept the stated preservation limitations',
+                  style: TextStyle(fontSize: 13),
+                ),
+                subtitle: Text(
+                  output.integrity.limitations.join('\n'),
+                  style: const TextStyle(fontSize: 12, color: Colors.white60),
+                ),
               ),
             ),
           ],
@@ -997,7 +1000,7 @@ class _MetadataFormState extends State<MetadataForm> {
                 itemHeight: 48.0,
                 dropdownColor: const Color(0xFF1E242C),
                 key: const Key('profileBrand'),
-                initialValue: brand,
+                value: brand,
                 decoration: const InputDecoration(
                   labelText: 'Brand',
                   isDense: true,
@@ -1022,7 +1025,7 @@ class _MetadataFormState extends State<MetadataForm> {
                 itemHeight: 48.0,
                 dropdownColor: const Color(0xFF1E242C),
                 key: ValueKey('model-${brand ?? "none"}'),
-                initialValue: profile?.id,
+                value: profile?.id,
                 decoration: InputDecoration(
                   labelText: 'Model',
                   isDense: true,
@@ -1074,7 +1077,7 @@ class _MetadataFormState extends State<MetadataForm> {
                 itemHeight: 48.0,
                 dropdownColor: const Color(0xFF1E242C),
                 key: ValueKey('camera-${profile?.id ?? "none"}'),
-                initialValue: camera?.id,
+                value: camera?.id,
                 decoration: const InputDecoration(
                   labelText: 'Camera',
                   isDense: true,

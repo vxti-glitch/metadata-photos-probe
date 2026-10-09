@@ -385,7 +385,7 @@ class _Projects extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      '${controller.batchSelection.length} selected',
+                      '${controller.batchSelection.length} of ${controller.sessions.length} selected',
                       style: const TextStyle(
                         fontWeight: FontWeight.w700,
                         fontSize: 15,
@@ -834,7 +834,7 @@ Future<void> _exportBatch(
       .where((q) => q.status == 'completed')
       .map((q) => q.sessionId)
       .toSet();
-  final chosen = onlyReady && completedIds.isNotEmpty
+  final chosen = onlyReady
       ? controller.sessions.where((s) => completedIds.contains(s.id)).toList()
       : controller.sessions
           .where((s) => controller.batchSelection.contains(s.id))
@@ -898,7 +898,7 @@ Future<void> _shareBatch(
       .where((q) => q.status == 'completed')
       .map((q) => q.sessionId)
       .toSet();
-  final chosen = onlyReady && completedIds.isNotEmpty
+  final chosen = onlyReady
       ? controller.sessions.where((s) => completedIds.contains(s.id)).toList()
       : controller.sessions
           .where((s) => controller.batchSelection.contains(s.id))

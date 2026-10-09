@@ -498,7 +498,7 @@ class EditorController extends ChangeNotifier {
             .where((q) => q.status == 'completed')
             .map((q) => q.sessionId)
             .toSet();
-        final chosen = onlyReady && completedIds.isNotEmpty
+        final chosen = onlyReady
             ? sessions.where((s) => completedIds.contains(s.id)).toList()
             : sessions.where((s) => batchSelection.contains(s.id)).toList();
         final targets = onlyReady
@@ -550,7 +550,7 @@ class EditorController extends ChangeNotifier {
             .where((q) => q.status == 'completed')
             .map((q) => q.sessionId)
             .toSet();
-        final chosen = onlyReady && completedIds.isNotEmpty
+        final chosen = onlyReady
             ? sessions.where((s) => completedIds.contains(s.id)).toList()
             : sessions.where((s) => batchSelection.contains(s.id)).toList();
         final targets = onlyReady
