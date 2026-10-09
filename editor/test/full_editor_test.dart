@@ -13,6 +13,39 @@ import 'fake_media_bridge.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   test(
+    'randomization rejects unrepresentable shutter and altitude ranges',
+    () async {
+      expect(
+        const RandomizationSettings(shutters: [1e-10]).validate(),
+        isNotNull,
+      );
+      expect(
+        const RandomizationSettings(altitude: 100001).validate(),
+        isNotNull,
+      );
+      final profile = (await loadCameraProfiles()).first;
+      for (final altitude in [-100000.0, 100000.0]) {
+        final settings = RandomizationSettings(
+          latitude: 0,
+          longitude: 0,
+          altitude: altitude,
+        );
+        final random = Random(7);
+        for (var i = 0; i < 20; i++) {
+          final patch = settings.generate(
+            profile,
+            profile.cameras.first,
+            MediaKind.heic,
+            random,
+            DateTime.utc(2026, 10, 8),
+          );
+          expect(patch.validate(), isNull);
+          expect(patch.values['altitude'], inInclusiveRange(-100000, 100000));
+        }
+      }
+    },
+  );
+  test(
     'full field changes and explicit removal roundtrip; overlap rejected',
     () {
       final patch = MetadataPatch(

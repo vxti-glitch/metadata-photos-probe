@@ -93,6 +93,12 @@ public enum MediaIntegrity {
         for (key, raw) in VideoMetadataFields.keys.merging(VideoMetadataFields.trackKeys, uniquingKeysWith: { a, _ in a }) where keys.contains(key) { keys.insert(raw); keys.insert("mdta/" + raw) }
         if !keys.isDisjoint(with: VideoMetadataFields.gpsKeys) {
             keys.formUnion(VideoMetadataFields.gpsKeys); keys.insert(VideoMetadataFields.locationKey); keys.insert("mdta/" + VideoMetadataFields.locationKey)
+            // The writer retires ISO `loci` and QuickTime legacy `©xyz` GPS
+            // tuples when it normalizes/removes the selected location. Exclude
+            // Apple's exact identifiers for those same selected representations;
+            // unknown location fields remain subject to non-target preservation.
+            keys.insert(AVMetadataIdentifier.identifier3GPUserDataLocation.rawValue)
+            keys.insert(AVMetadataIdentifier.quickTimeUserDataLocationISO6709.rawValue)
         }
         for (key, alias) in [("movieCreateDate", "createDate"), ("movieModifyDate", "modifyDate")] where keys.contains(key) || keys.contains(alias) { keys.insert(key); keys.insert(alias) }
         let retained = before.metadata.filter { !keys.contains($0.key) } == after.metadata.filter { !keys.contains($0.key) }

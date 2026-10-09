@@ -327,7 +327,7 @@ class EditorController extends ChangeNotifier {
       return;
     }
     notice = result['exactMatch'] == true
-        ? 'The downloaded iCloud original exactly matches the processed file.'
+        ? 'The selected original exactly matches the processed file, byte for byte.'
         : 'The selected file differs from the processed file. Download the unmodified original for comparison.';
   });
   void _validateProcessed(

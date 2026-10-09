@@ -321,7 +321,22 @@ final class ProbeCoreTests: XCTestCase {
             let values: [String: MetadataValue] = ["make": .string("Apple"), "model": .string("iPhone 15 Pro Max"), "software": .string("17.5.1"), "lensModel": .string("Main Camera - 24 mm f/1.78"), "focalLength35mm": .number(24), "latitude": .number(-12.5), "longitude": .number(44.25), "altitude": .number(-10.2), "dateTimeOriginal": .string("2026-04-05T06:07:08-04:00"), "movieCreateDate": .string("2026-04-05T06:07:08-04:00"), "movieModifyDate": .string("2026-04-05T06:07:08-04:00"), "trackCreateDate": .string("2026-04-05T06:07:08-04:00"), "trackModifyDate": .string("2026-04-05T06:07:08-04:00"), "mediaCreateDate": .string("2026-04-05T06:07:08-04:00"), "mediaModifyDate": .string("2026-04-05T06:07:08-04:00")]
             var allValues = values
             allValues["iso"] = .number(800); allValues["exposureTime"] = .number(1.0 / 120); allValues["fNumber"] = .number(1.78)
-            let result = try await MetadataEngine.processMetadataPatch(source: source, output: output, patch: MetadataPatch(values: allValues))
+            let fullPatch = MetadataPatch(values: allValues)
+            let result: ProcessingResult
+            do { result = try await MetadataEngine.processMetadataPatch(source: source, output: output, patch: fullPatch) }
+            catch {
+                // Generated fixture only: production cleanup removes a rejected
+                // output, so reproduce the writer result for exact alias evidence.
+                let diagnostic = folder.appendingPathComponent("initial-edit-diagnostic.\(kind.rawValue)")
+                do {
+                    _ = try await VideoMetadataWriter.write(source: source, output: diagnostic, patch: fullPatch)
+                    let before = try await MetadataEngine.inspect(source), after = try await MetadataEngine.inspect(diagnostic)
+                    let changed = Set(before.metadata.keys).union(after.metadata.keys).filter { before.metadata[$0] != after.metadata[$0] }.sorted()
+                    for key in changed { print("Synthetic initial \(kind.rawValue) metadata difference \(key): \(before.metadata[key] ?? "<absent>") -> \(after.metadata[key] ?? "<absent>")") }
+                    print("Synthetic initial \(kind.rawValue) checks: \(try await MediaIntegrity.compareMetadata(source: source, output: diagnostic, patch: fullPatch).checks)")
+                } catch { print("Synthetic initial edit diagnostic failed: \(error)") }
+                throw error
+            }
             XCTAssertTrue(result.integrity.checks.contains { $0.name.contains("compressed data") && $0.status == .passed })
             let removal = MetadataPatch(removals: ["lensModel", "latitude", "longitude", "altitude", "software", "trackCreateDate"])
             let deleted: ProcessingResult

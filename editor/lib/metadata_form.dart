@@ -96,7 +96,7 @@ class _MetadataFormState extends State<MetadataForm> {
     if (notify) setState(() {});
   }
 
-  MetadataPatch _patch() {
+  MetadataPatch _patch({bool allowEmpty = false}) {
     final values = <String, Object>{};
     final removed = <String>[];
     for (final f in metadataFields) {
@@ -108,9 +108,37 @@ class _MetadataFormState extends State<MetadataForm> {
       }
     }
     final result = MetadataPatch(values: values, removals: removed);
+    if (allowEmpty && values.isEmpty && removed.isEmpty) return result;
     final invalid = result.validate();
     if (invalid != null) throw FormatException(invalid);
     return result;
+  }
+
+  MetadataPatch _standaloneAutomaticDates(
+    MetadataPatch manual,
+    MediaSession source,
+  ) {
+    if (!settings.randomizeDates) return manual;
+    final fields = widget.controller.capabilities!.fieldsFor(
+      source.inspection.kind,
+    );
+    final date = DateTime.now().subtract(
+      Duration(seconds: random.nextInt(max(1, settings.pastDays * 86400 + 1))),
+    );
+    final generated = captureDatePatch(
+      date,
+      image: source.inspection.kind.isImage,
+    );
+    final values = <String, Object>{
+      for (final entry in generated.values.entries)
+        if (fields.contains(entry.key) &&
+            !manual.removals.contains(entry.key) &&
+            !(explicitOverrides.contains(entry.key) &&
+                modes[entry.key] == 'keep'))
+          entry.key: entry.value,
+      ...manual.values,
+    };
+    return MetadataPatch(values: values, removals: manual.removals);
   }
 
   MetadataPatch _profilePatch(MediaSession source) {
@@ -265,7 +293,7 @@ class _MetadataFormState extends State<MetadataForm> {
         final sources = widget.controller.sessions.where(
           (s) => widget.controller.batchSelection.contains(s.id),
         );
-        final manual = _patch();
+        final manual = _patch(allowEmpty: settings.randomizeDates);
         final patches = <String, MetadataPatch>{};
         for (final source in sources) {
           if (profile != null && camera != null && profileBaseline != null) {
@@ -298,12 +326,17 @@ class _MetadataFormState extends State<MetadataForm> {
               removals: removals,
             );
           } else {
-            patches[source.id] = manual;
+            patches[source.id] = _standaloneAutomaticDates(manual, source);
           }
         }
         await widget.controller.processBatch(patches);
       } else {
-        await widget.controller.processMetadata(_patch());
+        final manual = _patch(allowEmpty: settings.randomizeDates);
+        await widget.controller.processMetadata(
+          profileBaseline == null
+              ? _standaloneAutomaticDates(manual, widget.session)
+              : manual,
+        );
       }
       if (mounted) setState(() => formError = null);
     } on FormatException catch (e) {

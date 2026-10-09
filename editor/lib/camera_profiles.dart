@@ -126,7 +126,7 @@ class RandomizationSettings {
         pastDays < 0 ||
         pastDays > 36500 ||
         shutters.isEmpty ||
-        shutters.any((s) => !s.isFinite || s <= 0 || s > 86400)) {
+        shutters.any((s) => !s.isFinite || s < 1e-9 || s > 86400)) {
       return 'Check the ISO, shutter and date ranges.';
     }
     if ((latitude == null) != (longitude == null) ||
@@ -138,7 +138,8 @@ class RandomizationSettings {
         !locationRadiusMeters.isFinite ||
         locationRadiusMeters < 0 ||
         locationRadiusMeters > 100000 ||
-        (altitude != null && !altitude!.isFinite)) {
+        (altitude != null &&
+            (!altitude!.isFinite || altitude!.abs() > 100000))) {
       return 'Check the location and radius.';
     }
     return null;
@@ -293,7 +294,10 @@ class RandomizationSettings {
               max(1, 111320 * cos(latitude! * pi / 180).abs());
       values.addAll({'latitude': lat, 'longitude': ((lon + 180) % 360) - 180});
       if (altitude != null) {
-        values['altitude'] = altitude! + (random.nextDouble() * 10 - 5);
+        values['altitude'] = (altitude! + (random.nextDouble() * 10 - 5)).clamp(
+          -100000.0,
+          100000.0,
+        );
       }
       if (kind.isImage) {
         values['imageDirection'] = (random.nextDouble() * 360).clamp(

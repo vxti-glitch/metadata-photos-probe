@@ -45,6 +45,39 @@ void main() {
     await tester.enterText(input, value);
   }
 
+  testWidgets('automatic capture dates work without a camera preset', (
+    tester,
+  ) async {
+    final bridge = FakeMediaBridge();
+    await launch(tester, bridge);
+    await tap(tester, 'importFiles');
+    await tap(tester, 'process');
+    final patch = bridge.sessions.single.processing!.metadataPatch!;
+    expect(patch.values['dateTimeOriginal'], isNotNull);
+    expect(patch.values['dateTimeOriginal'], patch.values['createDate']);
+    expect(patch.values['offsetTimeOriginal'], isNotNull);
+    expect(patch.values.containsKey('make'), isFalse);
+  });
+
+  testWidgets('manual date picker works without choosing a camera preset', (
+    tester,
+  ) async {
+    final bridge = FakeMediaBridge();
+    await launch(tester, bridge);
+    await tap(tester, 'importFiles');
+    await tap(tester, 'automaticDates');
+    await tap(tester, 'setCaptureDate');
+    await tester.tap(find.text('OK').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OK').last);
+    await tester.pumpAndSettle();
+    await tap(tester, 'process');
+    final patch = bridge.sessions.single.processing!.metadataPatch!;
+    expect(patch.values['dateTimeOriginal'], patch.values['modifyDate']);
+    expect(patch.values['offsetTimeDigitized'], isNotNull);
+    expect(patch.values.containsKey('model'), isFalse);
+  });
+
   testWidgets(
     'HEIC manual editing, mandatory limitation gate, Files export and optional details',
     (tester) async {
