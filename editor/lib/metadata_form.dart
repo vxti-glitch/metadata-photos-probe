@@ -1000,7 +1000,7 @@ class _MetadataFormState extends State<MetadataForm> {
                 itemHeight: 48.0,
                 dropdownColor: const Color(0xFF1E242C),
                 key: const Key('profileBrand'),
-                value: brand,
+                initialValue: brand,
                 decoration: const InputDecoration(
                   labelText: 'Brand',
                   isDense: true,
@@ -1024,8 +1024,8 @@ class _MetadataFormState extends State<MetadataForm> {
                 menuMaxHeight: 240,
                 itemHeight: 48.0,
                 dropdownColor: const Color(0xFF1E242C),
-                key: ValueKey('model-${brand ?? "none"}'),
-                value: profile?.id,
+                key: ValueKey('model-${brand ?? "none"}${profile != null ? "-${profile!.id}" : ""}'),
+                initialValue: profile?.id,
                 decoration: InputDecoration(
                   labelText: 'Model',
                   isDense: true,
@@ -1076,8 +1076,8 @@ class _MetadataFormState extends State<MetadataForm> {
                 menuMaxHeight: 200,
                 itemHeight: 48.0,
                 dropdownColor: const Color(0xFF1E242C),
-                key: ValueKey('camera-${profile?.id ?? "none"}'),
-                value: camera?.id,
+                key: ValueKey('camera-${profile?.id ?? "none"}${camera != null ? "-${camera!.id}" : ""}'),
+                initialValue: camera?.id,
                 decoration: const InputDecoration(
                   labelText: 'Camera',
                   isDense: true,
