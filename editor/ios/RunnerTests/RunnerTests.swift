@@ -416,6 +416,13 @@ class RunnerTests: XCTestCase {
     }
   }
 
+  private func png() -> Data {
+    let renderer = UIGraphicsImageRenderer(size: CGSize(width: 12, height: 8))
+    return renderer.pngData { context in
+      UIColor.blue.setFill(); context.fill(CGRect(x: 0, y: 0, width: 12, height: 8))
+    }
+  }
+
   func testFullPatchBridgeValidationAndPresetBounds() throws {
     let patch = try NativeMediaBridge.metadataPatch(["patch": ["values": ["iso": 400, "exposureTime": 0.01, "model": "Phone"], "removals": ["software"]]])
     XCTAssertTrue(patch.targetedKeys.contains("iso"))
@@ -553,6 +560,84 @@ class RunnerTests: XCTestCase {
     // Cleanup test artifacts from Documents
     try? FileManager.default.removeItem(at: autoFile)
     try? FileManager.default.removeItem(at: autoFile2)
+  }
+
+  func testNativeBatchItemsValidation() throws {
+    XCTAssertThrowsError(try NativeMediaBridge.parseBatchItems(["items": []]))
+    let overLimit = (0..<101).map { _ in ["sessionId": UUID().uuidString, "processingId": UUID().uuidString, "acknowledgeIncomplete": NSNumber(value: true)] }
+    XCTAssertThrowsError(try NativeMediaBridge.parseBatchItems(["items": overLimit]))
+    let id1 = UUID().uuidString, out1 = UUID().uuidString
+    let duplicateSessions = [
+      ["sessionId": id1, "processingId": out1, "acknowledgeIncomplete": NSNumber(value: true)],
+      ["sessionId": id1, "processingId": UUID().uuidString, "acknowledgeIncomplete": NSNumber(value: false)]
+    ]
+    XCTAssertThrowsError(try NativeMediaBridge.parseBatchItems(["items": duplicateSessions]))
+    let nonBoolean = [["sessionId": id1, "processingId": out1, "acknowledgeIncomplete": 123]]
+    XCTAssertThrowsError(try NativeMediaBridge.parseBatchItems(["items": nonBoolean]))
+
+    let valid = [
+      ["sessionId": id1, "processingId": out1, "acknowledgeIncomplete": NSNumber(value: true)],
+      ["sessionId": UUID().uuidString, "processingId": UUID().uuidString, "acknowledgeIncomplete": NSNumber(value: false)]
+    ]
+    let parsed = try NativeMediaBridge.parseBatchItems(["items": valid])
+    XCTAssertEqual(parsed.count, 2)
+    XCTAssertEqual(parsed[0].id.uuidString.lowercased(), id1.lowercased())
+    XCTAssertEqual(parsed[0].acknowledged, true)
+    XCTAssertEqual(parsed[1].acknowledged, false)
+  }
+
+  func testBatchProcessingAcrossMultipleFilesAndFormats() async throws {
+    let root = folder.appendingPathComponent("batch-multi-format-sessions", isDirectory: true)
+    let store = NativeSessionStore(root: root)
+    let f1 = folder.appendingPathComponent("batch-photo1.jpg")
+    let f2 = folder.appendingPathComponent("batch-photo2.jpg")
+    let f3 = folder.appendingPathComponent("batch-graphic.png")
+    try jpeg().write(to: f1)
+    try jpeg().write(to: f2)
+    try png().write(to: f3)
+
+    let s1 = try await store.importFile(f1)
+    let s2 = try await store.importFile(f2)
+    let s3 = try await store.importFile(f3)
+
+    XCTAssertEqual(s1.inspection.kind, .jpeg)
+    XCTAssertEqual(s2.inspection.kind, .jpeg)
+    XCTAssertEqual(s3.inspection.kind, .png)
+
+    let p1 = try await store.process(sessionID: s1.id, patch: CameraPatch(make: "Batch Make 1", model: "Batch Model 1"))
+    let p2 = try await store.process(sessionID: s2.id, patch: CameraPatch(make: "Batch Make 2", model: "Batch Model 2"))
+    let p3 = try await store.process(sessionID: s3.id, patch: CameraPatch(make: "Batch Make 3", model: "Batch Model 3"))
+
+    let out1 = try XCTUnwrap(p1.processing)
+    let out2 = try XCTUnwrap(p2.processing)
+    let out3 = try XCTUnwrap(p3.processing)
+
+    let name1 = try XCTUnwrap(out1.outputDisplayName)
+    let name2 = try XCTUnwrap(out2.outputDisplayName)
+    let name3 = try XCTUnwrap(out3.outputDisplayName)
+
+    XCTAssertNotEqual(name1, name2)
+    XCTAssertNotEqual(name1, name3)
+    XCTAssertNotEqual(name2, name3)
+
+    let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    let autoFolder = documents.appendingPathComponent("Processed Media", isDirectory: true)
+    let auto1 = autoFolder.appendingPathComponent(name1)
+    let auto2 = autoFolder.appendingPathComponent(name2)
+    let auto3 = autoFolder.appendingPathComponent(name3)
+    addTeardownBlock {
+      try? FileManager.default.removeItem(at: auto1)
+      try? FileManager.default.removeItem(at: auto2)
+      try? FileManager.default.removeItem(at: auto3)
+    }
+
+    XCTAssertTrue(FileManager.default.fileExists(atPath: auto1.path))
+    XCTAssertTrue(FileManager.default.fileExists(atPath: auto2.path))
+    XCTAssertTrue(FileManager.default.fileExists(atPath: auto3.path))
+
+    XCTAssertEqual(try WholeFileDigest.sha256(auto1), out1.outputSHA256)
+    XCTAssertEqual(try WholeFileDigest.sha256(auto2), out2.outputSHA256)
+    XCTAssertEqual(try WholeFileDigest.sha256(auto3), out3.outputSHA256)
   }
 
   private func persistedSession(root: URL, status: IntegrityStatus) throws -> NativeSession {

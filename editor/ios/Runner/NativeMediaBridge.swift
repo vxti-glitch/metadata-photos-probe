@@ -127,14 +127,7 @@ final class NativeMediaBridge: NSObject {
                 }
             case "exportFilesBatch":
                 let arguments = try Self.arguments(call.arguments)
-                guard let items = arguments["items"] as? [[String: Any]], !items.isEmpty, items.count <= 100 else { throw NativeMediaError.invalidArgument }
-                let parsed = try items.map { item -> (UUID, UUID, Bool) in
-                    let id = try Self.identifier(item, "sessionId"), output = try Self.identifier(item, "processingId")
-                    guard let raw = item["acknowledgeIncomplete"] as? NSNumber,
-                          CFGetTypeID(raw) == CFBooleanGetTypeID() else { throw NativeMediaError.invalidArgument }
-                    return (id, output, raw.boolValue)
-                }
-                guard Set(parsed.map { $0.0 }).count == parsed.count else { throw NativeMediaError.invalidArgument }
+                let parsed = try Self.parseBatchItems(arguments)
                 let token = try start(result)
                 task = Task {
                     do {
@@ -167,14 +160,7 @@ final class NativeMediaBridge: NSObject {
                 }
             case "shareFilesBatch":
                 let arguments = try Self.arguments(call.arguments)
-                guard let items = arguments["items"] as? [[String: Any]], !items.isEmpty, items.count <= 100 else { throw NativeMediaError.invalidArgument }
-                let parsed = try items.map { item -> (UUID, UUID, Bool) in
-                    let id = try Self.identifier(item, "sessionId"), output = try Self.identifier(item, "processingId")
-                    guard let raw = item["acknowledgeIncomplete"] as? NSNumber,
-                          CFGetTypeID(raw) == CFBooleanGetTypeID() else { throw NativeMediaError.invalidArgument }
-                    return (id, output, raw.boolValue)
-                }
-                guard Set(parsed.map { $0.0 }).count == parsed.count else { throw NativeMediaError.invalidArgument }
+                let parsed = try Self.parseBatchItems(arguments)
                 let token = try start(result)
                 task = Task {
                     do {
@@ -395,6 +381,20 @@ final class NativeMediaBridge: NSObject {
         let patch = try JSONDecoder().decode(MetadataPatch.self, from: data)
         try patch.validate()
         return patch
+    }
+
+    static func parseBatchItems(_ arguments: [String: Any]) throws -> [(id: UUID, output: UUID, acknowledged: Bool)] {
+        guard let items = arguments["items"] as? [[String: Any]], !items.isEmpty, items.count <= 100 else {
+            throw NativeMediaError.invalidArgument
+        }
+        let parsed = try items.map { item -> (id: UUID, output: UUID, acknowledged: Bool) in
+            let id = try Self.identifier(item, "sessionId"), output = try Self.identifier(item, "processingId")
+            guard let raw = item["acknowledgeIncomplete"] as? NSNumber,
+                  CFGetTypeID(raw) == CFBooleanGetTypeID() else { throw NativeMediaError.invalidArgument }
+            return (id, output, raw.boolValue)
+        }
+        guard Set(parsed.map { $0.id }).count == parsed.count else { throw NativeMediaError.invalidArgument }
+        return parsed
     }
 
     private static func originalResource(_ selected: PHPickerResult) throws -> PHAssetResource {

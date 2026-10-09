@@ -64,9 +64,37 @@ final class VideoMetadataWriterTests: XCTestCase {
         XCTAssertEqual(report.validatedTracks, 1)
         XCTAssertEqual(report.validatedChunks, 1)
         let edited = try Data(contentsOf: output)
-        let after = try boxes(edited)
+        let before = try boxes(bytes), after = try boxes(edited)
+        let oldMovie = try XCTUnwrap(before.first { $0.type == "moov" })
         let newMovie = try XCTUnwrap(after.last { $0.type == "moov" })
         XCTAssertGreaterThan(newMovie.range.count, 0)
+
+        // Verify media data payload in mdat is byte-for-byte immutable
+        let media = try XCTUnwrap(before.first { $0.type == "mdat" })
+        XCTAssertEqual(bytes.subdata(in: media.range), edited.subdata(in: media.range))
+
+        // Verify retired old movie is converted to zeroed free space
+        let retired = try XCTUnwrap(after.first { $0.range.lowerBound == oldMovie.range.lowerBound })
+        XCTAssertEqual(retired.type, "free")
+        XCTAssertEqual(retired.range, oldMovie.range)
+        XCTAssertTrue(edited.subdata(in: retired.payload).allSatisfy { $0 == 0 })
+
+        // Verify csgm atoms are retained intact inside new movie's sample table
+        let newTrak = try XCTUnwrap(boxes(edited.subdata(in: newMovie.payload)).first { $0.type == "trak" })
+        let newMdia = try XCTUnwrap(boxes(edited.subdata(in: newTrak.payload)).first { $0.type == "mdia" })
+        let newMinf = try XCTUnwrap(boxes(edited.subdata(in: newMdia.payload)).first { $0.type == "minf" })
+        let newStbl = try XCTUnwrap(boxes(edited.subdata(in: newMinf.payload)).first { $0.type == "stbl" })
+        let stblChildren = try boxes(edited.subdata(in: newStbl.payload))
+        let csgmChildren = stblChildren.filter { $0.type == "csgm" }
+        XCTAssertEqual(csgmChildren.count, 2)
+        XCTAssertEqual(edited.subdata(in: csgmChildren[0].payload), word(0) + Data([1, 2, 3, 4]))
+        XCTAssertEqual(edited.subdata(in: csgmChildren[1].payload), word(0) + Data([5, 6, 7, 8]))
+    }
+
+    func testMovieWithUnqualifiedSampleTableAtomIsStrictlyRefused() async throws {
+        let unqualifiedBox = box("unkn", Data([1, 2, 3, 4]))
+        let bytes = structuralMovie(sampleTableExtra: unqualifiedBox)
+        try await assertRefused(bytes)
     }
 
     func testExternalAliasesAndURLsAndUnknownReferenceFlagsAreRefused() async throws {

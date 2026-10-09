@@ -253,9 +253,38 @@ class EditorPackagingTests(unittest.TestCase):
         bridge_swift = (package.ROOT / "editor/ios/Runner/NativeMediaBridge.swift").read_text(encoding="utf-8")
         self.assertIn('case "shareFiles":', bridge_swift)
         self.assertIn('case "shareFilesBatch":', bridge_swift)
+        self.assertIn('static func parseBatchItems(', bridge_swift)
         store_swift = (package.ROOT / "editor/ios/Runner/NativeSessionStore.swift").read_text(encoding="utf-8")
         self.assertIn('Processed Media', store_swift)
         self.assertIn('autoExportFolder', store_swift)
+
+    def test_video_metadata_writer_csgm_qualification(self):
+        writer_swift = (package.ROOT / "Sources/ProbeCore/VideoMetadataWriter.swift").read_text(encoding="utf-8")
+        self.assertIn('"csgm"', writer_swift, "csgm box must be qualified in validateSampleTable")
+
+    def test_photos_workflow_card_green_palette_restoration(self):
+        app_dart = (package.ROOT / "editor/lib/editor_app.dart").read_text(encoding="utf-8")
+        self.assertIn("0xFF132720", app_dart, "WorkflowNote background must be #132720")
+        self.assertIn("0xFF224436", app_dart, "WorkflowNote border must be #224436")
+        self.assertIn("0xFF84E4C7", app_dart, "WorkflowNote accent must be #84E4C7")
+        form_dart = (package.ROOT / "editor/lib/metadata_form.dart").read_text(encoding="utf-8")
+        self.assertIn("0xFF132720", form_dart, "Post-processing WorkflowNote background must be #132720")
+
+    def test_batch_editing_navigation_and_queue_layout(self):
+        ctrl_dart = (package.ROOT / "editor/lib/editor_controller.dart").read_text(encoding="utf-8")
+        self.assertIn("bool isBatchMode", ctrl_dart)
+        self.assertIn("void startBatchEditing()", ctrl_dart)
+        self.assertIn("void exitBatchEditing()", ctrl_dart)
+        app_dart = (package.ROOT / "editor/lib/editor_app.dart").read_text(encoding="utf-8")
+        self.assertIn("controller.isBatchMode", app_dart)
+        self.assertIn("Back to projects", app_dart)
+        self.assertIn("Retry unfinished files", app_dart)
+
+    def test_metadata_form_unconstrained_tab_and_compact_dropdowns(self):
+        form_dart = (package.ROOT / "editor/lib/metadata_form.dart").read_text(encoding="utf-8")
+        self.assertNotIn("SizedBox(height: 460", form_dart, "Fixed 460px height barrier must be removed")
+        self.assertIn("itemHeight: 48.0", form_dart, "Dropdowns must use compact 48px height")
+        self.assertIn("Select Camera Model", form_dart, "Searchable model sheet must be present")
 
 
 if __name__ == "__main__":
