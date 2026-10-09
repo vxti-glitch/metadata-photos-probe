@@ -602,7 +602,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(controller.presets.single.name, 'Studio');
       expect(controller.presets.single.recipe, isNotNull);
-    expect((bridge.editorState['presets'] as List).length, 1);
+      expect((bridge.editorState['presets'] as List).length, 1);
       expect(tester.takeException(), isNull);
     },
   );
