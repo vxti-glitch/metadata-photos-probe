@@ -713,7 +713,7 @@ void _showAbout(BuildContext context) => showDialog<void>(
     title: const Text(AppBrand.name),
     content: const SingleChildScrollView(
       child: Text(
-        '0.3.0 · First editing milestone\n\nFlutter interface · Swift media engine\n\n'
+        '0.4.0 · Build 5\n\nFlutter interface · Swift media engine\n\n'
         'Image camera changes have physical-device evidence on tested JPEG and HEIC samples. Video camera editing remains provisional. '
         'Files → Safari/iCloud → Photos is the selected workflow. Direct Photos saving without attribution is not established.\n\n'
         'Manual metadata editing, camera profiles, saved presets and batch processing run locally. Supported fields depend on the source format. '
