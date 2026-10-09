@@ -114,21 +114,24 @@ class _EditorHomeState extends State<EditorHome> {
   @override
   Widget build(BuildContext context) {
     final session = controller.selected;
+    final isBatch = controller.isBatchMode && controller.batchSelection.isNotEmpty;
     return Scaffold(
       appBar: AppBar(
-        leading: session == null
+        leading: (session == null && !isBatch)
             ? null
             : IconButton(
                 tooltip: 'Back to projects',
                 onPressed: controller.busy
                     ? null
-                    : () => controller.select(null),
+                    : isBatch
+                        ? controller.exitBatchEditing
+                        : () => controller.select(null),
                 icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
               ),
-        title: const Row(
+        title: Row(
           children: [
-            _MetadataMark(),
-            SizedBox(width: 12),
+            const _MetadataMark(),
+            const SizedBox(width: 12),
             Expanded(
               child: FittedBox(
                 fit: BoxFit.scaleDown,
@@ -138,16 +141,20 @@ class _EditorHomeState extends State<EditorHome> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      AppBrand.header,
-                      style: TextStyle(
+                      isBatch
+                          ? 'BATCH EDITING (${controller.batchSelection.length})'
+                          : AppBrand.header,
+                      style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w800,
                         letterSpacing: 2,
                       ),
                     ),
                     Text(
-                      AppBrand.headerSubtitle,
-                      style: TextStyle(
+                      isBatch
+                          ? 'Shared profile across selected files'
+                          : AppBrand.headerSubtitle,
+                      style: const TextStyle(
                         fontSize: 9,
                         color: _muted,
                         letterSpacing: 1.1,
@@ -209,7 +216,17 @@ class _EditorHomeState extends State<EditorHome> {
                           onPressed: controller.initialize,
                           child: const Text('Retry startup'),
                         ),
-                      ] else if (session == null)
+                      ] else if (isBatch)
+                        MetadataForm(
+                          key: const ValueKey('batch_editor'),
+                          controller: controller,
+                          session: controller.sessions.firstWhere(
+                            (s) => controller.batchSelection.contains(s.id),
+                            orElse: () => controller.sessions.first,
+                          ),
+                          batch: true,
+                        )
+                      else if (session == null)
                         _Projects(controller: controller)
                       else
                         MetadataForm(
@@ -423,22 +440,7 @@ class _Projects extends StatelessWidget {
                 FilledButton.icon(
                   onPressed: controller.busy || controller.batchSelection.isEmpty
                       ? null
-                      : () => showModalBottomSheet<void>(
-                          context: context,
-                          isScrollControlled: true,
-                          builder: (context) => SafeArea(
-                            child: SingleChildScrollView(
-                              padding: const EdgeInsets.all(20),
-                              child: MetadataForm(
-                                controller: controller,
-                                session: controller.sessions.firstWhere(
-                                  (s) => controller.batchSelection.contains(s.id),
-                                ),
-                                batch: true,
-                              ),
-                            ),
-                          ),
-                        ),
+                      : controller.startBatchEditing,
                   icon: const Icon(Icons.edit_note_rounded, size: 20),
                   label: const Text('Edit selected files'),
                 ),
@@ -510,9 +512,9 @@ class _Projects extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 12),
-                Row(
-                  children: [
-                    if (controller.queueCompletedCount > 0) ...[
+                if (controller.queueCompletedCount > 0) ...[
+                  Row(
+                    children: [
                       Expanded(
                         child: FilledButton.tonal(
                           onPressed: controller.busy
@@ -531,17 +533,19 @@ class _Projects extends StatelessWidget {
                         ),
                       ),
                     ],
-                    if (controller.queueFailedCount > 0) ...[
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: controller.busy ? null : controller.retryBatch,
-                          child: const Text('Retry unfinished files'),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
+                  ),
+                ],
+                if (controller.queueFailedCount > 0) ...[
+                  if (controller.queueCompletedCount > 0) const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: controller.busy ? null : controller.retryBatch,
+                      icon: const Icon(Icons.refresh_rounded, size: 16),
+                      label: const Text('Retry unfinished files'),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 10),
                 ExpansionTile(
                   tilePadding: EdgeInsets.zero,
@@ -689,15 +693,15 @@ class _SectionTitle extends StatelessWidget {
   );
 }
 
-class _WorkflowNote extends StatelessWidget {
-  const _WorkflowNote();
+class WorkflowNote extends StatelessWidget {
+  const WorkflowNote({super.key});
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.all(14),
     decoration: BoxDecoration(
-      color: const Color(0xFF141C28),
+      color: const Color(0xFF132720),
       borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: const Color(0xFF233658)),
+      border: Border.all(color: const Color(0xFF224436)),
     ),
     child: const Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -705,7 +709,7 @@ class _WorkflowNote extends StatelessWidget {
         Text(
           'THE PHOTOS WORKFLOW',
           style: TextStyle(
-            color: _accent,
+            color: Color(0xFF84E4C7),
             fontSize: 10,
             letterSpacing: 1.2,
             fontWeight: FontWeight.w700,
@@ -719,12 +723,14 @@ class _WorkflowNote extends StatelessWidget {
         SizedBox(height: 8),
         Text(
           'Requires iCloud Photos, a browser upload and an internet connection. If the button opens another browser, open Safari manually for the tested upload workflow.',
-          style: TextStyle(color: _muted, fontSize: 11, height: 1.4),
+          style: TextStyle(color: Color(0xFF90B0A0), fontSize: 11, height: 1.4),
         ),
       ],
     ),
   );
 }
+
+typedef _WorkflowNote = WorkflowNote;
 
 class _Message extends StatelessWidget {
   const _Message({

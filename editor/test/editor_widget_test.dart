@@ -932,4 +932,44 @@ void main() {
       expect(find.text('3 of 3 selected'), findsOneWidget);
     },
   );
+
+  testWidgets('THE PHOTOS WORKFLOW card has restored green color scheme', (tester) async {
+    final bridge = FakeMediaBridge();
+    await launch(tester, bridge);
+    final workflowTitle = find.text('THE PHOTOS WORKFLOW');
+    expect(workflowTitle, findsOneWidget);
+    final textWidget = tester.widget<Text>(workflowTitle);
+    expect(textWidget.style?.color, const Color(0xFF84E4C7));
+  });
+
+  testWidgets('importing multiple files navigates directly to batch editor', (tester) async {
+    final bridge = FakeMediaBridge()
+      ..batchImportResult = BatchImportResult(
+        sessions: [
+          fixture(id: 's-1', kind: MediaKind.jpeg),
+          fixture(id: 's-2', kind: MediaKind.png),
+        ],
+        errors: [],
+      );
+    final controller = await launch(tester, bridge);
+    await tap(tester, 'importPhotos');
+    await tester.pumpAndSettle();
+    expect(controller.isBatchMode, isTrue);
+    expect(find.text('Batch Editor'), findsOneWidget);
+    expect(find.textContaining('2 files selected'), findsWidgets);
+
+    final backBtn = find.byTooltip('Back to projects');
+    expect(backBtn, findsOneWidget);
+    await tester.tap(backBtn);
+    await tester.pumpAndSettle();
+    expect(controller.isBatchMode, isFalse);
+    expect(find.text('LOCAL PROJECTS'), findsOneWidget);
+
+    final editBtn = find.text('Edit selected files');
+    await tester.ensureVisible(editBtn);
+    await tester.tap(editBtn);
+    await tester.pumpAndSettle();
+    expect(controller.isBatchMode, isTrue);
+    expect(find.text('Batch Editor'), findsOneWidget);
+  });
 }

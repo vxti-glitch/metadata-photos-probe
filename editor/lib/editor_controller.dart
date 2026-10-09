@@ -88,12 +88,36 @@ class EditorController extends ChangeNotifier {
     _emit();
   }
 
+  bool isBatchMode = false;
+
   void select(MediaSession? session) {
     if (busy || !ready) return;
+    isBatchMode = false;
     selected = session;
     acknowledgedProcessingId = null;
     error = null;
     notice = null;
+    _emit();
+  }
+
+  void startBatchEditing() {
+    if (busy || !ready || batchSelection.isEmpty) return;
+    isBatchMode = true;
+    selected = sessions.firstWhere(
+      (s) => batchSelection.contains(s.id),
+      orElse: () => sessions.first,
+    );
+    acknowledgedProcessingId = null;
+    error = null;
+    notice = null;
+    _emit();
+  }
+
+  void exitBatchEditing() {
+    if (busy || !ready) return;
+    isBatchMode = false;
+    selected = null;
+    acknowledgedProcessingId = null;
     _emit();
   }
 
@@ -250,11 +274,18 @@ class EditorController extends ChangeNotifier {
       _run(EditorOperation.importing, (generation) async {
         final result = await bridge.importBatch(photos: photos);
         if (!_current(generation)) return;
+        batchSelection.clear();
         for (final session in result.sessions) {
           _upsert(session);
           batchSelection.add(session.id);
         }
-        if (result.sessions.length > 1) selected = null;
+        if (result.sessions.length > 1) {
+          isBatchMode = true;
+          selected = result.sessions.first;
+        } else if (result.sessions.length == 1) {
+          isBatchMode = false;
+          selected = result.sessions.first;
+        }
         notice = result.errors.isEmpty
             ? '${result.sessions.length} file(s) imported.'
             : '${result.sessions.length} imported. ${result.errors.join('\n')}';
@@ -470,6 +501,7 @@ class EditorController extends ChangeNotifier {
       await _persist();
       if (_current(generation)) {
         selected = null;
+        isBatchMode = false;
         notice =
             'Batch finished: ${queue.where((q) => q.status == "completed").length}/${queue.length} ready.';
       }

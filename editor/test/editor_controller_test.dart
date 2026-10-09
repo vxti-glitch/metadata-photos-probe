@@ -392,4 +392,25 @@ void main() {
       isTrue,
     );
   });
+
+  test('importBatch with multiple files enters batch mode directly', () async {
+    await controller.initialize();
+    final items = [
+      fixture(id: 's-1', kind: MediaKind.jpeg),
+      fixture(id: 's-2', kind: MediaKind.png),
+    ];
+    bridge.batchImportResult = BatchImportResult(sessions: items, errors: []);
+    await controller.importBatch(photos: true);
+    expect(controller.isBatchMode, isTrue);
+    expect(controller.batchSelection.length, 2);
+    expect(controller.selected?.id, 's-1');
+
+    controller.exitBatchEditing();
+    expect(controller.isBatchMode, isFalse);
+    expect(controller.selected, isNull);
+
+    controller.startBatchEditing();
+    expect(controller.isBatchMode, isTrue);
+    expect(controller.selected?.id, 's-1');
+  });
 }
