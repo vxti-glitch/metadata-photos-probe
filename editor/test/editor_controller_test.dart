@@ -338,18 +338,14 @@ void main() {
 
       final batchMap = {
         for (final s in items)
-          s.id: const MetadataPatch(
+          s.id: MetadataPatch(
             values: {'make': 'BrandX', 'model': 'ModelY'},
           ),
       };
-      controller.enqueueBatch(batchMap);
+      bridge.nextStatus = IntegrityStatus.verified;
+      await controller.processBatch(batchMap);
       expect(controller.queue.length, 5);
       expect(controller.queueTotal, 5);
-      expect(controller.queueCompletedCount, 0);
-
-      bridge.nextStatus = IntegrityStatus.verified;
-      await controller.processBatchQueue();
-
       expect(controller.queueCompletedCount, 5);
       expect(controller.queueFailedCount, 0);
 
@@ -363,7 +359,7 @@ void main() {
       await controller.shareSelectedBatch(onlyReady: true);
       expect(bridge.shares, 1);
 
-      await controller.retryFailedQueueItems();
+      await controller.retryBatch();
       expect(controller.queue.first.status, 'completed');
     },
   );
@@ -380,12 +376,11 @@ void main() {
       controller.toggleBatch(item, true);
     }
     final batchMap = {
-      's-1': const MetadataPatch(values: {'make': 'Brand'}),
-      's-2': const MetadataPatch(values: {'make': 'Brand'}),
+      's-1': MetadataPatch(values: {'make': 'Brand'}),
+      's-2': MetadataPatch(values: {'make': 'Brand'}),
     };
-    controller.enqueueBatch(batchMap);
     bridge.metadataLease = Completer<void>();
-    final processingFuture = controller.processBatchQueue();
+    final processingFuture = controller.processBatch(batchMap);
     await controller.cancel();
     expect(controller.cancellationRequested, isTrue);
     bridge.metadataLease!.complete();

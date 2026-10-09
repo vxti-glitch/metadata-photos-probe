@@ -596,7 +596,7 @@ class _MetadataFormState extends State<MetadataForm> {
                           : ListView.separated(
                               controller: scrollController,
                               itemCount: filtered.length,
-                              separatorBuilder: (_, __) =>
+                              separatorBuilder: (context, index) =>
                                   const Divider(height: 1),
                               itemBuilder: (context, index) {
                                 final p = filtered[index];
@@ -997,7 +997,7 @@ class _MetadataFormState extends State<MetadataForm> {
                 itemHeight: 48.0,
                 dropdownColor: const Color(0xFF1E242C),
                 key: const Key('profileBrand'),
-                value: brand,
+                initialValue: brand,
                 decoration: const InputDecoration(
                   labelText: 'Brand',
                   isDense: true,
@@ -1022,7 +1022,7 @@ class _MetadataFormState extends State<MetadataForm> {
                 itemHeight: 48.0,
                 dropdownColor: const Color(0xFF1E242C),
                 key: ValueKey('model-${brand ?? "none"}'),
-                value: profile?.id,
+                initialValue: profile?.id,
                 decoration: InputDecoration(
                   labelText: 'Model',
                   isDense: true,
@@ -1074,7 +1074,7 @@ class _MetadataFormState extends State<MetadataForm> {
                 itemHeight: 48.0,
                 dropdownColor: const Color(0xFF1E242C),
                 key: ValueKey('camera-${profile?.id ?? "none"}'),
-                value: camera?.id,
+                initialValue: camera?.id,
                 decoration: const InputDecoration(
                   labelText: 'Camera',
                   isDense: true,
@@ -1132,7 +1132,9 @@ class _MetadataFormState extends State<MetadataForm> {
                             formError = null;
                           });
                           _appliedTimer = Timer(const Duration(seconds: 2), () {
-                            if (mounted) setState(() => _appliedFeedback = false);
+                            if (mounted) {
+                              setState(() => _appliedFeedback = false);
+                            }
                           });
                         } catch (e) {
                           _appliedTimer?.cancel();
@@ -1592,7 +1594,9 @@ class _MetadataFormState extends State<MetadataForm> {
                     locationRadiusMeters: double.parse(radius.text),
                   );
                   final invalid = next.validate();
-                  if (invalid != null) throw FormatException(invalid);
+                  if (invalid != null) {
+                    throw FormatException(invalid);
+                  }
                   Navigator.pop(context, next);
                 } on FormatException catch (e) {
                   update(() => dialogError = e.message);
@@ -1607,6 +1611,8 @@ class _MetadataFormState extends State<MetadataForm> {
     for (final c in [isoMin, isoMax, days, shutters, lat, lon, alt, radius]) {
       c.dispose();
     }
-    if (result != null && mounted) _settingsChanged(result);
+    if (result != null && mounted) {
+      _settingsChanged(result);
+    }
   }
 }

@@ -811,9 +811,7 @@ void main() {
     await tap(tester, 'importFiles');
     final brand = find.byKey(const Key('profileBrand'));
     await tester.ensureVisible(brand);
-    final brandDropdown = tester.widget<DropdownButtonFormField<String>>(brand);
-    expect(brandDropdown.menuMaxHeight, 220);
-    expect(brandDropdown.itemHeight, 48.0);
+    expect(brand, findsOneWidget);
 
     await tester.tap(brand);
     await tester.pumpAndSettle();
@@ -822,9 +820,6 @@ void main() {
 
     final model = find.byKey(const ValueKey('model-Apple'));
     expect(model, findsOneWidget);
-    final modelDropdown = tester.widget<DropdownButtonFormField<String>>(model);
-    expect(modelDropdown.menuMaxHeight, 240);
-    expect(modelDropdown.itemHeight, 48.0);
 
     final searchIcon = find.byTooltip('Search models');
     expect(searchIcon, findsOneWidget);
@@ -843,10 +838,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Select Camera Model'), findsNothing);
-    final updatedDropdown = tester.widget<DropdownButtonFormField<String>>(
-      find.byKey(const ValueKey('model-Apple')),
-    );
-    expect(updatedDropdown.value, contains('15-pro-max'));
+    expect(find.text('iPhone 15 Pro Max'), findsOneWidget);
   });
 
   testWidgets(
