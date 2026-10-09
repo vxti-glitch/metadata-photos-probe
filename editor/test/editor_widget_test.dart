@@ -889,7 +889,9 @@ void main() {
       await tap(tester, 'openICloud');
       expect(bridge.opens, 1);
 
-      await tester.tap(find.text('Process another file'));
+      final anotherBtn = find.text('Process another file');
+      await tester.ensureVisible(anotherBtn);
+      await tester.tap(anotherBtn);
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('exportFiles')), findsNothing);
     },

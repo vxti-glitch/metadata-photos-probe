@@ -504,152 +504,22 @@ class _MetadataFormState extends State<MetadataForm> {
     BuildContext context,
     List<CameraProfile> availableProfiles,
   ) async {
-    final searchController = TextEditingController();
-    CameraProfile? selectedProfile;
-    try {
-      await showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: const Color(0xFF191E25),
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        builder: (ctx) => StatefulBuilder(
-          builder: (context, setSheetState) {
-            final query = searchController.text.trim().toLowerCase();
-            final filtered = availableProfiles.where((p) {
-              if (query.isEmpty) return true;
-              return p.model.toLowerCase().contains(query) ||
-                  p.brand.toLowerCase().contains(query);
-            }).toList();
-            return DraggableScrollableSheet(
-              initialChildSize: 0.65,
-              minChildSize: 0.4,
-              maxChildSize: 0.9,
-              expand: false,
-              builder: (context, scrollController) => Padding(
-                padding: EdgeInsets.fromLTRB(
-                  16,
-                  12,
-                  16,
-                  16 + MediaQuery.of(context).viewInsets.bottom,
-                ),
-                child: Column(
-                  children: [
-                    Container(
-                      width: 36,
-                      height: 4,
-                      margin: const EdgeInsets.only(bottom: 16),
-                      decoration: BoxDecoration(
-                        color: Colors.white24,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    Row(
-                      children: [
-                        Text(
-                          'Select Camera Model',
-                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.w700,
-                              ),
-                        ),
-                        const Spacer(),
-                        IconButton(
-                          icon: const Icon(Icons.close, size: 20),
-                          onPressed: () => Navigator.pop(context),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: searchController,
-                      autofocus: false,
-                      decoration: InputDecoration(
-                        hintText: 'Search models…',
-                        prefixIcon: const Icon(Icons.search, size: 20),
-                        isDense: true,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 10,
-                        ),
-                        suffixIcon: searchController.text.isNotEmpty
-                            ? IconButton(
-                                icon: const Icon(Icons.clear, size: 18),
-                                onPressed: () {
-                                  searchController.clear();
-                                  setSheetState(() {});
-                                },
-                              )
-                            : null,
-                      ),
-                      onChanged: (_) => setSheetState(() {}),
-                    ),
-                    const SizedBox(height: 12),
-                    Expanded(
-                      child: filtered.isEmpty
-                          ? const Center(
-                              child: Text(
-                                'No matching models found.',
-                                style: TextStyle(color: Colors.white60),
-                              ),
-                            )
-                          : ListView.separated(
-                              controller: scrollController,
-                              itemCount: filtered.length,
-                              separatorBuilder: (context, index) =>
-                                  const Divider(height: 1),
-                              itemBuilder: (context, index) {
-                                final p = filtered[index];
-                                final isSelected = profile?.id == p.id;
-                                return ListTile(
-                                  dense: true,
-                                  title: Text(
-                                    p.model,
-                                    style: TextStyle(
-                                      fontWeight: isSelected
-                                          ? FontWeight.w700
-                                          : FontWeight.w500,
-                                      color: isSelected
-                                          ? const Color(0xFF9CB5FF)
-                                          : Colors.white,
-                                    ),
-                                  ),
-                                  subtitle: Text(
-                                    '${p.brand} · ${p.cameras.length} camera(s)',
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.white60,
-                                    ),
-                                  ),
-                                  trailing: isSelected
-                                      ? const Icon(
-                                          Icons.check,
-                                          color: Color(0xFF9CB5FF),
-                                          size: 20,
-                                        )
-                                      : null,
-                                  onTap: () {
-                                    selectedProfile = p;
-                                    Navigator.pop(context);
-                                  },
-                                );
-                              },
-                            ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-      );
-    } finally {
-      searchController.dispose();
-    }
-    if (selectedProfile != null && mounted) {
+    final selected = await showModalBottomSheet<CameraProfile>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF191E25),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _ModelSearchSheet(
+        availableProfiles: availableProfiles,
+        selectedProfileId: profile?.id,
+      ),
+    );
+    if (selected != null && mounted) {
       setState(() {
-        brand = selectedProfile!.brand;
-        profile = selectedProfile;
+        brand = selected.brand;
+        profile = selected;
         camera = profile!.cameras.first;
         _appliedFeedback = false;
         _apply(
@@ -1619,3 +1489,161 @@ class _MetadataFormState extends State<MetadataForm> {
     }
   }
 }
+
+class _ModelSearchSheet extends StatefulWidget {
+  const _ModelSearchSheet({
+    required this.availableProfiles,
+    required this.selectedProfileId,
+  });
+
+  final List<CameraProfile> availableProfiles;
+  final String? selectedProfileId;
+
+  @override
+  State<_ModelSearchSheet> createState() => _ModelSearchSheetState();
+}
+
+class _ModelSearchSheetState extends State<_ModelSearchSheet> {
+  late final TextEditingController _searchController;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final query = _searchController.text.trim().toLowerCase();
+    final filtered = widget.availableProfiles.where((p) {
+      if (query.isEmpty) return true;
+      return p.model.toLowerCase().contains(query) ||
+          p.brand.toLowerCase().contains(query);
+    }).toList();
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.65,
+      minChildSize: 0.4,
+      maxChildSize: 0.9,
+      expand: false,
+      builder: (context, scrollController) => Padding(
+        padding: EdgeInsets.fromLTRB(
+          16,
+          12,
+          16,
+          16 + MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Row(
+              children: [
+                Text(
+                  'Select Camera Model',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 20),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _searchController,
+              autofocus: false,
+              decoration: InputDecoration(
+                hintText: 'Search models…',
+                prefixIcon: const Icon(Icons.search, size: 20),
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                suffixIcon: _searchController.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 18),
+                        onPressed: () {
+                          _searchController.clear();
+                          setState(() {});
+                        },
+                      )
+                    : null,
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: filtered.isEmpty
+                  ? const Center(
+                      child: Text(
+                        'No matching models found.',
+                        style: TextStyle(color: Colors.white60),
+                      ),
+                    )
+                  : ListView.separated(
+                      controller: scrollController,
+                      itemCount: filtered.length,
+                      separatorBuilder: (context, index) =>
+                          const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final p = filtered[index];
+                        final isSelected = widget.selectedProfileId == p.id;
+                        return ListTile(
+                          dense: true,
+                          title: Text(
+                            p.model,
+                            style: TextStyle(
+                              fontWeight: isSelected
+                                  ? FontWeight.w700
+                                  : FontWeight.w500,
+                              color: isSelected
+                                  ? const Color(0xFF9CB5FF)
+                                  : Colors.white,
+                            ),
+                          ),
+                          subtitle: Text(
+                            '${p.brand} · ${p.cameras.length} camera(s)',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Colors.white60,
+                            ),
+                          ),
+                          trailing: isSelected
+                              ? const Icon(
+                                  Icons.check,
+                                  color: Color(0xFF9CB5FF),
+                                  size: 20,
+                                )
+                              : null,
+                          onTap: () {
+                            Navigator.of(context).pop(p);
+                          },
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+

@@ -374,7 +374,7 @@ class _Projects extends StatelessWidget {
         ],
       ),
       const SizedBox(height: 10),
-      if (controller.batchSelection.isNotEmpty)
+      if (controller.sessions.isNotEmpty)
         Padding(
           padding: const EdgeInsets.only(bottom: 14),
           child: _Panel(
@@ -415,7 +415,7 @@ class _Projects extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 FilledButton.icon(
-                  onPressed: controller.busy
+                  onPressed: controller.busy || controller.batchSelection.isEmpty
                       ? null
                       : () => showModalBottomSheet<void>(
                           context: context,
@@ -441,7 +441,7 @@ class _Projects extends StatelessWidget {
                   children: [
                     Expanded(
                       child: OutlinedButton.icon(
-                        onPressed: controller.busy
+                        onPressed: controller.busy || controller.batchSelection.isEmpty
                             ? null
                             : () => _exportBatch(context, controller),
                         icon: const Icon(Icons.folder_shared_outlined, size: 16),
@@ -451,7 +451,7 @@ class _Projects extends StatelessWidget {
                     const SizedBox(width: 8),
                     Expanded(
                       child: OutlinedButton.icon(
-                        onPressed: controller.busy
+                        onPressed: controller.busy || controller.batchSelection.isEmpty
                             ? null
                             : () => _shareBatch(context, controller),
                         icon: const Icon(Icons.ios_share_rounded, size: 16),
