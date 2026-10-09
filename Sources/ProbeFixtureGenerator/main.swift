@@ -41,7 +41,9 @@ struct FixtureGenerator {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let patch = CameraPatch(make: "Feasibility Test Maker", model: "Controlled Synthetic Model")
             var records = [FixtureRecord]()
-            let fixtures = MediaKind.allCases.map { ($0, true) } + [(MediaKind.jpeg, false)]
+            // Preserve this diagnostic probe's original four-format scope.
+            // New editor formats must not silently select an old fallback encoder.
+            let fixtures = [MediaKind.jpeg, .heic, .mp4, .mov].map { ($0, true) } + [(MediaKind.jpeg, false)]
             for (kind, includeDate) in fixtures {
                 let variant = includeDate ? "baseline" : "undated-camera-control"
                 let suffix = includeDate ? "" : "-undated"
@@ -54,6 +56,9 @@ struct FixtureGenerator {
                     record.sourceFilename = source.lastPathComponent
                     record.sourceSHA256 = try WholeFileDigest.sha256(source)
                     record.sourceInspection = try await MetadataEngine.inspect(source)
+                    guard record.sourceInspection?.kind == kind else {
+                        throw ProbeError.writeFailed("Fixture header does not match the declared format")
+                    }
                 } catch {
                     record.sourceError = error.localizedDescription
                     try? FileManager.default.removeItem(at: source)
