@@ -917,6 +917,7 @@ void main() {
 
       final deselectBtn = find.text('Deselect all');
       await tester.ensureVisible(deselectBtn);
+      await tester.pumpAndSettle();
       await tester.tap(deselectBtn);
       await tester.pumpAndSettle();
       expect(controller.batchSelection, isEmpty);
@@ -924,6 +925,7 @@ void main() {
 
       final selectBtn = find.text('Select all');
       await tester.ensureVisible(selectBtn);
+      await tester.pumpAndSettle();
       await tester.tap(selectBtn);
       await tester.pumpAndSettle();
       expect(controller.batchSelection.length, 3);
