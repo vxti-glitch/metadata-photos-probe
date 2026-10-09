@@ -296,6 +296,17 @@ final class ProbeCoreTests: XCTestCase {
             try makeImage(source, type: kind == .jpeg ? UTType.jpeg.identifier : kind == .heic ? UTType.heic.identifier : UTType.png.identifier, orientation: 6)
             let original = try WholeFileDigest.sha256(source)
             let patch = MetadataPatch(values: ["make": .string("Apple"), "model": .string("Full camera"), "lensMake": .string("Apple"), "lensModel": .string("Full lens 6.765mm f/1.78"), "iso": .number(800), "exposureTime": .number(1.0 / 120), "fNumber": .number(1.78), "exposureCompensation": .number(-0.5), "focalLength": .number(6.765), "focalLength35mm": .number(24), "meteringMode": .number(5), "flash": .number(16), "software": .string("17.5.1"), "hostComputer": .string("iPhone"), "dateTimeOriginal": .string("2026:04:05 06:07:08"), "createDate": .string("2026:04:05 06:07:08"), "modifyDate": .string("2026:04:05 06:07:08"), "offsetTime": .string("-04:00"), "offsetTimeOriginal": .string("-04:00"), "offsetTimeDigitized": .string("-04:00"), "latitude": .number(-12.5), "longitude": .number(44.25), "altitude": .number(-10.2), "imageDirection": .number(120.55)])
+            let diagnostic = folder.appendingPathComponent("synthetic-diagnostic.\(kind.rawValue)")
+            try StillContainerMetadata.write(source: source, output: diagnostic, kind: kind, patch: patch)
+            let comparison = try await MediaIntegrity.compareMetadata(source: source, output: diagnostic, patch: patch)
+            if comparison.status == .mismatch {
+                print("Synthetic \(kind.rawValue) failed checks: \(comparison.checks.filter { $0.status == .failed })")
+                for path in [source, diagnostic] {
+                    if let image = CGImageSourceCreateWithURL(path as CFURL, nil), let properties = CGImageSourceCopyPropertiesAtIndex(image, 0, nil) {
+                        print("Synthetic \(path.lastPathComponent) ImageIO properties: \(canonicalValue(properties as NSDictionary))")
+                    }
+                }
+            }
             let result = try await MetadataEngine.processMetadataPatch(source: source, output: output, patch: patch)
             try patch.validateReadback(result.outputInspection)
             XCTAssertEqual(result.outputInspection.kind, kind); XCTAssertEqual(result.outputInspection.structure, result.sourceInspection.structure)

@@ -115,6 +115,7 @@ final class FullMetadataTests: XCTestCase {
         let patch = MetadataPatch(values: ["latitude": .number(-12.5), "longitude": .number(44.25), "altitude": .number(-10.2)])
         let values = try VideoMetadataFields.values(patch, existing: [:], track: false)
         let text = try XCTUnwrap(values[VideoMetadataFields.locationKey] ?? nil)
+        XCTAssertEqual(text, "-12.500000+044.250000-10.200/")
         XCTAssertEqual(VideoMetadataFields.decodeLocation(text), ["latitude": "-12.5", "longitude": "44.25", "altitude": "-10.2"])
         let removed = try VideoMetadataFields.values(MetadataPatch(removals: ["altitude"]), existing: ["latitude": "-12.5", "longitude": "44.25"], track: false)
         XCTAssertNil(VideoMetadataFields.decodeLocation(try XCTUnwrap(removed[VideoMetadataFields.locationKey] ?? nil))["altitude"])

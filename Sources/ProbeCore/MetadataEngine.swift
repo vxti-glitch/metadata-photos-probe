@@ -83,7 +83,10 @@ public enum MetadataEngine {
         let after = try await inspect(output)
         try patch.validateReadback(after)
         let integrity = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: patch)
-        guard integrity.status != .mismatch else { throw ProbeError.writeFailed("Media or non-target metadata integrity check failed") }
+        guard integrity.status != .mismatch else {
+            let names = integrity.checks.filter { $0.status == .failed }.map(\.name).joined(separator: ", ")
+            throw ProbeError.writeFailed("Media or non-target metadata integrity check failed: \(names)")
+        }
         completed = true
         return ProcessingResult(outputURL: output, sourceInspection: before, outputInspection: after, integrity: integrity)
     }

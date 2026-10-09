@@ -217,7 +217,7 @@ public enum MediaIntegrity {
     private static func retainedMetadata(_ metadata: [String: String], patch: CameraPatch?) -> [String: String] {
         guard let patch else { return metadata }
         var retained = metadata
-        for key in ["make", "model", AVMetadataIdentifier.quickTimeMetadataMake.rawValue, AVMetadataIdentifier.quickTimeMetadataModel.rawValue] {
+        for key in ["make", "model", "com.apple.quicktime.make", "com.apple.quicktime.model", AVMetadataIdentifier.quickTimeMetadataMake.rawValue, AVMetadataIdentifier.quickTimeMetadataModel.rawValue] {
             retained.removeValue(forKey: key)
         }
         if patch.lens != nil { retained.removeValue(forKey: "lens"); retained.removeValue(forKey: "lensModel") }

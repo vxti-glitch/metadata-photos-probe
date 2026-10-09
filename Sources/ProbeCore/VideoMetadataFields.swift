@@ -36,9 +36,15 @@ enum VideoMetadataFields {
                 let lon = patch.values["longitude"]?.number ?? existing["longitude"].flatMap(Double.init)
                 guard let lat, let lon else { throw ProbeError.invalidPatch }
                 let altitude = patch.removals.contains("altitude") ? nil : patch.values["altitude"]?.number ?? existing["altitude"].flatMap(Double.init)
-                let locale = Locale(identifier: "en_US_POSIX")
-                let base = String(format: "%+010.6f%+011.6f", locale: locale, lat, lon)
-                result[locationKey] = .some(base + (altitude.map { String(format: "%+.3f", locale: locale, $0) } ?? "") + "/")
+                func coordinate(_ value: Double, digits: Int) -> String {
+                    // Explicit ASCII sign and degree padding avoid Foundation's
+                    // localized sign/zero-padding interaction with ISO 6709.
+                    let parts = String(format: "%.6f", abs(value)).split(separator: ".", omittingEmptySubsequences: false)
+                    let degrees = String(repeating: "0", count: max(0, digits - parts[0].count)) + parts[0]
+                    return (value.sign == .minus ? "-" : "+") + degrees + "." + parts[1]
+                }
+                let base = coordinate(lat, digits: 2) + coordinate(lon, digits: 3)
+                result[locationKey] = .some(base + (altitude.map { ($0.sign == .minus ? "-" : "+") + String(format: "%.3f", abs($0)) } ?? "") + "/")
             }
         }
         return result
