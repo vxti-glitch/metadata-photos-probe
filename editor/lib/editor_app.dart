@@ -384,15 +384,21 @@ class _Projects extends StatelessWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      '${controller.batchSelection.length} of ${controller.sessions.length} selected',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 15,
-                        color: Color(0xFF9CB5FF),
+                    Expanded(
+                      child: Text(
+                        '${controller.batchSelection.length} of ${controller.sessions.length} selected',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                          color: Color(0xFF9CB5FF),
+                        ),
                       ),
                     ),
                     TextButton(
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        visualDensity: VisualDensity.compact,
+                      ),
                       onPressed: controller.busy
                           ? null
                           : () {

@@ -915,12 +915,16 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('3 of 3 selected'), findsOneWidget);
 
-      await tester.tap(find.text('Deselect all'));
+      final deselectBtn = find.text('Deselect all');
+      await tester.ensureVisible(deselectBtn);
+      await tester.tap(deselectBtn);
       await tester.pumpAndSettle();
       expect(controller.batchSelection, isEmpty);
       expect(find.text('0 of 3 selected'), findsOneWidget);
 
-      await tester.tap(find.text('Select all'));
+      final selectBtn = find.text('Select all');
+      await tester.ensureVisible(selectBtn);
+      await tester.tap(selectBtn);
       await tester.pumpAndSettle();
       expect(controller.batchSelection.length, 3);
       expect(find.text('3 of 3 selected'), findsOneWidget);
