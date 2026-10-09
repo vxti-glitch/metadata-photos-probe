@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:metadata_editor/editor_controller.dart';
 import 'package:metadata_editor/media_models.dart';
+import 'package:metadata_editor/metadata_patch.dart';
 
 import 'fake_media_bridge.dart';
 
@@ -304,5 +305,96 @@ void main() {
     controller = EditorController(
       bridge,
     ); // teardown disposes the replacement only.
+  });
+
+  test('shareFiles invokes bridge shareFiles with proper parameters', () async {
+    await import();
+    bridge.nextStatus = IntegrityStatus.verified;
+    await controller.process(patch);
+    expect(controller.canExport, isTrue);
+    await controller.shareFiles();
+    expect(bridge.shares, 1);
+    expect(bridge.sharedProcessingId, outputId);
+    expect(bridge.sharedAcknowledgment, isFalse);
+  });
+
+  test(
+    'batch processing across mixed formats PNG, JPEG, HEIC, MP4, MOV isolates format capabilities and handles partial failures',
+    () async {
+      await controller.initialize();
+      final items = [
+        fixture(id: 's-jpeg', kind: MediaKind.jpeg),
+        fixture(id: 's-heic', kind: MediaKind.heic),
+        fixture(id: 's-png', kind: MediaKind.png),
+        fixture(id: 's-mp4', kind: MediaKind.mp4),
+        fixture(id: 's-mov', kind: MediaKind.mov),
+      ];
+      bridge.sessions = items;
+      await controller.initialize();
+      for (final item in items) {
+        controller.toggleBatch(item, true);
+      }
+      expect(controller.batchSelection.length, 5);
+
+      final batchMap = {
+        for (final s in items)
+          s.id: const MetadataPatch(
+            values: {'make': 'BrandX', 'model': 'ModelY'},
+          ),
+      };
+      controller.enqueueBatch(batchMap);
+      expect(controller.queue.length, 5);
+      expect(controller.queueTotal, 5);
+      expect(controller.queueCompletedCount, 0);
+
+      bridge.nextStatus = IntegrityStatus.verified;
+      await controller.processBatchQueue();
+
+      expect(controller.queueCompletedCount, 5);
+      expect(controller.queueFailedCount, 0);
+
+      controller.queue.first.status = 'failed';
+      controller.queue.first.message = 'Verification mismatch';
+      expect(controller.queueFailedCount, 1);
+
+      await controller.exportSelectedBatch(onlyReady: true);
+      expect(bridge.exports, 1);
+
+      await controller.shareSelectedBatch(onlyReady: true);
+      expect(bridge.shares, 1);
+
+      await controller.retryFailedQueueItems();
+      expect(controller.queue.first.status, 'completed');
+    },
+  );
+
+  test('batch queue cancellation stops pending items', () async {
+    await controller.initialize();
+    final items = [
+      fixture(id: 's-1', kind: MediaKind.jpeg),
+      fixture(id: 's-2', kind: MediaKind.jpeg),
+    ];
+    bridge.sessions = items;
+    await controller.initialize();
+    for (final item in items) {
+      controller.toggleBatch(item, true);
+    }
+    final batchMap = {
+      's-1': const MetadataPatch(values: {'make': 'Brand'}),
+      's-2': const MetadataPatch(values: {'make': 'Brand'}),
+    };
+    controller.enqueueBatch(batchMap);
+    bridge.metadataLease = Completer<void>();
+    final processingFuture = controller.processBatchQueue();
+    await controller.cancel();
+    expect(controller.cancellationRequested, isTrue);
+    bridge.metadataLease!.complete();
+    await processingFuture;
+    expect(
+      controller.queue.any(
+        (q) => q.status == 'interrupted' || q.status == 'pending',
+      ),
+      isTrue,
+    );
   });
 }

@@ -802,4 +802,134 @@ void main() {
     await tap(tester, 'importFiles');
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('dropdown menu constraints and model search sheet', (
+    tester,
+  ) async {
+    final bridge = FakeMediaBridge();
+    await launch(tester, bridge);
+    await tap(tester, 'importFiles');
+    final brand = find.byKey(const Key('profileBrand'));
+    await tester.ensureVisible(brand);
+    final brandDropdown = tester.widget<DropdownButtonFormField<String>>(brand);
+    expect(brandDropdown.menuMaxHeight, 220);
+    expect(brandDropdown.itemHeight, 48.0);
+
+    await tester.tap(brand);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Apple').last);
+    await tester.pumpAndSettle();
+
+    final model = find.byKey(const ValueKey('model-Apple'));
+    expect(model, findsOneWidget);
+    final modelDropdown = tester.widget<DropdownButtonFormField<String>>(model);
+    expect(modelDropdown.menuMaxHeight, 240);
+    expect(modelDropdown.itemHeight, 48.0);
+
+    final searchIcon = find.byTooltip('Search models');
+    expect(searchIcon, findsOneWidget);
+    await tester.tap(searchIcon);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Select Camera Model'), findsOneWidget);
+    final searchInput = find.byType(TextField);
+    expect(searchInput, findsOneWidget);
+    await tester.enterText(searchInput, 'iPhone 15');
+    await tester.pumpAndSettle();
+
+    final modelTile = find.text('iPhone 15 Pro Max');
+    expect(modelTile, findsOneWidget);
+    await tester.tap(modelTile);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Select Camera Model'), findsNothing);
+    final updatedDropdown = tester.widget<DropdownButtonFormField<String>>(
+      find.byKey(const ValueKey('model-Apple')),
+    );
+    expect(updatedDropdown.value, contains('15-pro-max'));
+  });
+
+  testWidgets(
+    'Apply & randomize feedback displays confirmation and auto-resets',
+    (tester) async {
+      final bridge = FakeMediaBridge();
+      await launch(tester, bridge);
+      await tap(tester, 'importFiles');
+      await chooseProfile(tester);
+
+      final applyBtn = find.byKey(const Key('applyProfile'));
+      await tester.ensureVisible(applyBtn);
+      expect(find.text('Apply & randomize'), findsOneWidget);
+      expect(find.text('Applied'), findsNothing);
+
+      await tester.tap(applyBtn);
+      await tester.pump();
+
+      expect(find.text('Applied'), findsOneWidget);
+      expect(find.byIcon(Icons.check_circle_rounded), findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 3));
+      expect(find.text('Apply & randomize'), findsOneWidget);
+      expect(find.text('Applied'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'post-processing results section remains on screen and supports export, share and icloud',
+    (tester) async {
+      final bridge = FakeMediaBridge()
+        ..importResult = fixture(kind: MediaKind.jpeg, status: null);
+      await launch(tester, bridge);
+      await tap(tester, 'importFiles');
+      bridge.nextStatus = IntegrityStatus.verified;
+      await tap(tester, 'process');
+
+      expect(find.text('controlled.jpeg'), findsOneWidget);
+      expect(find.byKey(const Key('exportFiles')), findsOneWidget);
+      expect(find.byKey(const Key('shareFiles')), findsOneWidget);
+      expect(find.byKey(const Key('openICloud')), findsOneWidget);
+      expect(find.text('Process another file'), findsOneWidget);
+      expect(find.textContaining('Processed Media'), findsOneWidget);
+
+      await tap(tester, 'shareFiles');
+      expect(bridge.shares, 1);
+
+      await tap(tester, 'openICloud');
+      expect(bridge.opens, 1);
+
+      await tester.tap(find.text('Process another file'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('exportFiles')), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'batch panel selection counts, deselect all, and select all work as expected',
+    (tester) async {
+      final bridge = FakeMediaBridge()
+        ..sessions = [
+          fixture(id: 's-1', kind: MediaKind.jpeg),
+          fixture(id: 's-2', kind: MediaKind.heic),
+          fixture(id: 's-3', kind: MediaKind.png),
+        ];
+      final controller = await launch(tester, bridge);
+      expect(find.text('3 of 3 selected'), findsNothing);
+
+      for (final s in controller.sessions) {
+        controller.toggleBatch(s, true);
+      }
+      await tester.pumpAndSettle();
+      expect(find.text('3 of 3 selected'), findsOneWidget);
+
+      await tester.tap(find.text('Deselect all'));
+      await tester.pumpAndSettle();
+      expect(controller.batchSelection, isEmpty);
+      expect(find.text('0 of 3 selected'), findsOneWidget);
+
+      await tester.tap(find.text('Select all'));
+      await tester.pumpAndSettle();
+      expect(controller.batchSelection.length, 3);
+      expect(find.text('3 of 3 selected'), findsOneWidget);
+    },
+  );
 }

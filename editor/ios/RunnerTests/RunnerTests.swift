@@ -516,6 +516,45 @@ class RunnerTests: XCTestCase {
     XCTAssertEqual(current.first?.history.count, 10)
   }
 
+  func testAutomaticProcessedMediaFolderCreationAndCollisionAvoidance() async throws {
+    let provider = folder.appendingPathComponent("auto-folder-source.jpg")
+    try jpeg().write(to: provider)
+    let root = folder.appendingPathComponent("auto-folder-sessions", isDirectory: true)
+    let store = NativeSessionStore(root: root)
+    let imported = try await store.importFile(provider)
+    let patch = CameraPatch(make: "Auto maker", model: "Auto model")
+    let changed = try await store.process(sessionID: imported.id, patch: patch)
+    let output = try XCTUnwrap(changed.processing)
+    let displayName = try XCTUnwrap(output.outputDisplayName)
+
+    let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    let autoFolder = documents.appendingPathComponent("Processed Media", isDirectory: true)
+    let autoFile = autoFolder.appendingPathComponent(displayName)
+
+    XCTAssertTrue(FileManager.default.fileExists(atPath: autoFile.path), "Output was not saved to Processed Media folder")
+    XCTAssertEqual(try WholeFileDigest.sha256(autoFile), output.outputSHA256)
+
+    // Process again with different patch to verify collision-safe distinct naming
+    let patch2 = CameraPatch(make: "Auto maker 2", model: "Auto model 2")
+    let changed2 = try await store.process(sessionID: imported.id, patch: patch2)
+    let output2 = try XCTUnwrap(changed2.processing)
+    let displayName2 = try XCTUnwrap(output2.outputDisplayName)
+
+    XCTAssertNotEqual(displayName, displayName2)
+    let autoFile2 = autoFolder.appendingPathComponent(displayName2)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: autoFile2.path))
+    XCTAssertTrue(FileManager.default.fileExists(atPath: autoFile.path), "Previous processed file in Processed Media was overwritten")
+
+    // Clear session store - persistent Processed Media files must remain untouched
+    try await store.clear()
+    XCTAssertTrue(FileManager.default.fileExists(atPath: autoFile.path), "User media in Processed Media must not be deleted on session clear")
+    XCTAssertTrue(FileManager.default.fileExists(atPath: autoFile2.path), "User media in Processed Media must not be deleted on session clear")
+
+    // Cleanup test artifacts from Documents
+    try? FileManager.default.removeItem(at: autoFile)
+    try? FileManager.default.removeItem(at: autoFile2)
+  }
+
   private func persistedSession(root: URL, status: IntegrityStatus) throws -> NativeSession {
     let id = UUID(), processingID = UUID()
     let directory = root.appendingPathComponent(id.uuidString, isDirectory: true)

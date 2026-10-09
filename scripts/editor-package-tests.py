@@ -236,6 +236,28 @@ class EditorPackagingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "build-tool table"):
             self.inspect()
 
+    def test_document_sharing_and_file_provider_flags_enabled(self):
+        info_plist_path = package.ROOT / "editor/ios/Runner/Info.plist"
+        with info_plist_path.open("rb") as stream:
+            plist = plistlib.load(stream)
+        self.assertTrue(plist.get("UIFileSharingEnabled"), "UIFileSharingEnabled must be true for Files app visibility")
+        self.assertTrue(plist.get("LSSupportsOpeningDocumentsInPlace"), "LSSupportsOpeningDocumentsInPlace must be true")
+
+    def test_mark_svg_and_brand_theme_color(self):
+        svg_path = package.ROOT / "editor/branding/mark.svg"
+        svg_content = svg_path.read_text(encoding="utf-8")
+        self.assertIn("#9CB5FF", svg_content.upper())
+        self.assertNotIn("#84E4C7", svg_content.upper(), "Legacy green theme must not be in mark.svg")
+
+    def test_native_bridge_and_store_contracts(self):
+        bridge_swift = (package.ROOT / "editor/ios/Runner/NativeMediaBridge.swift").read_text(encoding="utf-8")
+        self.assertIn('case "shareFiles":', bridge_swift)
+        self.assertIn('case "shareFilesBatch":', bridge_swift)
+        store_swift = (package.ROOT / "editor/ios/Runner/NativeSessionStore.swift").read_text(encoding="utf-8")
+        self.assertIn('Processed Media', store_swift)
+        self.assertIn('autoExportFolder', store_swift)
+
 
 if __name__ == "__main__":
     unittest.main()
+

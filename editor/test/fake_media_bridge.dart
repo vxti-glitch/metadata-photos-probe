@@ -47,6 +47,8 @@ MediaSession fixture({
             id: processingId,
             createdAt: DateTime.utc(2026, 10, 8),
             patch: patch,
+            outputDisplayName: 'IMG_4827.${kind.name}',
+            autoExportFolder: 'Processed Media',
             inspection: inspection({
               'make': patch.make,
               'model': patch.model,
@@ -253,6 +255,7 @@ class FakeMediaBridge implements MediaBridge {
         patch: const CameraPatch(make: '', model: ''),
         metadataPatch: patch,
         outputDisplayName: 'IMG_4827.${source.inspection.kind.name}',
+        autoExportFolder: 'Processed Media',
         inspection: MediaInspection(
           kind: source.inspection.kind,
           byteCount: source.inspection.byteCount,
@@ -276,6 +279,30 @@ class FakeMediaBridge implements MediaBridge {
   @override
   Future<bool> exportBatch(List<Map<String, Object?>> items) async {
     exports++;
+    return true;
+  }
+
+  int shares = 0;
+  String? sharedProcessingId;
+  bool? sharedAcknowledgment;
+  List<Map<String, Object?>>? sharedBatchItems;
+
+  @override
+  Future<bool> shareFiles(
+    String sessionId,
+    String processingId,
+    bool acknowledgeIncomplete,
+  ) async {
+    shares++;
+    sharedProcessingId = processingId;
+    sharedAcknowledgment = acknowledgeIncomplete;
+    return true;
+  }
+
+  @override
+  Future<bool> shareBatch(List<Map<String, Object?>> items) async {
+    shares++;
+    sharedBatchItems = items;
     return true;
   }
 
