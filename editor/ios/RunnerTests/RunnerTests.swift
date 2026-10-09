@@ -490,6 +490,10 @@ class RunnerTests: XCTestCase {
       XCTAssertThrowsError(try NativeSessionStore.validateOutputDisplayName(name))
     }
     XCTAssertNoThrow(try NativeSessionStore.validateOutputDisplayName("IMG_4827.HEIC"))
+    XCTAssertEqual(NativeSessionStore.outputExtension(kind: .jpeg, original: "PNG"), "jpg")
+    XCTAssertEqual(NativeSessionStore.outputExtension(kind: .jpeg, original: "JPEG"), "jpeg")
+    XCTAssertEqual(NativeSessionStore.outputExtension(kind: .png, original: "jpg"), "png")
+    XCTAssertEqual(NativeSessionStore.outputExtension(kind: .mov, original: "mp4"), "mov")
   }
 
   func testReplacingExportedOutputsRemovesRetiredConsumerLinks() async throws {

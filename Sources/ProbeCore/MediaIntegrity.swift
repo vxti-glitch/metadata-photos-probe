@@ -192,7 +192,7 @@ public enum MediaIntegrity {
         if var gps = properties[kCGImagePropertyGPSDictionary as String] as? [String: Any] {
             for key in metadataPatch.targetedKeys { for name in gpsKeys[key] ?? [] { gps.removeValue(forKey: name) } }
             // Introduced GPSVersionID identifies the schema, not capture data.
-            if !metadataPatch.targetedKeys.isDisjoint(with: Set(gpsKeys.keys)) { gps.removeValue(forKey: "Version") }
+            if !metadataPatch.targetedKeys.isDisjoint(with: Set(gpsKeys.keys)) { gps.removeValue(forKey: kCGImagePropertyGPSVersion as String) }
             if gps.isEmpty { properties.removeValue(forKey: kCGImagePropertyGPSDictionary as String) } else { properties[kCGImagePropertyGPSDictionary as String] = gps }
         }
         return canonicalValue(properties)

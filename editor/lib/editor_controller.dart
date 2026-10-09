@@ -458,6 +458,7 @@ class EditorController extends ChangeNotifier {
         queueCompleted++;
         await _persist();
         _emit();
+        if (!ready) break;
       }
       if (!_current(generation)) {
         for (final item in queue) {

@@ -6,6 +6,7 @@ import 'package:metadata_editor/camera_profiles.dart';
 import 'package:metadata_editor/editor_controller.dart';
 import 'package:metadata_editor/media_models.dart';
 import 'package:metadata_editor/metadata_patch.dart';
+import 'package:metadata_editor/metadata_dates.dart';
 
 import 'fake_media_bridge.dart';
 
@@ -336,4 +337,62 @@ void main() {
       editor.dispose();
     },
   );
+  test('automatic dates off generates no date writes; explicit manual override remains', () async {
+    final profile = (await loadCameraProfiles()).first;
+    final camera = profile.cameras.first;
+    const original = RandomizationSettings();
+    final off = original.withAutomaticDates(false);
+    for (final kind in [
+      MediaKind.jpeg,
+      MediaKind.heic,
+      MediaKind.mp4,
+      MediaKind.mov,
+    ]) {
+      final generated = off.generate(
+        profile,
+        camera,
+        kind,
+        Random(1),
+        DateTime.utc(2026, 10, 8),
+      );
+      expect(
+        generated.values.keys.any(
+          (key) =>
+              key.toLowerCase().contains('date') ||
+              key.startsWith('offsetTime'),
+        ),
+        isFalse,
+      );
+      final date = kind.isImage
+          ? '2024:03:05 10:15:00'
+          : '2024-03-05T10:15:00Z';
+      final recipe = ProfileRecipe(
+        profile.id,
+        camera.id,
+        off,
+        overrides: MetadataPatch(values: {'dateTimeOriginal': date}),
+      );
+      expect(
+        applyRecipeOverrides(generated, recipe).values['dateTimeOriginal'],
+        date,
+      );
+    }
+  });
+  test('manual calendar selection writes coherent wall time/offset or video UTC dates', () {
+    final date = DateTime.utc(2024, 3, 5, 10, 15);
+    final photo = captureDatePatch(date, image: true);
+    expect(photo.values['dateTimeOriginal'], '2024:03:05 10:15:00');
+    expect(photo.values['createDate'], photo.values['dateTimeOriginal']);
+    expect(photo.values['offsetTimeOriginal'], '+00:00');
+    expect(photo.validate(), isNull);
+    final video = captureDatePatch(date, image: false);
+    expect(video.values['movieCreateDate'], '2024-03-05T10:15:00.000Z');
+    expect(video.values['dateTimeOriginal'], video.values['mediaModifyDate']);
+    expect(video.values.keys.any((k) => k.startsWith('offsetTime')), isFalse);
+    expect(MetadataPatch(values: {'fNumber': 0.001}).validate(), isNotNull);
+    expect(
+      MetadataPatch(values: {'imageDirection': 359.9999999}).validate(),
+      isNotNull,
+    );
+  });
 }

@@ -249,7 +249,8 @@ actor NativeSessionStore {
             if let name = prior.outputDisplayName { try? removeExport(name) }
         }
         let processingID = UUID()
-        let outputName = "output-\(processingID.uuidString).\(source.pathExtension)"
+        let outputExtension = Self.outputExtension(kind: original.inspection.kind, original: source.pathExtension)
+        let outputName = "output-\(processingID.uuidString).\(outputExtension)"
         let output = try confinedFile(sessionID, name: outputName)
         var committed = false
         defer { if !committed { try? removeFile(sessionID, name: outputName) } }
@@ -262,7 +263,7 @@ actor NativeSessionStore {
         guard try WholeFileDigest.sha256(source) == original.sourceSHA256,
               result.integrity.status != .mismatch else { throw NativeMediaError.processing }
         let processing = NativeProcessing(id: processingID, createdAt: Date(), patch: cameraPatch,
-            metadataPatch: metadataPatch, outputDisplayName: try nextOutputDisplayName(extension: source.pathExtension),
+            metadataPatch: metadataPatch, outputDisplayName: try nextOutputDisplayName(extension: outputExtension),
             outputName: outputName, outputInspection: result.outputInspection, integrity: result.integrity,
             outputSHA256: try WholeFileDigest.sha256(output))
         try FileManager.default.setAttributes([.posixPermissions: 0o400], ofItemAtPath: output.path)
@@ -348,7 +349,7 @@ actor NativeSessionStore {
         let name: String
         if let saved = output.outputDisplayName { name = saved }
         else {
-            name = try nextOutputDisplayName(extension: source.pathExtension)
+            name = try nextOutputDisplayName(extension: Self.outputExtension(kind: output.outputInspection.kind, original: source.pathExtension))
             guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else { throw NativeMediaError.notFound }
             var replacement = sessions; replacement[index].processing?.outputDisplayName = name
             try persist(replacement)
@@ -480,6 +481,17 @@ actor NativeSessionStore {
     static func validateOutputDisplayName(_ name: String) throws {
         guard name.range(of: "^IMG_[0-9]{4}\\.(JPG|JPEG|HEIC|HEIF|PNG|MP4|MOV)$", options: .regularExpression) != nil else {
             throw NativeMediaError.storage
+        }
+    }
+
+    static func outputExtension(kind: MediaKind, original: String) -> String {
+        let original = original.lowercased()
+        switch kind {
+        case .jpeg: return ["jpg", "jpeg"].contains(original) ? original : "jpg"
+        case .heic: return ["heic", "heif"].contains(original) ? original : "heic"
+        case .png: return "png"
+        case .mp4: return "mp4"
+        case .mov: return "mov"
         }
     }
 

@@ -324,7 +324,22 @@ final class ProbeCoreTests: XCTestCase {
             let result = try await MetadataEngine.processMetadataPatch(source: source, output: output, patch: MetadataPatch(values: allValues))
             XCTAssertTrue(result.integrity.checks.contains { $0.name.contains("compressed data") && $0.status == .passed })
             let removal = MetadataPatch(removals: ["lensModel", "latitude", "longitude", "altitude", "software", "trackCreateDate"])
-            let deleted = try await MetadataEngine.processMetadataPatch(source: output, output: removed, patch: removal)
+            let deleted: ProcessingResult
+            do { deleted = try await MetadataEngine.processMetadataPatch(source: output, output: removed, patch: removal) }
+            catch {
+                // Generated fixture only: identify the exact failing layer without
+                // weakening production gates or logging user media/properties.
+                let diagnostic = folder.appendingPathComponent("removal-diagnostic.\(kind.rawValue)")
+                var stage = "writer"
+                do {
+                    _ = try await VideoMetadataWriter.write(source: output, output: diagnostic, patch: removal)
+                    stage = "container readback"; print("Synthetic removed fields: \(try VideoMetadataWriter.inspect(diagnostic))")
+                    stage = "Apple inspection"; let inspection = try await MetadataEngine.inspect(diagnostic)
+                    stage = "target readback"; try removal.validateReadback(inspection)
+                    stage = "integrity"; print("Synthetic removal checks: \(try await MediaIntegrity.compareMetadata(source: output, output: diagnostic, patch: removal).checks)")
+                } catch { print("Synthetic removal failed stage \(stage): \(error)") }
+                throw error
+            }
             for key in removal.removals { XCTAssertNil(deleted.outputInspection.metadata[key]) }
             XCTAssertEqual(deleted.outputInspection.metadata["model"], "iPhone 15 Pro Max")
         }

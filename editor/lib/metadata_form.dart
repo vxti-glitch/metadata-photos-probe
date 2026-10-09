@@ -6,6 +6,7 @@ import 'camera_profiles.dart';
 import 'editor_controller.dart';
 import 'media_models.dart';
 import 'metadata_patch.dart';
+import 'metadata_dates.dart';
 
 /// Editors keep a separate explicit intent for every field. Empty text never
 /// silently deletes metadata; removal is a deliberate operation.
@@ -34,6 +35,7 @@ class _MetadataFormState extends State<MetadataForm> {
   RandomizationSettings settings = const RandomizationSettings();
   String? formError;
   MetadataPatch? profileBaseline;
+  final explicitOverrides = <String>{};
   @override
   void initState() {
     super.initState();
@@ -74,6 +76,7 @@ class _MetadataFormState extends State<MetadataForm> {
     bool fromProfile = false,
   }) {
     profileBaseline = fromProfile ? patch : null;
+    explicitOverrides.clear();
     for (final key in inputs.keys) {
       if (patch.values.containsKey(key)) {
         inputs[key]!.text = patch.values[key].toString();
@@ -82,6 +85,12 @@ class _MetadataFormState extends State<MetadataForm> {
         modes[key] = 'remove';
       } else {
         modes[key] = 'keep';
+        inputs[key]!.text =
+            widget.session.inspection.metadata[key] ??
+            (key == 'lensModel'
+                ? widget.session.inspection.metadata['lens']
+                : null) ??
+            '';
       }
     }
     if (notify) setState(() {});
@@ -130,6 +139,124 @@ class _MetadataFormState extends State<MetadataForm> {
       }
     }
     return MetadataPatch(values: patch.values, removals: removals);
+  }
+
+  void _settingsChanged(RandomizationSettings next) {
+    try {
+      final previousRecipe = profileBaseline == null
+          ? null
+          : _currentRecipe(_patch());
+      final oldSettings = settings;
+      settings = next;
+      try {
+        if (previousRecipe != null) {
+          final generated = _profilePatch(widget.session);
+          final merged = applyRecipeOverrides(
+            generated,
+            previousRecipe,
+            supportedFields: supported,
+          );
+          _apply(merged, notify: false, fromProfile: true);
+          profileBaseline = generated;
+          explicitOverrides.addAll(
+            previousRecipe.overrides?.values.keys ?? <String>[],
+          );
+          explicitOverrides.addAll(
+            previousRecipe.overrides?.removals ?? <String>{},
+          );
+        }
+      } catch (_) {
+        settings = oldSettings;
+        rethrow;
+      }
+      setState(() => formError = null);
+    } on FormatException catch (e) {
+      setState(() => formError = e.message);
+    }
+  }
+
+  Widget _automaticDates() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      CheckboxListTile(
+        key: const Key('automaticDates'),
+        contentPadding: EdgeInsets.zero,
+        controlAffinity: ListTileControlAffinity.leading,
+        value: settings.randomizeDates,
+        onChanged: widget.controller.busy
+            ? null
+            : (enabled) => _settingsChanged(
+                settings.withAutomaticDates(enabled ?? false),
+              ),
+        title: const Text('Randomize date & time'),
+        subtitle: const Text(
+          'Off keeps original dates unless you set them manually.',
+        ),
+      ),
+      if (!settings.randomizeDates)
+        OutlinedButton.icon(
+          key: const Key('setCaptureDate'),
+          onPressed: widget.controller.busy ? null : _pickCaptureDate,
+          icon: const Icon(Icons.event_outlined),
+          label: const Text('Set date & time'),
+        ),
+    ],
+  );
+  Future<void> _pickCaptureDate() async {
+    final text = inputs['dateTimeOriginal']!.text;
+    final exif = RegExp(r'^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})$')
+        .firstMatch(text);
+    final parsed = exif == null
+        ? DateTime.tryParse(text)
+        : DateTime(
+            int.parse(exif.group(1)!),
+            int.parse(exif.group(2)!),
+            int.parse(exif.group(3)!),
+            int.parse(exif.group(4)!),
+            int.parse(exif.group(5)!),
+            int.parse(exif.group(6)!),
+          );
+    final initial = parsed?.toLocal() ?? DateTime.now();
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initial.year >= 1900 && initial.year <= 2100
+          ? initial
+          : DateTime.now(),
+      firstDate: DateTime(1900),
+      lastDate: DateTime(2100, 12, 31),
+    );
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (time == null || !mounted) return;
+    final selection = DateTime(
+      date.year,
+      date.month,
+      date.day,
+      time.hour,
+      time.minute,
+    );
+    final patch = captureDatePatch(
+      selection,
+      image: widget.session.inspection.kind.isImage,
+    );
+    setState(() {
+      for (final e in patch.values.entries) {
+        if (!supported.contains(e.key)) continue;
+        // A timezone explicitly entered in the manual editor takes precedence.
+        if (e.key.startsWith('offsetTime') &&
+            modes[e.key] == 'set' &&
+            inputs[e.key]!.text != profileBaseline?.values[e.key]?.toString()) {
+          continue;
+        }
+        inputs[e.key]!.text = e.value.toString();
+        modes[e.key] = 'set';
+        explicitOverrides.add(e.key);
+      }
+      formError = null;
+    });
   }
 
   Future<void> _process() async {
@@ -293,6 +420,7 @@ class _MetadataFormState extends State<MetadataForm> {
         ExpansionTile(
           title: const Text('Details'),
           children: [
+            const ListTile(title: Text('Original metadata')),
             for (final e in {
               ...source.inspection.metadata,
               ...source.inspection.structure,
@@ -307,6 +435,36 @@ class _MetadataFormState extends State<MetadataForm> {
               Padding(padding: const EdgeInsets.all(8), child: Text(note)),
             if (output != null) ...[
               const Divider(),
+              const ListTile(title: Text('Requested changes')),
+              for (final e
+                  in (output.metadataPatch?.values ??
+                          <String, Object>{
+                            'make': output.patch.make,
+                            'model': output.patch.model,
+                            if (output.patch.lens != null)
+                              'lensModel': output.patch.lens!,
+                          })
+                      .entries)
+                ListTile(
+                  dense: true,
+                  title: Text('Requested · ${e.key}'),
+                  subtitle: SelectableText(e.value.toString()),
+                ),
+              for (final key in output.metadataPatch?.removals ?? <String>{})
+                ListTile(dense: true, title: Text('Removed · $key')),
+              const ListTile(title: Text('Processed metadata read back')),
+              for (final e in output.inspection.metadata.entries)
+                ListTile(
+                  dense: true,
+                  title: Text('Read back · ${e.key}'),
+                  subtitle: SelectableText(e.value),
+                ),
+              for (final e in output.inspection.structure.entries)
+                ListTile(
+                  dense: true,
+                  title: Text('Processed structure · ${e.key}'),
+                  subtitle: SelectableText(e.value),
+                ),
               for (final check in output.integrity.checks)
                 ListTile(
                   dense: true,
@@ -322,6 +480,20 @@ class _MetadataFormState extends State<MetadataForm> {
                 onPressed: controller.busy ? null : controller.verifyOriginal,
                 child: const Text('Verify downloaded iCloud original'),
               ),
+            ],
+            if (profile != null && camera != null) ...[
+              const ListTile(title: Text('Camera profile evidence')),
+              for (final e in camera!.evidence.entries)
+                ListTile(
+                  dense: true,
+                  title: Text(e.key),
+                  subtitle: Text(e.value),
+                ),
+              for (final url in profile!.sources)
+                Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: SelectableText(url),
+                ),
             ],
           ],
         ),
@@ -425,6 +597,7 @@ class _MetadataFormState extends State<MetadataForm> {
                       },
                 child: const Text('Apply & randomize'),
               ),
+              _automaticDates(),
               TextButton(
                 onPressed: widget.controller.busy
                     ? null
@@ -504,6 +677,7 @@ class _MetadataFormState extends State<MetadataForm> {
             initiallyExpanded: group == 'Camera',
             title: Text(group),
             children: [
+              if (group == 'Dates' || group == 'Video dates') _automaticDates(),
               for (final field in metadataFields.where(
                 (f) => f.group == group && supported.contains(f.key),
               ))
@@ -533,8 +707,10 @@ class _MetadataFormState extends State<MetadataForm> {
                             ],
                             onChanged: widget.controller.busy
                                 ? null
-                                : (mode) =>
-                                      setState(() => modes[field.key] = mode!),
+                                : (mode) => setState(() {
+                                    modes[field.key] = mode!;
+                                    explicitOverrides.add(field.key);
+                                  }),
                           ),
                         ],
                       ),
@@ -544,13 +720,16 @@ class _MetadataFormState extends State<MetadataForm> {
                             field.key == 'lensModel' ? 'lens' : field.key,
                           ),
                           controller: inputs[field.key],
+                          onChanged: (_) => explicitOverrides.add(field.key),
                           enabled: !widget.controller.busy,
                           decoration: InputDecoration(
                             labelText: field.label,
                             hintText:
                                 field.group == 'Dates' &&
                                     !field.key.startsWith('offset')
-                                ? 'YYYY:MM:DD HH:mm:ss'
+                                ? (widget.session.inspection.kind.isImage
+                                      ? 'YYYY:MM:DD HH:mm:ss'
+                                      : 'YYYY-MM-DDTHH:mm:ssZ')
                                 : null,
                           ),
                           keyboardType: field.numeric
@@ -625,6 +804,8 @@ class _MetadataFormState extends State<MetadataForm> {
         fromProfile: true,
       );
       profileBaseline = generated;
+      explicitOverrides.addAll(recipe.overrides?.values.keys ?? <String>[]);
+      explicitOverrides.addAll(recipe.overrides?.removals ?? <String>{});
     } on FormatException catch (e) {
       if (mounted) setState(() => formError = e.message);
     }
@@ -637,7 +818,10 @@ class _MetadataFormState extends State<MetadataForm> {
     final removed = <String>{};
     final keep = <String>{};
     for (final e in patch.values.entries) {
-      if (baseline.values[e.key] != e.value) overrides[e.key] = e.value;
+      if (baseline.values[e.key] != e.value ||
+          explicitOverrides.contains(e.key)) {
+        overrides[e.key] = e.value;
+      }
     }
     for (final key in patch.removals) {
       if (!baseline.removals.contains(key)) removed.add(key);
@@ -847,6 +1031,6 @@ class _MetadataFormState extends State<MetadataForm> {
     for (final c in [isoMin, isoMax, days, shutters, lat, lon, alt, radius]) {
       c.dispose();
     }
-    if (result != null && mounted) setState(() => settings = result);
+    if (result != null && mounted) _settingsChanged(result);
   }
 }

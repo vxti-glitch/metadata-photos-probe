@@ -144,6 +144,8 @@ class RandomizationSettings {
     return null;
   }
 
+  RandomizationSettings withAutomaticDates(bool enabled) =>
+      RandomizationSettings.decode({...toMap(), 'randomizeDates': enabled});
   Map<String, Object?> toMap() => {
     'isoMin': isoMin,
     'isoMax': isoMax,
@@ -293,7 +295,12 @@ class RandomizationSettings {
       if (altitude != null) {
         values['altitude'] = altitude! + (random.nextDouble() * 10 - 5);
       }
-      if (kind.isImage) values['imageDirection'] = random.nextDouble() * 360;
+      if (kind.isImage) {
+        values['imageDirection'] = (random.nextDouble() * 360).clamp(
+          0.0,
+          359.999999,
+        );
+      }
     }
     if (supportedFields != null) {
       values.removeWhere((key, value) => !supportedFields.contains(key));
@@ -384,4 +391,31 @@ class ProfileRecipe {
       keepFields: keep,
     );
   }
+}
+
+MetadataPatch applyRecipeOverrides(
+  MetadataPatch generated,
+  ProfileRecipe recipe, {
+  Set<String>? supportedFields,
+}) {
+  final values = {...generated.values};
+  final removals = {...generated.removals};
+  for (final key in recipe.keepFields) {
+    values.remove(key);
+    removals.remove(key);
+  }
+  for (final e
+      in recipe.overrides?.values.entries ?? <MapEntry<String, Object>>[]) {
+    if (supportedFields == null || supportedFields.contains(e.key)) {
+      values[e.key] = e.value;
+      removals.remove(e.key);
+    }
+  }
+  for (final key in recipe.overrides?.removals ?? <String>{}) {
+    if (supportedFields == null || supportedFields.contains(key)) {
+      values.remove(key);
+      removals.add(key);
+    }
+  }
+  return MetadataPatch(values: values, removals: removals);
 }

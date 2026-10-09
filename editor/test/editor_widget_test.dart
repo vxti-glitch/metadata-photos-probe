@@ -126,6 +126,102 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  Future<void> chooseProfile(WidgetTester tester) async {
+    final brand = find.byKey(const Key('profileBrand'));
+    await tester.ensureVisible(brand);
+    await tester.tap(brand);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Apple').last);
+    await tester.pumpAndSettle();
+    final model = find.byKey(const ValueKey('model-Apple'));
+    final profile = (await loadCameraProfiles()).firstWhere(
+      (p) => p.model == 'iPhone 15 Pro Max',
+    );
+    tester.widget<DropdownButtonFormField<String>>(model).onChanged!(
+      profile.id,
+    );
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+    'turning automatic dates off after applying profile removes random date writes',
+    (tester) async {
+      final bridge = FakeMediaBridge();
+      await launch(tester, bridge);
+      await tap(tester, 'importFiles');
+      await chooseProfile(tester);
+      await tap(tester, 'automaticDates');
+      await tap(tester, 'process');
+      final patch = bridge.sessions.single.processing!.metadataPatch!;
+      expect(
+        patch.values.keys.any(
+          (k) => k.toLowerCase().contains('date') || k.startsWith('offsetTime'),
+        ),
+        isFalse,
+      );
+      expect(
+        patch.removals.any((k) => k.toLowerCase().contains('date')),
+        isFalse,
+      );
+    },
+  );
+  testWidgets('automatic dates off retains explicitly entered capture date', (
+    tester,
+  ) async {
+    final bridge = FakeMediaBridge();
+    await launch(tester, bridge);
+    await tap(tester, 'importFiles');
+    await chooseProfile(tester);
+    await tester.tap(find.text('Edit').first);
+    await tester.pumpAndSettle();
+    final dates = find.text('Dates');
+    await tester.ensureVisible(dates);
+    await tester.tap(dates);
+    await tester.pumpAndSettle();
+    final field = find.byKey(const Key('dateTimeOriginal'));
+    await tester.ensureVisible(field);
+    await tester.enterText(field, '2024:03:05 10:15:00');
+    final checkbox = find.byKey(const Key('automaticDates')).first;
+    await tester.ensureVisible(checkbox);
+    await tester.tap(checkbox);
+    await tester.pumpAndSettle();
+    await tap(tester, 'process');
+    final patch = bridge.sessions.single.processing!.metadataPatch!;
+    expect(patch.values['dateTimeOriginal'], '2024:03:05 10:15:00');
+    expect(patch.values.containsKey('createDate'), isFalse);
+  });
+  testWidgets(
+    'manual date and time picker changes capture metadata and Details shows processed readback',
+    (tester) async {
+      final bridge = FakeMediaBridge();
+      await launch(tester, bridge);
+      await tap(tester, 'importFiles');
+      await chooseProfile(tester);
+      await tap(tester, 'automaticDates');
+      await tap(tester, 'setCaptureDate');
+      expect(find.byType(DatePickerDialog), findsOneWidget);
+      await tester.tap(find.text('OK').last);
+      await tester.pumpAndSettle();
+      expect(find.byType(TimePickerDialog), findsOneWidget);
+      await tester.tap(find.text('OK').last);
+      await tester.pumpAndSettle();
+      await tap(tester, 'process');
+      final patch = bridge.sessions.single.processing!.metadataPatch!;
+      expect(patch.values['dateTimeOriginal'], isNotNull);
+      expect(patch.values['dateTimeOriginal'], patch.values['createDate']);
+      await tester.ensureVisible(find.text('Details'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Details'));
+      await tester.pumpAndSettle();
+      expect(find.text('Original metadata'), findsOneWidget);
+      expect(find.text('Processed metadata read back'), findsOneWidget);
+      expect(find.text('Read back · iso'), findsOneWidget);
+      expect(find.text('Read back · dateTimeOriginal'), findsOneWidget);
+      expect(find.text('Camera profile evidence'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
   testWidgets('permission error is visible and import remains retryable', (
     tester,
   ) async {
