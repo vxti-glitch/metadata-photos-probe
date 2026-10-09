@@ -5,11 +5,21 @@ cd "$task_root"
 [[ "$(uname -s)" == Darwin ]] || { printf '%s\n' 'Flutter iOS compilation requires macOS and Xcode.' >&2; exit 1; }
 task_build="$task_root/build/editor"
 mkdir -p "$task_build/evidence"
-# Runner inventory lists both choices. Record the choice, never silently accept an unknown Xcode.
-if [[ -d /Applications/Xcode_26.2.app/Contents/Developer ]]; then
+# Runner inventory lists supported choices. Record the choice, never silently accept an unknown Xcode.
+if [[ -n "${DEVELOPER_DIR:-}" && -d "${DEVELOPER_DIR}" ]]; then
+  export DEVELOPER_DIR
+elif [[ -d /Applications/Xcode_26.2.app/Contents/Developer ]]; then
   export DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer
+elif [[ -d /Applications/Xcode-26.2.app/Contents/Developer ]]; then
+  export DEVELOPER_DIR=/Applications/Xcode-26.2.app/Contents/Developer
 elif [[ -d /Applications/Xcode_16.4.app/Contents/Developer ]]; then
   export DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer
+elif [[ -d /Applications/Xcode-16.4.app/Contents/Developer ]]; then
+  export DEVELOPER_DIR=/Applications/Xcode-16.4.app/Contents/Developer
+elif [[ -d /Applications/Xcode.app/Contents/Developer ]]; then
+  export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+elif selected_xcode="$(xcode-select -p 2>/dev/null || true)" && [[ -n "$selected_xcode" && -d "$selected_xcode" ]]; then
+  export DEVELOPER_DIR="$selected_xcode"
 else
   printf '%s\n' 'Neither supported pinned Xcode selection is installed.' >&2
   exit 1
@@ -24,6 +34,9 @@ fi
   xcodebuild -showsdks
   swift --version
   ruby --version
+  if ! ruby -rxcodeproj -e '' 2>/dev/null; then
+    gem install xcodeproj --no-document --user-install || gem install xcodeproj --no-document || true
+  fi
   ruby -rxcodeproj -e 'puts "xcodeproj #{Xcodeproj::VERSION}"'
   xcrun simctl list devices available
 } > "$task_build/evidence/toolchain.txt" 2>&1

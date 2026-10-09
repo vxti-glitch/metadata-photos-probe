@@ -252,7 +252,8 @@ def make_manifest(output):
     artifacts = sorted(path for path in output.iterdir() if path.suffix in (".ipa", ".zip"))
     manifest = {
         "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
-        "workflow_run": os.environ.get("GITHUB_RUN_ID"), "artifact_mode": "unsigned; requires independent signing",
+        "workflow_run": os.environ.get("CM_BUILD_ID") or os.environ.get("GITHUB_RUN_ID"),
+        "artifact_mode": "unsigned; requires independent signing",
         "signed_ipa_exported": False, "installation_verified": False, "physical_device_tested": False,
         "simulator_scope": "Native session tests and app launch only; no physical Photos attribution conclusion.",
         "export_workflow": "Files, then user-operated Safari/iCloud Photos upload",

@@ -286,6 +286,30 @@ class EditorPackagingTests(unittest.TestCase):
         self.assertIn("itemHeight: 48.0", form_dart, "Dropdowns must use compact 48px height")
         self.assertIn("Select Camera Model", form_dart, "Searchable model sheet must be present")
 
+    def test_codemagic_ci_configuration(self):
+        cm_path = package.ROOT / "codemagic.yaml"
+        self.assertTrue(cm_path.exists(), "codemagic.yaml must exist at repository root")
+        cm_text = cm_path.read_text(encoding="utf-8")
+        self.assertIn("metadata-editor-ios:", cm_text)
+        self.assertIn("mac_mini_m2", cm_text)
+        self.assertIn("xcode: 16.4", cm_text)
+        self.assertIn("flutter: 3.47.6", cm_text)
+        self.assertIn("bash scripts/build-editor-macos.sh", cm_text)
+        self.assertIn("build/editor/*.ipa", cm_text)
+        self.assertIn("build/editor/evidence/**", cm_text)
+        self.assertIn(".tools/flutter-3.47.6", cm_text)
+        try:
+            import yaml
+            parsed = yaml.safe_load(cm_text)
+            self.assertIn("workflows", parsed)
+            self.assertIn("metadata-editor-ios", parsed["workflows"])
+            wf = parsed["workflows"]["metadata-editor-ios"]
+            self.assertEqual(wf["instance_type"], "mac_mini_m2")
+            self.assertEqual(str(wf["environment"]["xcode"]), "16.4")
+            self.assertEqual(str(wf["environment"]["flutter"]), "3.47.6")
+        except ImportError:
+            pass
+
 
 if __name__ == "__main__":
     unittest.main()
