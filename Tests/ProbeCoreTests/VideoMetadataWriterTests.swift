@@ -80,15 +80,20 @@ final class VideoMetadataWriterTests: XCTestCase {
         XCTAssertTrue(edited.subdata(in: retired.payload).allSatisfy { $0 == 0 })
 
         // Verify csgm atoms are retained intact inside new movie's sample table
-        let newTrak = try XCTUnwrap(boxes(edited.subdata(in: newMovie.payload)).first { $0.type == "trak" })
-        let newMdia = try XCTUnwrap(boxes(edited.subdata(in: newTrak.payload)).first { $0.type == "mdia" })
-        let newMinf = try XCTUnwrap(boxes(edited.subdata(in: newMdia.payload)).first { $0.type == "minf" })
-        let newStbl = try XCTUnwrap(boxes(edited.subdata(in: newMinf.payload)).first { $0.type == "stbl" })
-        let stblChildren = try boxes(edited.subdata(in: newStbl.payload))
+        let moovData = edited.subdata(in: newMovie.payload)
+        let newTrak = try XCTUnwrap(boxes(moovData).first { $0.type == "trak" })
+        let trakData = moovData.subdata(in: newTrak.payload)
+        let newMdia = try XCTUnwrap(boxes(trakData).first { $0.type == "mdia" })
+        let mdiaData = trakData.subdata(in: newMdia.payload)
+        let newMinf = try XCTUnwrap(boxes(mdiaData).first { $0.type == "minf" })
+        let minfData = mdiaData.subdata(in: newMinf.payload)
+        let newStbl = try XCTUnwrap(boxes(minfData).first { $0.type == "stbl" })
+        let stblData = minfData.subdata(in: newStbl.payload)
+        let stblChildren = try boxes(stblData)
         let csgmChildren = stblChildren.filter { $0.type == "csgm" }
         XCTAssertEqual(csgmChildren.count, 2)
-        XCTAssertEqual(edited.subdata(in: csgmChildren[0].payload), word(0) + Data([1, 2, 3, 4]))
-        XCTAssertEqual(edited.subdata(in: csgmChildren[1].payload), word(0) + Data([5, 6, 7, 8]))
+        XCTAssertEqual(stblData.subdata(in: csgmChildren[0].payload), word(0) + Data([1, 2, 3, 4]))
+        XCTAssertEqual(stblData.subdata(in: csgmChildren[1].payload), word(0) + Data([5, 6, 7, 8]))
     }
 
     func testMovieWithUnqualifiedSampleTableAtomIsStrictlyRefused() async throws {
