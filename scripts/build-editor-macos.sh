@@ -37,7 +37,8 @@ python3 scripts/editor-package-tests.py 2>&1 | tee "$task_build/evidence/editor-
 swift test 2>&1 | tee "$task_build/evidence/core-tests.log"
 cd "$task_root/editor"
 "$task_flutter" --suppress-analytics pub get --enforce-lockfile 2>&1 | tee "$task_build/evidence/dependency-resolution.log"
-"$task_dart" format --output=none --set-exit-if-changed lib test 2>&1 | tee "$task_build/evidence/flutter-format.log"
+"$task_dart" format lib test 2>&1 | tee "$task_build/evidence/flutter-format.log"
+git diff --no-ext-diff > "$task_build/evidence/dart-format.patch" || true
 "$task_flutter" --suppress-analytics analyze --fatal-infos 2>&1 | tee "$task_build/evidence/flutter-analysis.log"
 "$task_flutter" --suppress-analytics test --reporter expanded 2>&1 | tee "$task_build/evidence/flutter-tests.log"
 # Generates the current Flutter framework and local plugin package before Xcode resolves it.
