@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -53,6 +54,8 @@ class _MetadataFormState extends State<MetadataForm> {
   String? formError;
   MetadataPatch? profileBaseline;
   final explicitOverrides = <String>{};
+  bool _appliedFeedback = false;
+  Timer? _appliedTimer;
   @override
   void initState() {
     super.initState();
@@ -78,6 +81,7 @@ class _MetadataFormState extends State<MetadataForm> {
 
   @override
   void dispose() {
+    _appliedTimer?.cancel();
     widget.controller.removeListener(_refresh);
     for (final c in inputs.values) {
       c.dispose();
@@ -135,10 +139,18 @@ class _MetadataFormState extends State<MetadataForm> {
     MetadataPatch manual,
     MediaSession source,
   ) {
-    if (!settings.randomizeDates) return manual;
     final fields = widget.controller.capabilities!.fieldsFor(
       source.inspection.kind,
     );
+    if (!settings.randomizeDates) {
+      return MetadataPatch(
+        values: {
+          for (final entry in manual.values.entries)
+            if (fields.contains(entry.key)) entry.key: entry.value,
+        },
+        removals: manual.removals.where((k) => fields.contains(k)).toList(),
+      );
+    }
     final date = DateTime.now().subtract(
       Duration(seconds: random.nextInt(max(1, settings.pastDays * 86400 + 1))),
     );
@@ -162,9 +174,14 @@ class _MetadataFormState extends State<MetadataForm> {
             !(explicitOverrides.contains(entry.key) &&
                 modes[entry.key] == 'keep'))
           entry.key: entry.value,
-      ...manual.values,
+      for (final entry in manual.values.entries)
+        if (fields.contains(entry.key))
+          entry.key: entry.value,
     };
-    return MetadataPatch(values: values, removals: manual.removals);
+    return MetadataPatch(
+      values: values,
+      removals: manual.removals.where((k) => fields.contains(k)).toList(),
+    );
   }
 
   MetadataPatch _profilePatch(MediaSession source) {
@@ -406,7 +423,23 @@ class _MetadataFormState extends State<MetadataForm> {
             patches[source.id] = _standaloneAutomaticDates(itemManual, source);
           }
         }
-        await widget.controller.processBatch(patches);
+        final sanitizedPatches = <String, MetadataPatch>{};
+        for (final entry in patches.entries) {
+          final source = sources.firstWhere((s) => s.id == entry.key);
+          final fields = widget.controller.capabilities!.fieldsFor(
+            source.inspection.kind,
+          );
+          sanitizedPatches[entry.key] = MetadataPatch(
+            values: {
+              for (final v in entry.value.values.entries)
+                if (fields.contains(v.key)) v.key: v.value,
+            },
+            removals: entry.value.removals
+                .where((k) => fields.contains(k))
+                .toList(),
+          );
+        }
+        await widget.controller.processBatch(sanitizedPatches);
       } else {
         final rawManual = _patch(allowEmpty: settings.randomizeDates);
         final kept = explicitOverrides
@@ -465,6 +498,330 @@ class _MetadataFormState extends State<MetadataForm> {
     } on FormatException catch (e) {
       setState(() => formError = e.message);
     }
+  }
+
+  Future<void> _openModelSearchSheet(
+    BuildContext context,
+    List<CameraProfile> availableProfiles,
+  ) async {
+    final searchController = TextEditingController();
+    CameraProfile? selectedProfile;
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: const Color(0xFF191E25),
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        builder: (ctx) => StatefulBuilder(
+          builder: (context, setSheetState) {
+            final query = searchController.text.trim().toLowerCase();
+            final filtered = availableProfiles.where((p) {
+              if (query.isEmpty) return true;
+              return p.model.toLowerCase().contains(query) ||
+                  p.brand.toLowerCase().contains(query);
+            }).toList();
+            return DraggableScrollableSheet(
+              initialChildSize: 0.65,
+              minChildSize: 0.4,
+              maxChildSize: 0.9,
+              expand: false,
+              builder: (context, scrollController) => Padding(
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  12,
+                  16,
+                  16 + MediaQuery.of(context).viewInsets.bottom,
+                ),
+                child: Column(
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        Text(
+                          'Select Model',
+                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          icon: const Icon(Icons.close, size: 20),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: searchController,
+                      autofocus: false,
+                      decoration: InputDecoration(
+                        hintText: 'Search models…',
+                        prefixIcon: const Icon(Icons.search, size: 20),
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                        suffixIcon: searchController.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear, size: 18),
+                                onPressed: () {
+                                  searchController.clear();
+                                  setSheetState(() {});
+                                },
+                              )
+                            : null,
+                      ),
+                      onChanged: (_) => setSheetState(() {}),
+                    ),
+                    const SizedBox(height: 12),
+                    Expanded(
+                      child: filtered.isEmpty
+                          ? const Center(
+                              child: Text(
+                                'No matching models found.',
+                                style: TextStyle(color: Colors.white60),
+                              ),
+                            )
+                          : ListView.separated(
+                              controller: scrollController,
+                              itemCount: filtered.length,
+                              separatorBuilder: (_, __) =>
+                                  const Divider(height: 1),
+                              itemBuilder: (context, index) {
+                                final p = filtered[index];
+                                final isSelected = profile?.id == p.id;
+                                return ListTile(
+                                  dense: true,
+                                  title: Text(
+                                    p.model,
+                                    style: TextStyle(
+                                      fontWeight: isSelected
+                                          ? FontWeight.w700
+                                          : FontWeight.w500,
+                                      color: isSelected
+                                          ? const Color(0xFF9CB5FF)
+                                          : Colors.white,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    '${p.brand} · ${p.cameras.length} camera(s)',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.white60,
+                                    ),
+                                  ),
+                                  trailing: isSelected
+                                      ? const Icon(
+                                          Icons.check,
+                                          color: Color(0xFF9CB5FF),
+                                          size: 20,
+                                        )
+                                      : null,
+                                  onTap: () {
+                                    selectedProfile = p;
+                                    Navigator.pop(context);
+                                  },
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      );
+    } finally {
+      searchController.dispose();
+    }
+    if (selectedProfile != null && mounted) {
+      setState(() {
+        brand = selectedProfile!.brand;
+        profile = selectedProfile;
+        camera = profile!.cameras.first;
+        _appliedFeedback = false;
+        _apply(
+          _profilePatch(widget.session),
+          notify: false,
+          fromProfile: true,
+        );
+      });
+    }
+  }
+
+  Widget _buildProcessingResults(BuildContext context, Processing output) {
+    final controller = widget.controller;
+    final isMismatch = output.integrity.hasMismatch;
+    final needsAck = output.integrity.needsAcknowledgment && !isMismatch;
+    return Container(
+      margin: const EdgeInsets.only(top: 20),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isMismatch ? const Color(0xFF281418) : const Color(0xFF141C28),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isMismatch ? const Color(0xFF5A2530) : const Color(0xFF233658),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(
+                isMismatch
+                    ? Icons.error_outline_rounded
+                    : Icons.check_circle_outline_rounded,
+                color: isMismatch ? Colors.redAccent : const Color(0xFF9CB5FF),
+                size: 22,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  isMismatch
+                      ? 'Integrity Check Failed'
+                      : (output.outputDisplayName ?? 'Processing Succeeded'),
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: isMismatch ? Colors.redAccent : const Color(0xFFE7EDF4),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0E1115),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Output File',
+                      style: TextStyle(color: Colors.white60, fontSize: 12),
+                    ),
+                    Text(
+                      '${output.inspection.kind.label} · ${output.inspection.sizeLabel}',
+                      style: const TextStyle(color: Colors.white60, fontSize: 12),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  output.outputDisplayName ?? 'Processed copy',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                    color: Color(0xFFE7EDF4),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Divider(height: 1, color: Color(0xFF222B38)),
+                const SizedBox(height: 8),
+                const Row(
+                  children: [
+                    Icon(Icons.folder_outlined, size: 16, color: Color(0xFF9CB5FF)),
+                    SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'Saved to: On My iPhone › Metadata Editor › Processed Media',
+                        style: TextStyle(fontSize: 11, color: Color(0xFF9BA6B4)),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          if (isMismatch) ...[
+            const SizedBox(height: 12),
+            const Text(
+              'A preservation check failed. Export blocked.',
+              style: TextStyle(color: Colors.redAccent, fontSize: 13),
+            ),
+          ],
+          if (needsAck) ...[
+            const SizedBox(height: 12),
+            CheckboxListTile(
+              key: const Key('acknowledge'),
+              contentPadding: EdgeInsets.zero,
+              value: controller.acknowledged,
+              onChanged: controller.busy
+                  ? null
+                  : (v) => controller.acknowledge(v ?? false),
+              title: const Text(
+                'I accept the stated preservation limitations',
+                style: TextStyle(fontSize: 13),
+              ),
+              subtitle: Text(
+                output.integrity.limitations.join('\n'),
+                style: const TextStyle(fontSize: 12, color: Colors.white60),
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  key: const Key('exportFiles'),
+                  onPressed: controller.canExport ? controller.exportFiles : null,
+                  icon: const Icon(Icons.folder_shared_outlined, size: 18),
+                  label: const Text('Export to Files'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  key: const Key('shareFiles'),
+                  onPressed: controller.canExport ? controller.shareFiles : null,
+                  icon: const Icon(Icons.ios_share_rounded, size: 18),
+                  label: const Text('Share'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            key: const Key('openICloud'),
+            onPressed: controller.busy ? null : controller.openICloud,
+            icon: const Icon(Icons.cloud_upload_outlined, size: 18),
+            label: const Text('Open iCloud Photos in Safari'),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Upload the exported file in Safari, then let it sync to Photos.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white60, fontSize: 11),
+          ),
+          const SizedBox(height: 14),
+          TextButton.icon(
+            onPressed: controller.busy ? null : () => controller.select(null),
+            icon: const Icon(Icons.add_photo_alternate_outlined, size: 18),
+            label: const Text('Process another file'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -530,48 +887,8 @@ class _MetadataFormState extends State<MetadataForm> {
           icon: const Icon(Icons.auto_fix_high_outlined),
           label: Text(widget.batch ? 'Process selected files' : 'Process'),
         ),
-        if (!widget.batch && output != null) ...[
-          const SizedBox(height: 20),
-          Text(
-            output.outputDisplayName ?? 'Processed copy ready',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          if (output.integrity.hasMismatch)
-            const Text(
-              'A preservation check failed. Export blocked.',
-              style: TextStyle(color: Colors.redAccent),
-            ),
-          if (output.integrity.needsAcknowledgment &&
-              !output.integrity.hasMismatch)
-            CheckboxListTile(
-              key: const Key('acknowledge'),
-              contentPadding: EdgeInsets.zero,
-              value: controller.acknowledged,
-              onChanged: controller.busy
-                  ? null
-                  : (v) => controller.acknowledge(v ?? false),
-              title: const Text('I accept the stated preservation limitations'),
-              subtitle: Text(output.integrity.limitations.join('\n')),
-            ),
-          const SizedBox(height: 12),
-          FilledButton.icon(
-            key: const Key('exportFiles'),
-            onPressed: controller.canExport ? controller.exportFiles : null,
-            icon: const Icon(Icons.ios_share),
-            label: const Text('Export to Files'),
-          ),
-          const SizedBox(height: 8),
-          TextButton(
-            key: const Key('openICloud'),
-            onPressed: controller.busy ? null : controller.openICloud,
-            child: const Text('Open iCloud Photos'),
-          ),
-          const Text(
-            'Upload the exported file in Safari, then let it sync to Photos.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white60, fontSize: 12),
-          ),
-        ],
+        if (!widget.batch && output != null)
+          _buildProcessingResults(context, output),
         const SizedBox(height: 12),
         ExpansionTile(
           title: const Text('Details'),
@@ -676,11 +993,18 @@ class _MetadataFormState extends State<MetadataForm> {
             children: [
               DropdownButtonFormField<String>(
                 isExpanded: true,
+                menuMaxHeight: 220,
+                itemHeight: 48.0,
+                dropdownColor: const Color(0xFF1E242C),
                 key: const Key('profileBrand'),
-                initialValue: brand,
-                decoration: const InputDecoration(labelText: 'Brand'),
+                value: brand,
+                decoration: const InputDecoration(
+                  labelText: 'Brand',
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                ),
                 items: brands
-                    .map((b) => DropdownMenuItem(value: b, child: Text(b)))
+                    .map((b) => DropdownMenuItem(value: b, child: Text(b, style: const TextStyle(fontSize: 14))))
                     .toList(),
                 onChanged: widget.controller.busy
                     ? null
@@ -688,19 +1012,46 @@ class _MetadataFormState extends State<MetadataForm> {
                         brand = value;
                         profile = null;
                         camera = null;
+                        _appliedFeedback = false;
                       }),
               ),
               const SizedBox(height: 10),
               DropdownButtonFormField<String>(
                 isExpanded: true,
+                menuMaxHeight: 240,
+                itemHeight: 48.0,
+                dropdownColor: const Color(0xFF1E242C),
                 key: ValueKey('model-${brand ?? "none"}'),
-                initialValue: profile?.id,
-                decoration: const InputDecoration(labelText: 'Model'),
+                value: profile?.id,
+                decoration: InputDecoration(
+                  labelText: 'Model',
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  suffixIcon: brand == null
+                      ? null
+                      : IconButton(
+                          tooltip: 'Search models',
+                          icon: const Icon(Icons.search_rounded, size: 20),
+                          onPressed: widget.controller.busy
+                              ? null
+                              : () => _openModelSearchSheet(
+                                    context,
+                                    profiles.where((p) => p.brand == brand).toList(),
+                                  ),
+                        ),
+                ),
                 items: profiles
                     .where((p) => p.brand == brand)
                     .map(
                       (p) =>
-                          DropdownMenuItem(value: p.id, child: Text(p.model)),
+                          DropdownMenuItem(
+                            value: p.id,
+                            child: Text(
+                              p.model,
+                              style: const TextStyle(fontSize: 14),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
                     )
                     .toList(),
                 onChanged: widget.controller.busy
@@ -708,6 +1059,7 @@ class _MetadataFormState extends State<MetadataForm> {
                     : (value) => setState(() {
                         profile = profiles.firstWhere((p) => p.id == value);
                         camera = profile!.cameras.first;
+                        _appliedFeedback = false;
                         _apply(
                           _profilePatch(widget.session),
                           notify: false,
@@ -718,12 +1070,26 @@ class _MetadataFormState extends State<MetadataForm> {
               const SizedBox(height: 10),
               DropdownButtonFormField<String>(
                 isExpanded: true,
+                menuMaxHeight: 200,
+                itemHeight: 48.0,
+                dropdownColor: const Color(0xFF1E242C),
                 key: ValueKey('camera-${profile?.id ?? "none"}'),
-                initialValue: camera?.id,
-                decoration: const InputDecoration(labelText: 'Camera'),
+                value: camera?.id,
+                decoration: const InputDecoration(
+                  labelText: 'Camera',
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                ),
                 items: (profile?.cameras ?? <ProfileCamera>[])
                     .map(
-                      (c) => DropdownMenuItem(value: c.id, child: Text(c.name)),
+                      (c) => DropdownMenuItem(
+                        value: c.id,
+                        child: Text(
+                          c.name,
+                          style: const TextStyle(fontSize: 14),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                     )
                     .toList(),
                 onChanged: widget.controller.busy
@@ -732,6 +1098,7 @@ class _MetadataFormState extends State<MetadataForm> {
                         camera = profile!.cameras.firstWhere(
                           (c) => c.id == value,
                         );
+                        _appliedFeedback = false;
                         _apply(
                           _profilePatch(widget.session),
                           notify: false,
@@ -740,18 +1107,52 @@ class _MetadataFormState extends State<MetadataForm> {
                       }),
               ),
               const SizedBox(height: 10),
-              FilledButton.tonal(
+              FilledButton(
                 key: const Key('applyProfile'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: _appliedFeedback
+                      ? const Color(0xFF233658)
+                      : const Color(0xFF243044),
+                  foregroundColor: _appliedFeedback
+                      ? const Color(0xFF9CB5FF)
+                      : const Color(0xFFDCE6F8),
+                ),
                 onPressed:
                     profile == null || camera == null || widget.controller.busy
                     ? null
                     : () {
-                        _apply(
-                          _profilePatch(widget.session),
-                          fromProfile: true,
-                        );
+                        try {
+                          _apply(
+                            _profilePatch(widget.session),
+                            fromProfile: true,
+                          );
+                          _appliedTimer?.cancel();
+                          setState(() {
+                            _appliedFeedback = true;
+                            formError = null;
+                          });
+                          _appliedTimer = Timer(const Duration(seconds: 2), () {
+                            if (mounted) setState(() => _appliedFeedback = false);
+                          });
+                        } catch (e) {
+                          _appliedTimer?.cancel();
+                          setState(() {
+                            _appliedFeedback = false;
+                            formError = e is FormatException ? e.message : e.toString();
+                          });
+                        }
                       },
-                child: const Text('Apply & randomize'),
+                child: _appliedFeedback
+                    ? const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.check_circle_rounded, size: 18),
+                          SizedBox(width: 8),
+                          Text('Applied', style: TextStyle(fontWeight: FontWeight.w600)),
+                        ],
+                      )
+                    : const Text('Apply & randomize'),
               ),
               _automaticDates(),
               TextButton(
