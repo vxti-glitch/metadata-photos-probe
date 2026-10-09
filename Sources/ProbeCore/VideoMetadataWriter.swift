@@ -264,7 +264,7 @@ private enum VideoBMFF {
         return (trackCount, chunkCount)
     }
     static func validateSampleTable(_ list: [Atom], references: Int, media: [FileAtom]) throws -> Int {
-        try only(list, ["stsd", "stts", "ctts", "cslg", "stsc", "stsz", "stco", "co64", "stss", "stps", "sdtp", "sgpd", "sbgp", "stdp", "stsh", "padb", "subs", "free"])
+        try only(list, ["stsd", "stts", "ctts", "cslg", "stsc", "stsz", "stco", "co64", "stss", "stps", "sdtp", "sgpd", "sbgp", "csgm", "stdp", "stsh", "padb", "subs", "free"])
         let description = try unique(list, "stsd").payload
         guard try u32(description, 0) == 0, description.count >= 8 else { throw ProbeError.malformed("Invalid stsd") }
         let entries = try atoms(description.subdata(in: 8..<description.count))

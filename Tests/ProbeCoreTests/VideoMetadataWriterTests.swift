@@ -50,6 +50,25 @@ final class VideoMetadataWriterTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: source), bytes)
     }
 
+    func testMovieWithCsgmCompactSampleToGroupBoxesIsAcceptedAndRewritten() async throws {
+        let csgmBoxes = box("csgm", word(0) + Data([1, 2, 3, 4])) + box("csgm", word(0) + Data([5, 6, 7, 8]))
+        let bytes = structuralMovie(sampleTableExtra: csgmBoxes)
+        let source = directory.appendingPathComponent("csgm-source.mov")
+        let output = directory.appendingPathComponent("csgm-output.mov")
+        try bytes.write(to: source)
+        let report = try await VideoMetadataWriter.write(
+            source: source,
+            output: output,
+            patch: MetadataPatch(values: ["make": .string("Apple"), "model": .string("iPhone 15 Pro")])
+        )
+        XCTAssertEqual(report.validatedTracks, 1)
+        XCTAssertEqual(report.validatedChunks, 1)
+        let edited = try Data(contentsOf: output)
+        let after = try boxes(edited)
+        let newMovie = try XCTUnwrap(after.last { $0.type == "moov" })
+        XCTAssertGreaterThan(newMovie.range.count, 0)
+    }
+
     func testExternalAliasesAndURLsAndUnknownReferenceFlagsAreRefused() async throws {
         for type in ["alis", "url "] {
             try await assertRefused(structuralMovie(referenceType: type, referencePayload: word(0) + Data("external".utf8)))
@@ -303,7 +322,7 @@ final class VideoMetadataWriterTests: XCTestCase {
     private func structuralMovie(referenceType: String = "url ", referencePayload: Data? = nil,
                                  chunkOffset: UInt32 = 32, sampleSize: UInt32 = 4, sampleCount: UInt32 = 1,
                                  userData: Data? = nil, trackUserData: Data? = nil, mediaUserData: Data? = nil,
-                                 mediaHandler: String = "vide") -> Data {
+                                 mediaHandler: String = "vide", sampleTableExtra: Data = Data()) -> Data {
         let ftyp = box("ftyp", Data("qt  ".utf8) + word(0) + Data("qt  ".utf8) + word(0))
         let mdat = box("mdat", Data([1,2,3,4]))
         let dref = box("dref", word(0) + word(1) + box(referenceType, referencePayload ?? word(1)))
@@ -312,7 +331,7 @@ final class VideoMetadataWriterTests: XCTestCase {
         let stsc = box("stsc", word(0) + word(1) + word(1) + word(1) + word(1))
         let stsz = box("stsz", word(0) + word(sampleSize) + word(sampleCount))
         let stco = box("stco", word(0) + word(1) + word(chunkOffset))
-        let stbl = box("stbl", stsd + stsc + stsz + stco)
+        let stbl = box("stbl", stsd + stsc + stsz + stco + sampleTableExtra)
         let minf = box("minf", box("dinf", dref) + stbl)
         // Date headers make the ISO location controls inspectable by the bounded
         // metadata reader. These remain structural controls, not playable media.
