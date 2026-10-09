@@ -49,6 +49,7 @@ struct NativeSession: Codable, Sendable {
                 "outputInspection": try NativeJSON.object(processing.outputInspection),
                 "integrity": try NativeJSON.object(processing.integrity)]
             if let name = processing.outputDisplayName { processed["outputDisplayName"] = name }
+            processed["autoExportFolder"] = "On My iPhone/Metadata Editor/Processed Media"
             map["processing"] = processed
         }
         if let previewPath { map["previewPath"] = previewPath }
@@ -262,11 +263,26 @@ actor NativeSessionStore {
         try Self.requireRegularFile(output, maximumBytes: mediaSizeLimit)
         guard try WholeFileDigest.sha256(source) == original.sourceSHA256,
               result.integrity.status != .mismatch else { throw NativeMediaError.processing }
+        let outputDisplayName = try nextOutputDisplayName(extension: outputExtension)
         let processing = NativeProcessing(id: processingID, createdAt: Date(), patch: cameraPatch,
-            metadataPatch: metadataPatch, outputDisplayName: try nextOutputDisplayName(extension: outputExtension),
+            metadataPatch: metadataPatch, outputDisplayName: outputDisplayName,
             outputName: outputName, outputInspection: result.outputInspection, integrity: result.integrity,
             outputSHA256: try WholeFileDigest.sha256(output))
         try FileManager.default.setAttributes([.posixPermissions: 0o400], ofItemAtPath: output.path)
+
+        // Automatically store in user-accessible Documents/Processed Media folder (On My iPhone)
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let autoFolder = documents.appendingPathComponent("Processed Media", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: autoFolder.path) {
+            try? FileManager.default.createDirectory(at: autoFolder, withIntermediateDirectories: true)
+        }
+        let autoTarget = autoFolder.appendingPathComponent(outputDisplayName)
+        if FileManager.default.fileExists(atPath: autoTarget.path) {
+            try? FileManager.default.removeItem(at: autoTarget)
+        }
+        if (try? FileManager.default.linkItem(at: output, to: autoTarget)) == nil {
+            try? FileManager.default.copyItem(at: output, to: autoTarget)
+        }
         // Actor reentrancy does not permit replacement work: the bridge gate
         // remains held throughout the await. Verify the session still exists.
         guard let finalIndex = sessions.firstIndex(where: { $0.id == sessionID }), sessions[finalIndex].processing == nil else {
@@ -469,6 +485,11 @@ actor NativeSessionStore {
         let names = try FileManager.default.contentsOfDirectory(atPath: folder.path)
         guard names.count <= 1200 else { throw NativeMediaError.storage }
         used.formUnion(names)
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let autoFolder = documents.appendingPathComponent("Processed Media", isDirectory: true)
+        if let autoNames = try? FileManager.default.contentsOfDirectory(atPath: autoFolder.path) {
+            used.formUnion(autoNames)
+        }
         let start = Int.random(in: 1000...9999)
         for offset in 0..<9000 {
             let digits = 1000 + (start - 1000 + offset) % 9000

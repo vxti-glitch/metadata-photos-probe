@@ -23,6 +23,12 @@ abstract interface class MediaBridge {
   Future<BatchImport> importBatch({required bool photos});
   Future<MediaSession> processMetadata(String sessionId, MetadataPatch patch);
   Future<bool> exportBatch(List<Map<String, Object?>> items);
+  Future<bool> shareFiles(
+    String sessionId,
+    String processingId,
+    bool acknowledgeIncomplete,
+  );
+  Future<bool> shareBatch(List<Map<String, Object?>> items);
   Future<Map<String, Object?>?> importPreset();
   Future<bool> exportPreset(Map<String, Object?> preset);
   Future<Map<String, Object?>?> verifyOriginal(
@@ -135,6 +141,29 @@ class NativeMediaBridge implements MediaBridge {
   Future<bool> exportBatch(List<Map<String, Object?>> items) async =>
       objectMap(
         await _channel.invokeMethod<Object?>('exportFilesBatch', {
+          'items': items,
+        }),
+      )['completed'] ==
+      true;
+  @override
+  Future<bool> shareFiles(
+    String sessionId,
+    String processingId,
+    bool acknowledgeIncomplete,
+  ) async {
+    final result = objectMap(
+      await _channel.invokeMethod<Object?>('shareFiles', {
+        'sessionId': sessionId,
+        'processingId': processingId,
+        'acknowledgeIncomplete': acknowledgeIncomplete,
+      }),
+    );
+    return result['completed'] == true;
+  }
+  @override
+  Future<bool> shareBatch(List<Map<String, Object?>> items) async =>
+      objectMap(
+        await _channel.invokeMethod<Object?>('shareFilesBatch', {
           'items': items,
         }),
       )['completed'] ==

@@ -148,6 +148,46 @@ final class NativeMediaBridge: NSObject {
                         try presentExport(urls: urls, token: token); task = nil
                     } catch { finish(token, value: Self.flutterError(error)) }
                 }
+            case "shareFiles":
+                let arguments = try Self.arguments(call.arguments)
+                let id = try Self.identifier(arguments, "sessionId")
+                let processingID = try Self.identifier(arguments, "processingId")
+                guard let raw = arguments["acknowledgeIncomplete"] as? NSNumber,
+                      CFGetTypeID(raw) == CFBooleanGetTypeID() else { throw NativeMediaError.invalidArgument }
+                let acknowledgement = raw.boolValue
+                let token = try start(result)
+                task = Task {
+                    do {
+                        let url = try await store.exportCopyURL(sessionID: id, processingID: processingID, acknowledgeIncomplete: acknowledgement)
+                        try Task.checkCancellation()
+                        guard gate.isCurrent(token), !gate.canceled else { throw NativeMediaError.canceled }
+                        try presentShare(urls: [url], token: token)
+                        task = nil
+                    } catch { finish(token, value: Self.flutterError(error)) }
+                }
+            case "shareFilesBatch":
+                let arguments = try Self.arguments(call.arguments)
+                guard let items = arguments["items"] as? [[String: Any]], !items.isEmpty, items.count <= 100 else { throw NativeMediaError.invalidArgument }
+                let parsed = try items.map { item -> (UUID, UUID, Bool) in
+                    let id = try Self.identifier(item, "sessionId"), output = try Self.identifier(item, "processingId")
+                    guard let raw = item["acknowledgeIncomplete"] as? NSNumber,
+                          CFGetTypeID(raw) == CFBooleanGetTypeID() else { throw NativeMediaError.invalidArgument }
+                    return (id, output, raw.boolValue)
+                }
+                guard Set(parsed.map { $0.0 }).count == parsed.count else { throw NativeMediaError.invalidArgument }
+                let token = try start(result)
+                task = Task {
+                    do {
+                        var urls: [URL] = []
+                        for (id, output, acknowledgment) in parsed {
+                            try Task.checkCancellation()
+                            urls.append(try await store.exportCopyURL(sessionID: id, processingID: output, acknowledgeIncomplete: acknowledgment))
+                        }
+                        try Task.checkCancellation()
+                        guard gate.isCurrent(token), !gate.canceled else { throw NativeMediaError.canceled }
+                        try presentShare(urls: urls, token: token); task = nil
+                    } catch { finish(token, value: Self.flutterError(error)) }
+                }
             case "cancel":
                 gate.requestCancellation(); task?.cancel()
                 // Dismiss only a waiting picker. Once extraction/processing is
@@ -324,6 +364,22 @@ final class NativeMediaBridge: NSObject {
         picker.delegate = delegate; pickerDelegate = delegate; presentedPicker = picker
         controller.present(picker, animated: true)
         picker.presentationController?.delegate = delegate
+    }
+
+    private func presentShare(urls: [URL], token: UUID) throws {
+        let controller = try presenter()
+        let activity = UIActivityViewController(activityItems: urls, applicationActivities: nil)
+        if let popover = activity.popoverPresentationController {
+            popover.sourceView = controller.view
+            popover.sourceRect = CGRect(x: controller.view.bounds.midX, y: controller.view.bounds.midY, width: 0, height: 0)
+            popover.permittedArrowDirections = []
+        }
+        activity.completionWithItemsHandler = { [weak self] _, completed, _, _ in
+            guard let self, self.gate.isCurrent(token) else { return }
+            self.finish(token, value: ["completed": completed])
+        }
+        presentedPicker = activity
+        controller.present(activity, animated: true)
     }
 
     static func arguments(_ value: Any?) throws -> [String: Any] {

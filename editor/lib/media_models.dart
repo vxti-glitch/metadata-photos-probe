@@ -191,12 +191,14 @@ class Processing {
     required this.integrity,
     this.metadataPatch,
     this.outputDisplayName,
+    this.autoExportFolder,
   });
   final String id;
   final DateTime createdAt;
   final CameraPatch patch;
   final MetadataPatch? metadataPatch;
   final String? outputDisplayName;
+  final String? autoExportFolder;
   final MediaInspection inspection;
   final IntegrityReport integrity;
   factory Processing.decode(Object? data) {
@@ -222,6 +224,7 @@ class Processing {
       ),
       metadataPatch: fullPatch,
       outputDisplayName: value['outputDisplayName'] as String?,
+      autoExportFolder: value['autoExportFolder'] as String?,
       inspection: MediaInspection.decode(value['outputInspection']),
       integrity: IntegrityReport.decode(value['integrity']),
     );
