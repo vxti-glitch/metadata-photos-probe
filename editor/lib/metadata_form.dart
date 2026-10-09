@@ -8,6 +8,23 @@ import 'media_models.dart';
 import 'metadata_patch.dart';
 import 'metadata_dates.dart';
 
+/// Caller-owned text controllers must outlive the dialog's exit animation.
+/// Navigator.pop completes the push future before its overlay is unmounted.
+Future<T?> _ownedControllerDialog<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+}) async {
+  final navigator = Navigator.of(context, rootNavigator: true);
+  final route = DialogRoute<T>(
+    context: context,
+    builder: builder,
+    themes: InheritedTheme.capture(from: context, to: navigator.context),
+  );
+  final result = await navigator.push<T>(route);
+  await route.completed;
+  return result;
+}
+
 /// Editors keep a separate explicit intent for every field. Empty text never
 /// silently deletes metadata; removal is a deliberate operation.
 class MetadataForm extends StatefulWidget {
@@ -125,10 +142,19 @@ class _MetadataFormState extends State<MetadataForm> {
     final date = DateTime.now().subtract(
       Duration(seconds: random.nextInt(max(1, settings.pastDays * 86400 + 1))),
     );
-    final generated = captureDatePatch(
+    final rawGenerated = captureDatePatch(
       date,
       image: source.inspection.kind.isImage,
     );
+    final kept = explicitOverrides.where((key) => modes[key] == 'keep').toSet();
+    final generated = source.inspection.kind.isImage
+        ? randomDatesWithKeptZones(
+            rawGenerated,
+            keepFields: kept,
+            destinationMetadata: source.inspection.metadata,
+            fixedDates: {...manual.values.keys, ...kept},
+          )
+        : rawGenerated;
     final values = <String, Object>{
       for (final entry in generated.values.entries)
         if (fields.contains(entry.key) &&
@@ -192,6 +218,7 @@ class _MetadataFormState extends State<MetadataForm> {
           explicitOverrides.addAll(
             previousRecipe.overrides?.removals ?? <String>{},
           );
+          explicitOverrides.addAll(previousRecipe.keepFields);
         }
       } catch (_) {
         settings = oldSettings;
@@ -305,8 +332,44 @@ class _MetadataFormState extends State<MetadataForm> {
         );
         final patches = <String, MetadataPatch>{};
         for (final source in sources) {
+          final itemManual = datesForMedia(
+            manual,
+            image: source.inspection.kind.isImage,
+            keptOffsets: source.inspection.kind.isImage
+                ? source.inspection.metadata
+                : widget.session.inspection.metadata,
+            keepFields: explicitOverrides
+                .where((key) => modes[key] == 'keep')
+                .toSet(),
+          );
           if (profile != null && camera != null && profileBaseline != null) {
-            final generated = _profilePatch(source);
+            final kept = explicitOverrides
+                .where((key) => modes[key] == 'keep')
+                .toSet();
+            final fixedDates = sharedDateOffsets.keys
+                .where(
+                  (key) =>
+                      manual.values.containsKey(key) &&
+                      (explicitOverrides.contains(key) ||
+                          manual.values[key] != profileBaseline!.values[key]),
+                )
+                .toSet();
+            final rawGenerated = _profilePatch(source);
+            final generated = source.inspection.kind.isImage
+                ? randomDatesWithKeptZones(
+                    rawGenerated,
+                    keepFields: kept,
+                    destinationMetadata: source.inspection.metadata,
+                    fixedDates: fixedDates,
+                  )
+                : rawGenerated;
+            final dateOverride =
+                {...sharedDateOffsets.keys, ...sharedDateOffsets.values}.any(
+                  (key) =>
+                      manual.values.containsKey(key) &&
+                      (explicitOverrides.contains(key) ||
+                          manual.values[key] != profileBaseline!.values[key]),
+                );
             // Manual overrides after choosing a profile are retained; newly
             // randomized small values remain independent for each batch item.
             final values = {...generated.values};
@@ -317,15 +380,18 @@ class _MetadataFormState extends State<MetadataForm> {
             for (final key in fields) {
               final intent = modes[key];
               if (intent == 'keep' &&
-                  (profileBaseline!.values.containsKey(key) ||
+                  (explicitOverrides.contains(key) ||
+                      profileBaseline!.values.containsKey(key) ||
                       profileBaseline!.removals.contains(key))) {
                 values.remove(key);
                 removals.remove(key);
-              } else if (intent == 'set' &&
-                  manual.values.containsKey(key) &&
-                  (explicitOverrides.contains(key) ||
-                      manual.values[key] != profileBaseline!.values[key])) {
-                values[key] = manual.values[key]!;
+              } else if (itemManual.values.containsKey(key) &&
+                  ((intent == 'set' &&
+                          (explicitOverrides.contains(key) ||
+                              manual.values[key] !=
+                                  profileBaseline!.values[key])) ||
+                      (dateOverride && !manual.values.containsKey(key)))) {
+                values[key] = itemManual.values[key]!;
                 removals.remove(key);
               } else if (intent == 'remove') {
                 values.remove(key);
@@ -337,12 +403,58 @@ class _MetadataFormState extends State<MetadataForm> {
               removals: removals,
             );
           } else {
-            patches[source.id] = _standaloneAutomaticDates(manual, source);
+            patches[source.id] = _standaloneAutomaticDates(itemManual, source);
           }
         }
         await widget.controller.processBatch(patches);
       } else {
-        final manual = _patch(allowEmpty: settings.randomizeDates);
+        final rawManual = _patch(allowEmpty: settings.randomizeDates);
+        final kept = explicitOverrides
+            .where((key) => modes[key] == 'keep')
+            .toSet();
+        var shaped = rawManual;
+        if (profileBaseline != null && widget.session.inspection.kind.isImage) {
+          final fixedDates = sharedDateOffsets.keys
+              .where(
+                (key) =>
+                    rawManual.values.containsKey(key) &&
+                    (explicitOverrides.contains(key) ||
+                        rawManual.values[key] != profileBaseline!.values[key]),
+              )
+              .toSet();
+          final withZones = MetadataPatch(
+            values: {
+              ...rawManual.values,
+              for (final key in sharedDateOffsets.values)
+                if (kept.contains(key) &&
+                    !rawManual.values.containsKey(key) &&
+                    profileBaseline!.values.containsKey(key))
+                  key: profileBaseline!.values[key]!,
+            },
+            removals: rawManual.removals,
+          );
+          final normalized = randomDatesWithKeptZones(
+            withZones,
+            keepFields: kept,
+            destinationMetadata: widget.session.inspection.metadata,
+            fixedDates: {...fixedDates, ...kept},
+          );
+          shaped = MetadataPatch(
+            values: {
+              for (final entry in normalized.values.entries)
+                if (!kept.contains(entry.key)) entry.key: entry.value,
+            },
+            removals: normalized.removals,
+          );
+        }
+        final manual = datesForMedia(
+          shaped,
+          image: widget.session.inspection.kind.isImage,
+          keptOffsets: widget.session.inspection.metadata,
+          keepFields: explicitOverrides
+              .where((key) => modes[key] == 'keep')
+              .toSet(),
+        );
         await widget.controller.processMetadata(
           profileBaseline == null
               ? _standaloneAutomaticDates(manual, widget.session)
@@ -797,16 +909,24 @@ class _MetadataFormState extends State<MetadataForm> {
   }
 
   Future<void> _loadPreset(SavedPreset preset) async {
-    if (preset.recipe == null) {
-      setState(() {
-        profile = null;
-        camera = null;
-        brand = null;
-      });
-      _apply(preset.patch);
-      return;
-    }
     try {
+      if (preset.recipe == null) {
+        setState(() {
+          profile = null;
+          camera = null;
+          brand = null;
+        });
+        _apply(
+          widget.batch
+              ? preset.patch
+              : datesForMedia(
+                  preset.patch,
+                  image: widget.session.inspection.kind.isImage,
+                  keptOffsets: widget.session.inspection.metadata,
+                ),
+        );
+        return;
+      }
       final profiles = await catalog;
       final recipe = preset.recipe!;
       final match = profiles.where((p) => p.id == recipe.profileId);
@@ -830,16 +950,26 @@ class _MetadataFormState extends State<MetadataForm> {
       final generated = _profilePatch(widget.session);
       final values = {...generated.values};
       final removals = {...generated.removals};
+      final overrides = widget.batch
+          ? recipe.overrides
+          : recipe.overrides == null
+          ? null
+          : datesForMedia(
+              recipe.overrides!,
+              image: widget.session.inspection.kind.isImage,
+              keptOffsets: widget.session.inspection.metadata,
+              keepFields: recipe.keepFields,
+            );
       for (final key in recipe.keepFields) {
         values.remove(key);
         removals.remove(key);
       }
       for (final e
-          in recipe.overrides?.values.entries ?? <MapEntry<String, Object>>[]) {
+          in overrides?.values.entries ?? <MapEntry<String, Object>>[]) {
         values[e.key] = e.value;
         removals.remove(e.key);
       }
-      for (final key in recipe.overrides?.removals ?? <String>{}) {
+      for (final key in overrides?.removals ?? <String>{}) {
         values.remove(key);
         removals.add(key);
       }
@@ -848,8 +978,9 @@ class _MetadataFormState extends State<MetadataForm> {
         fromProfile: true,
       );
       profileBaseline = generated;
-      explicitOverrides.addAll(recipe.overrides?.values.keys ?? <String>[]);
-      explicitOverrides.addAll(recipe.overrides?.removals ?? <String>{});
+      explicitOverrides.addAll(overrides?.values.keys ?? <String>[]);
+      explicitOverrides.addAll(overrides?.removals ?? <String>{});
+      explicitOverrides.addAll(recipe.keepFields);
     } on FormatException catch (e) {
       if (mounted) setState(() => formError = e.message);
     }
@@ -891,7 +1022,7 @@ class _MetadataFormState extends State<MetadataForm> {
       final patch = _patch();
       final text = TextEditingController();
       var saveRecipe = profileBaseline != null;
-      final name = await showDialog<String>(
+      final name = await _ownedControllerDialog<String>(
         context: context,
         builder: (context) => StatefulBuilder(
           builder: (context, update) => AlertDialog(
@@ -956,7 +1087,7 @@ class _MetadataFormState extends State<MetadataForm> {
         dates = settings.randomizeDates,
         software = settings.randomizeSoftware;
     String? dialogError;
-    final result = await showDialog<RandomizationSettings>(
+    final result = await _ownedControllerDialog<RandomizationSettings>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, update) => AlertDialog(

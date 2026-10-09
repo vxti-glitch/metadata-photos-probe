@@ -7,6 +7,7 @@ import 'package:metadata_editor/camera_profiles.dart';
 import 'package:metadata_editor/media_models.dart';
 import 'package:metadata_editor/metadata_form.dart';
 import 'package:metadata_editor/metadata_patch.dart';
+import 'package:metadata_editor/metadata_dates.dart';
 
 import 'fake_media_bridge.dart';
 
@@ -285,6 +286,396 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  for (final imageFirst in [true, false]) {
+    for (final withProfile in [true, false]) {
+      testWidgets(
+        'mixed calendar honors per-format dates imageFirst=$imageFirst profile=$withProfile',
+        (tester) async {
+          final photo = fixture(id: sourceId),
+              movie = fixture(id: nextOutputId, kind: MediaKind.mov);
+          final bridge = FakeMediaBridge()
+            ..sessions = imageFirst ? [photo, movie] : [movie, photo]
+            ..fieldsByFormat = {
+              'heic': [
+                'make',
+                'model',
+                ...sharedDateOffsets.keys,
+                ...sharedDateOffsets.values,
+              ],
+              'mov': [
+                'make',
+                'model',
+                ...sharedDateOffsets.keys,
+                ...movieDateKeys,
+              ],
+            };
+          final controller = await launch(tester, bridge);
+          for (final source in controller.sessions) {
+            controller.toggleBatch(source, true);
+          }
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Scaffold(
+                body: SingleChildScrollView(
+                  child: MetadataForm(
+                    controller: controller,
+                    session: controller.sessions.first,
+                    batch: true,
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          if (withProfile) await chooseProfile(tester);
+          await tap(tester, 'automaticDates');
+          await tap(tester, 'setCaptureDate');
+          await tester.tap(find.text('OK').last);
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('OK').last);
+          await tester.pumpAndSettle();
+          await tap(tester, 'process');
+          expect(bridge.processes, 2);
+          final imagePatch = bridge.sessions
+              .firstWhere((s) => s.inspection.kind.isImage)
+              .processing!
+              .metadataPatch!;
+          final videoPatch = bridge.sessions
+              .firstWhere((s) => !s.inspection.kind.isImage)
+              .processing!
+              .metadataPatch!;
+          final expected = datesForMedia(
+            imagePatch,
+            image: false,
+          ).values['dateTimeOriginal'];
+          for (final key in {...sharedDateOffsets.keys, ...movieDateKeys}) {
+            expect(videoPatch.values[key], expected, reason: key);
+          }
+          expect(videoPatch.values.keys, isNot(contains('offsetTimeOriginal')));
+          expect(imagePatch.values.keys, isNot(contains('movieCreateDate')));
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
+
+  testWidgets(
+    'image-first recipe keeps the video header absent from its baseline',
+    (tester) async {
+      final bridge = FakeMediaBridge()
+        ..sessions = [fixture(), fixture(id: nextOutputId, kind: MediaKind.mov)]
+        ..fieldsByFormat = {
+          'heic': [
+            'make',
+            'model',
+            ...sharedDateOffsets.keys,
+            ...sharedDateOffsets.values,
+          ],
+          'mov': ['make', 'model', ...sharedDateOffsets.keys, ...movieDateKeys],
+        };
+      final controller = await launch(tester, bridge);
+      final profile = (await loadCameraProfiles()).firstWhere(
+        (p) => p.model == 'iPhone 15 Pro Max',
+      );
+      controller.presets = [
+        SavedPreset(
+          sourceId,
+          'Keep track date',
+          MetadataPatch(values: {'make': 'Apple'}),
+          recipe: ProfileRecipe(
+            profile.id,
+            profile.cameras.first.id,
+            const RandomizationSettings(),
+            keepFields: {'trackCreateDate'},
+          ),
+        ),
+      ];
+      for (final source in controller.sessions) {
+        controller.toggleBatch(source, true);
+      }
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: MetadataForm(
+                controller: controller,
+                session: controller.sessions.first,
+                batch: true,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Keep track date'));
+      await tester.tap(find.text('Keep track date'));
+      await tester.pumpAndSettle();
+      await tap(tester, 'process');
+      expect(bridge.processes, 2);
+      final movie = bridge.sessions
+          .firstWhere((s) => !s.inspection.kind.isImage)
+          .processing!
+          .metadataPatch!;
+      expect(movie.values.containsKey('trackCreateDate'), isFalse);
+      expect(movie.removals.contains('trackCreateDate'), isFalse);
+      expect(movie.values.containsKey('mediaCreateDate'), isTrue);
+    },
+  );
+
+  testWidgets(
+    'video-first recipe keeps each photo zone for its fixed ISO instant',
+    (tester) async {
+      final bridge = FakeMediaBridge()
+        ..sessions = [
+          fixture(kind: MediaKind.mov),
+          fixture(
+            id: nextOutputId,
+            additionalMetadata: {'offsetTimeOriginal': '+02:00'},
+          ),
+          fixture(
+            id: outputId,
+            additionalMetadata: {'offsetTimeOriginal': '-04:00'},
+          ),
+        ]
+        ..fieldsByFormat = {
+          'heic': [
+            'make',
+            'model',
+            ...sharedDateOffsets.keys,
+            ...sharedDateOffsets.values,
+          ],
+          'mov': ['make', 'model', ...sharedDateOffsets.keys, ...movieDateKeys],
+        };
+      final controller = await launch(tester, bridge);
+      final profile = (await loadCameraProfiles()).firstWhere(
+        (p) => p.model == 'iPhone 15 Pro Max',
+      );
+      controller.presets = [
+        SavedPreset(
+          sourceId,
+          'Keep photo zones',
+          MetadataPatch(values: {'make': 'Apple'}),
+          recipe: ProfileRecipe(
+            profile.id,
+            profile.cameras.first.id,
+            const RandomizationSettings(),
+            overrides: MetadataPatch(
+              values: {'dateTimeOriginal': '2026-04-05T10:00:00Z'},
+            ),
+            keepFields: {'offsetTimeOriginal'},
+          ),
+        ),
+      ];
+      for (final source in controller.sessions) {
+        controller.toggleBatch(source, true);
+      }
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: MetadataForm(
+                controller: controller,
+                session: controller.sessions.first,
+                batch: true,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Keep photo zones'));
+      await tester.tap(find.text('Keep photo zones'));
+      await tester.pumpAndSettle();
+      await tap(tester, 'process');
+      expect(bridge.processes, 3);
+      for (final photo in bridge.sessions.where(
+        (s) => s.inspection.kind.isImage,
+      )) {
+        final patch = photo.processing!.metadataPatch!;
+        expect(patch.values.containsKey('offsetTimeOriginal'), isFalse);
+        final instant = datesForMedia(
+          patch,
+          image: false,
+          keptOffsets: photo.inspection.metadata,
+        );
+        expect(instant.values['dateTimeOriginal'], '2026-04-05T10:00:00.000Z');
+      }
+    },
+  );
+
+  for (final withProfile in [true, false]) {
+    testWidgets(
+      'single automatic date keeps its instant with retained zone profile=$withProfile',
+      (tester) async {
+        final bridge = FakeMediaBridge()
+          ..sessions = [
+            fixture(additionalMetadata: {'offsetTimeOriginal': '-05:00'}),
+          ]
+          ..fieldsByFormat = {
+            'heic': [
+              'make',
+              'model',
+              ...sharedDateOffsets.keys,
+              ...sharedDateOffsets.values,
+            ],
+          };
+        final controller = await launch(tester, bridge);
+        controller.select(controller.sessions.first);
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: MetadataForm(
+                  controller: controller,
+                  session: controller.sessions.first,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final before = DateTime.now().toUtc();
+        final config = find.text('Randomization settings');
+        await tester.ensureVisible(config);
+        await tester.tap(config);
+        await tester.pumpAndSettle();
+        final days = find.byWidgetPredicate(
+          (w) =>
+              w is TextField &&
+              w.decoration?.labelText == 'Within the past days',
+        );
+        await tester.ensureVisible(days);
+        await tester.enterText(days, '0');
+        await tester.tap(find.text('Use settings'));
+        await tester.pumpAndSettle();
+        if (withProfile) await chooseProfile(tester);
+        await tester.tap(find.text('Edit').first);
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text('Dates').first);
+        await tester.tap(find.text('Dates').first);
+        await tester.pumpAndSettle();
+        await setField(tester, 'offsetTimeOriginal', '-05:00');
+        final mode = find.byKey(const Key('offsetTimeOriginalMode'));
+        await tester.ensureVisible(mode);
+        await tester.tap(mode);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Keep').last);
+        await tester.pumpAndSettle();
+        await tap(tester, 'process');
+        expect(bridge.processes, 1);
+        final patch = bridge.sessions.single.processing!.metadataPatch!;
+        expect(patch.values.containsKey('offsetTimeOriginal'), isFalse);
+        final stamp =
+            datesForMedia(
+                  patch,
+                  image: false,
+                  keptOffsets: bridge.sessions.single.inspection.metadata,
+                ).values['dateTimeOriginal']
+                as String;
+        final instant = DateTime.parse(stamp);
+        expect(
+          instant.isBefore(before.subtract(const Duration(seconds: 2))),
+          isFalse,
+        );
+        expect(instant.isAfter(DateTime.now().toUtc()), isFalse);
+      },
+    );
+  }
+
+  testWidgets(
+    'save preset completes its dialog transition and persists the recipe',
+    (tester) async {
+      final bridge = FakeMediaBridge();
+      final controller = await launch(tester, bridge);
+      await tap(tester, 'importFiles');
+      await chooseProfile(tester);
+      final save = find.text('Save current edits');
+      await tester.ensureVisible(save);
+      await tester.tap(save);
+      await tester.pumpAndSettle();
+      final name = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.labelText == 'Name',
+      );
+      await tester.enterText(name, 'Studio');
+      await tester.tap(find.text('Save').last);
+      await tester.pumpAndSettle();
+      expect(controller.presets.single.name, 'Studio');
+      expect(controller.presets.single.recipe, isNotNull);
+    expect((bridge.editorState['presets'] as List).length, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final kind in [MediaKind.heic, MediaKind.mov]) {
+    testWidgets(
+      'saved date recipe adapts a single ${kind.name} across formats',
+      (tester) async {
+        final bridge = FakeMediaBridge()
+          ..sessions = [fixture(kind: kind)]
+          ..fieldsByFormat = {
+            'heic': [
+              'make',
+              'model',
+              ...sharedDateOffsets.keys,
+              ...sharedDateOffsets.values,
+            ],
+            'mov': [
+              'make',
+              'model',
+              ...sharedDateOffsets.keys,
+              ...movieDateKeys,
+            ],
+          };
+        final controller = await launch(tester, bridge);
+        final profile = (await loadCameraProfiles()).firstWhere(
+          (p) => p.model == 'iPhone 15 Pro Max',
+        );
+        final datePatch = captureDatePatch(
+          DateTime.utc(2026, 4, 5, 6, 7, 8),
+          image: !kind.isImage,
+        );
+        controller.select(controller.sessions.first);
+        controller.presets = [
+          SavedPreset(
+            sourceId,
+            'Cross format dates',
+            datePatch,
+            recipe: ProfileRecipe(
+              profile.id,
+              profile.cameras.first.id,
+              const RandomizationSettings(),
+              overrides: datePatch,
+            ),
+          ),
+        ];
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: MetadataForm(
+                  controller: controller,
+                  session: controller.sessions.first,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text('Cross format dates'));
+        await tester.tap(find.text('Cross format dates'));
+        await tester.pumpAndSettle();
+        await tap(tester, 'process');
+        expect(bridge.processes, 1);
+        final output = bridge.sessions.single.processing!.metadataPatch!;
+        final instant = datesForMedia(output, image: false);
+        for (final key in {...sharedDateOffsets.keys, ...movieDateKeys}) {
+          expect(instant.values[key], '2026-04-05T06:07:08.000Z', reason: key);
+        }
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   testWidgets(
     'turning automatic dates off after applying profile removes random date writes',

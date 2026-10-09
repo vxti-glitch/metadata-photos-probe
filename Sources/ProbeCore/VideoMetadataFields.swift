@@ -27,6 +27,17 @@ enum VideoMetadataFields {
     static let supported = Set(keys.keys).union(trackKeys.keys).union(dateKeys).union(gpsKeys)
     static let locationKey = "com.apple.quicktime.location.ISO6709"
     static func values(_ patch: MetadataPatch, existing: [String: String], track: Bool) throws -> [String: String?] {
+        for key in dateKeys.union(["dateTimeOriginal"]) {
+            guard let value = patch.values[key] else { continue }
+            let iso = ISO8601DateFormatter()
+            var instant = iso.date(from: value.text)
+            iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            instant = instant ?? iso.date(from: value.text)
+            guard instant != nil, value.text.range(of: "(?:Z|[+-][0-9]{2}:[0-9]{2})$", options: .regularExpression) != nil else {
+                throw ProbeError.unsupported("Video dates require ISO 8601 with an explicit time zone; EXIF wall times must be converted with their offsets")
+            }
+            _ = try MetadataPatch.date(value.text)
+        }
         var result = [String: String?]()
         for (key, atom) in (track ? trackKeys : keys) where patch.targetedKeys.contains(key) { result[atom] = .some(patch.values[key]?.text) }
         if !track, !patch.targetedKeys.isDisjoint(with: gpsKeys) {

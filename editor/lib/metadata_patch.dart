@@ -232,7 +232,7 @@ class MetadataPatch {
         final exif = RegExp(
           r'^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})$',
         ).firstMatch(text);
-        if (exif == null && DateTime.tryParse(text) == null) {
+        if (exif == null && !isStrictISODate(text)) {
           return 'Dates use YYYY:MM:DD HH:mm:ss for photos or ISO 8601 for videos.';
         }
         if (exif != null) {
@@ -268,7 +268,7 @@ class MetadataPatch {
       'mediaModifyDate',
     ]) {
       final value = values[key];
-      if (value != null && DateTime.tryParse(value.toString()) == null) {
+      if (value != null && !isStrictISODate(value.toString())) {
         return 'Video dates require ISO 8601.';
       }
     }
@@ -289,4 +289,27 @@ class MetadataPatch {
     if (!value.isFinite) throw const FormatException('Invalid number.');
     return value;
   }
+}
+
+bool isStrictISODate(String text) {
+  final match = RegExp(
+    r'^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](?:(?:0[0-9]|1[0-3]):[0-5][0-9]|14:00))$',
+  ).firstMatch(text);
+  if (match == null) return false;
+  final parts = List.generate(6, (i) => int.parse(match.group(i + 1)!));
+  final wall = DateTime.utc(
+    parts[0],
+    parts[1],
+    parts[2],
+    parts[3],
+    parts[4],
+    parts[5],
+  );
+  return wall.year == parts[0] &&
+      wall.month == parts[1] &&
+      wall.day == parts[2] &&
+      wall.hour == parts[3] &&
+      wall.minute == parts[4] &&
+      wall.second == parts[5] &&
+      DateTime.tryParse(text) != null;
 }

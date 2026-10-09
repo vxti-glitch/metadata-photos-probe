@@ -20,17 +20,17 @@ The editor installs with a separate bundle identity so the diagnostic probe can 
 
 ## Milestone 2: full field coverage and selective removal
 
-Expand native editing in tested groups: camera/lens/exposure, capture/digitized/modified dates with time-zone rules, GPS and supported descriptive/software fields. Verify tag types, ranges, native readback, non-target retention and every required format separately; do not advertise a control before its writer qualifies.
+Version 0.4 implements native editing in these groups: camera/lens/exposure, capture/digitized/modified dates with time-zone rules, GPS and supported descriptive/software fields. Tests cover tag types, ranges, native readback and non-target retention across the supported format registry. Automatic dates can be disabled for manual date/time entry. Actual Photos display remains a physical-device gate.
 
-PNG remains in the original product scope and needs its own reader/writer/pixel/structure gate. Selective removal requires new native deletion semantics and residual-data checks: the current HEIC camera writer deliberately retains obsolete EXIF payloads, so it is not a privacy-removal implementation. Maintain the original research on ExifTool namespaces as an oracle, not an assumed iOS runtime dependency. Keep opaque MakerNotes/auxiliary/HDR caveats explicit.
+PNG has its own eXIf reader/writer and independent non-eXIf chunk/pixel checks; it stays PNG. The expanded MetadataPatch HEIC path scrubs retired EXIF extents and selected superseded TIFF values, and selected removal refuses competing unqualified namespaces. The preserved legacy CameraPatch probe path retains old EXIF payloads and remains a diagnostic camera experiment, not a privacy-removal implementation. Maintain the original research on ExifTool namespaces as a reference, not an assumed iOS runtime dependency. Opaque MakerNotes/auxiliary/HDR caveats remain explicit; selected removal does not claim universal anonymization.
 
 ## Milestone 3: presets, profiles and randomization
 
-Versioned local presets and import/export; consistent camera/lens profiles; configurable ranges and field selection; deterministic seeded plans and retries; validation and migration tests. Generate a frozen typed patch before invoking native writes. Do not claim the camera provenance is authentic merely because embedded fields changed.
+Version 0.4 includes versioned local presets with import/export, fixed edits and reusable camera/randomization recipes. The researched Brand → Model → Camera catalog, configurable ranges and explicit manual overrides produce a frozen typed plan per item before native writes. Retry reuses that plan; persistence, validation and recipe tests cover these paths. Changed embedded camera claims do not authenticate recording provenance. The catalog is extensible and its supported model count is stated rather than claiming every historical phone.
 
 ## Milestone 4: bulk processing and recovery
 
-Mixed image/video selection, frozen settings and per-item overrides, bounded worker/resource budgets, individual errors, collision-safe naming, cancellation, low-storage handling and retry. Persist queue state atomically, reconcile uncertain external operations and measure actual device memory/time/thermal behavior. Keep quality and unsupported results per file.
+Version 0.4 includes mixed image/video selection, frozen settings and per-item overrides, bounded serial processing, individual errors, collision-safe IMG_#### names, cancellation and retry. Queue state is stored atomically and reconciled against recovered native outputs. Quality and unsupported results remain per file. Actual low-storage provider behavior and large-batch device memory/time/thermal measurements require physical testing.
 
 ## Milestone 5: owner release path
 

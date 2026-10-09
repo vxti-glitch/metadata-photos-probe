@@ -18,11 +18,13 @@ MediaSession fixture({
     model: 'Test Camera',
   ),
   bool failedCheck = false,
+  Map<String, String> additionalMetadata = const {},
 }) {
-  const metadata = {
+  final metadata = {
     'make': 'Original Make',
     'model': 'Original Camera',
     'lens': 'Original Lens',
+    ...additionalMetadata,
   };
   MediaInspection inspection(Map<String, String> camera) => MediaInspection(
     kind: kind,

@@ -47,12 +47,18 @@ public struct MetadataPatch: Codable, Sendable, Equatable {
     }
     public static func date(_ text: String) throws -> Date {
         let iso = ISO8601DateFormatter()
-        if let date = iso.date(from: text) { return date }
+        if let date = iso.date(from: text) { try validateISOWallTime(text); return date }
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = iso.date(from: text) { return date }
+        if let date = iso.date(from: text) { try validateISOWallTime(text); return date }
         let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = TimeZone(secondsFromGMT: 0); f.dateFormat = "yyyy:MM:dd HH:mm:ss"; f.isLenient = false
         guard text.count == 19, let date = f.date(from: text), f.string(from: date) == text else { throw ProbeError.invalidPatch }
         return date
+    }
+    private static func validateISOWallTime(_ text: String) throws {
+        guard text.range(of: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?(?:Z|[+-](?:(?:0[0-9]|1[0-3]):[0-5][0-9]|14:00))$", options: .regularExpression) != nil else { throw ProbeError.invalidPatch }
+        let wall = String(text.prefix(19)).replacingOccurrences(of: "-", with: ":").replacingOccurrences(of: "T", with: " ")
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = TimeZone(secondsFromGMT: 0); f.dateFormat = "yyyy:MM:dd HH:mm:ss"; f.isLenient = false
+        guard let date = f.date(from: wall), f.string(from: date) == wall else { throw ProbeError.invalidPatch }
     }
     public static func exifDate(_ text: String) throws -> String {
         if text.range(of: "^\\d{4}:\\d{2}:\\d{2} \\d{2}:\\d{2}:\\d{2}$", options: .regularExpression) != nil { _ = try date(text); return text }

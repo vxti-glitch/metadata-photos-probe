@@ -12,6 +12,125 @@ import 'fake_media_bridge.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('randomized dates retain their instant across per-photo kept zones', () {
+    final generated = MetadataPatch(
+      values: {
+        for (final key in sharedDateOffsets.keys) key: '2026:04:05 06:07:08',
+        for (final key in sharedDateOffsets.values) key: '-04:00',
+      },
+    );
+    for (final zone in ['+02:00', '-04:00']) {
+      final original = {for (final key in sharedDateOffsets.values) key: zone};
+      final result = randomDatesWithKeptZones(
+        generated,
+        keepFields: sharedDateOffsets.values.toSet(),
+        destinationMetadata: original,
+      );
+      final instant = datesForMedia(
+        result,
+        image: false,
+        keptOffsets: original,
+      );
+      expect(instant.values['dateTimeOriginal'], '2026-04-05T10:07:08.000Z');
+      expect(result.values.keys, isNot(contains('offsetTimeOriginal')));
+    }
+  });
+  test('ISO to photo honors set and kept destination zones without shifting the instant', () {
+    const stamp = '2026-04-05T10:00:00Z';
+    final set = datesForMedia(
+      MetadataPatch(
+        values: {'dateTimeOriginal': stamp, 'offsetTimeOriginal': '+02:00'},
+      ),
+      image: true,
+    );
+    expect(set.values['dateTimeOriginal'], '2026:04:05 12:00:00');
+    expect(
+      datesForMedia(set, image: false).values['dateTimeOriginal'],
+      '2026-04-05T10:00:00.000Z',
+    );
+    final kept = datesForMedia(
+      MetadataPatch(values: {'dateTimeOriginal': stamp}),
+      image: true,
+      keptOffsets: {'offsetTimeOriginal': '-05:30'},
+      keepFields: {'offsetTimeOriginal'},
+    );
+    expect(kept.values['dateTimeOriginal'], '2026:04:05 04:30:00');
+    expect(kept.values.containsKey('offsetTimeOriginal'), isFalse);
+    expect(
+      datesForMedia(
+        kept,
+        image: false,
+        keptOffsets: {'offsetTimeOriginal': '-05:30'},
+      ).values['dateTimeOriginal'],
+      '2026-04-05T10:00:00.000Z',
+    );
+    final narrowVideo = datesForMedia(
+      MetadataPatch(
+        values: {for (final key in sharedDateOffsets.keys) key: stamp},
+      ),
+      image: false,
+    );
+    expect(narrowVideo.values.keys, isNot(contains('trackCreateDate')));
+  });
+  test(
+    'ISO overflow cannot become a valid date during cross-format conversion',
+    () {
+      for (final value in [
+        '2026-02-30T12:00:00Z',
+        '2026-02-29T12:00:00Z',
+        '2026-04-05T24:00:00Z',
+        '2026-04-05T06:07:08+14:01',
+      ]) {
+        final patch = MetadataPatch(values: {'dateTimeOriginal': value});
+        expect(patch.validate(), isNotNull);
+        expect(() => datesForMedia(patch, image: true), throwsFormatException);
+      }
+      expect(isStrictISODate('2024-02-29T06:07:08.123+05:30'), isTrue);
+    },
+  );
+  test('mixed dates preserve a photo offset and propagate a calendar group to video', () {
+    final photo = MetadataPatch(
+      values: {
+        for (final key in sharedDateOffsets.keys) key: '2026:04:05 06:07:08',
+        for (final key in sharedDateOffsets.values) key: '-04:00',
+      },
+    );
+    final video = datesForMedia(photo, image: false);
+    for (final key in {...sharedDateOffsets.keys, ...movieDateKeys}) {
+      expect(video.values[key], '2026-04-05T10:07:08.000Z');
+    }
+    expect(video.values.keys, isNot(contains('offsetTimeOriginal')));
+    final kept = datesForMedia(
+      photo,
+      image: false,
+      keepFields: {'trackCreateDate'},
+    );
+    expect(kept.values.containsKey('trackCreateDate'), isFalse);
+    final restored = datesForMedia(video, image: true);
+    final instant = datesForMedia(restored, image: false);
+    expect(
+      instant.values['dateTimeOriginal'],
+      video.values['dateTimeOriginal'],
+    );
+    expect(restored.values.keys, isNot(contains('movieCreateDate')));
+  });
+  test(
+    'ambiguous photo date requires its kept offset for mixed video conversion',
+    () {
+      final photo = MetadataPatch(
+        values: {'dateTimeOriginal': '2026:04:05 06:07:08'},
+      );
+      expect(() => datesForMedia(photo, image: false), throwsFormatException);
+      expect(
+        datesForMedia(
+          photo,
+          image: false,
+          keptOffsets: {'offsetTimeOriginal': '+05:30'},
+        ).values['dateTimeOriginal'],
+        '2026-04-05T00:37:08.000Z',
+      );
+    },
+  );
   test(
     'randomization rejects unrepresentable shutter and altitude ranges',
     () async {

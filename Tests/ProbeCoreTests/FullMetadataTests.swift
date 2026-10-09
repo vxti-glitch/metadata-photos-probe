@@ -130,4 +130,16 @@ final class FullMetadataTests: XCTestCase {
             try patch.validateReadback(MediaInspection(kind: .mp4, byteCount: 0, metadata: decoded, notes: [], structure: [:]))
         }
     }
+    func testVideoDatesRejectWallTimesWithoutExplicitISOInstant() throws {
+        for key in VideoMetadataFields.dateKeys.union(["dateTimeOriginal"]) {
+            XCTAssertThrowsError(try VideoMetadataFields.values(MetadataPatch(values: [key: .string("2026:04:05 06:07:08")]), existing: [:], track: false))
+            XCTAssertThrowsError(try VideoMetadataFields.values(MetadataPatch(values: [key: .string("2026-04-05T06:07:08")]), existing: [:], track: false))
+            XCTAssertNoThrow(try VideoMetadataFields.values(MetadataPatch(values: [key: .string("2026-04-05T06:07:08-04:00")]), existing: [:], track: false))
+        }
+        for text in ["2026-02-30T06:07:08Z", "2026-02-29T06:07:08-04:00", "2026-04-05T24:07:08Z", "2026-04-05T06:07:08+14:01"] {
+            XCTAssertThrowsError(try MetadataPatch.date(text))
+            XCTAssertThrowsError(try VideoMetadataFields.values(MetadataPatch(values: ["dateTimeOriginal": .string(text)]), existing: [:], track: false))
+        }
+        XCTAssertNoThrow(try MetadataPatch.date("2024-02-29T06:07:08.123+05:30"))
+    }
 }
