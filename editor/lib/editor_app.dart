@@ -930,14 +930,53 @@ Future<void> _exportBatch(
       : controller.sessions
             .where((s) => controller.batchSelection.contains(s.id))
             .toList();
-  final targets = onlyReady
-      ? chosen
-            .where(
-              (s) =>
-                  s.processing != null && !s.processing!.integrity.hasMismatch,
-            )
-            .toList()
-      : chosen.toList();
+  if (chosen.isEmpty) return;
+
+  final readyTargets = chosen
+      .where(
+        (s) => s.processing != null && !s.processing!.integrity.hasMismatch,
+      )
+      .toList();
+
+  if (readyTargets.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'No processed copies ready. Tap "Edit selected files" to apply metadata first.',
+        ),
+      ),
+    );
+    return;
+  }
+
+  var exportOnlyReady = onlyReady;
+  if (!onlyReady && readyTargets.length < chosen.length) {
+    final exportReady = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Export ready copies?'),
+        content: Text(
+          '${readyTargets.length} of ${chosen.length} selected files have processed copies ready.\n\n'
+          'Export the ${readyTargets.length} ready copies now?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('Export ${readyTargets.length} copies'),
+          ),
+        ],
+      ),
+    );
+    if (exportReady != true) return;
+    exportOnlyReady = true;
+  }
+
+  if (!context.mounted) return;
+  final targets = exportOnlyReady ? readyTargets : chosen;
   final needs = targets.any(
     (s) => s.processing?.integrity.needsAcknowledgment ?? false,
   );
@@ -975,7 +1014,7 @@ Future<void> _exportBatch(
   }
   await controller.exportSelectedBatch(
     acknowledgeIncomplete: acknowledgment,
-    onlyReady: onlyReady,
+    onlyReady: exportOnlyReady,
   );
 }
 
@@ -993,14 +1032,53 @@ Future<void> _shareBatch(
       : controller.sessions
             .where((s) => controller.batchSelection.contains(s.id))
             .toList();
-  final targets = onlyReady
-      ? chosen
-            .where(
-              (s) =>
-                  s.processing != null && !s.processing!.integrity.hasMismatch,
-            )
-            .toList()
-      : chosen.toList();
+  if (chosen.isEmpty) return;
+
+  final readyTargets = chosen
+      .where(
+        (s) => s.processing != null && !s.processing!.integrity.hasMismatch,
+      )
+      .toList();
+
+  if (readyTargets.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'No processed copies ready. Tap "Edit selected files" to apply metadata first.',
+        ),
+      ),
+    );
+    return;
+  }
+
+  var shareOnlyReady = onlyReady;
+  if (!onlyReady && readyTargets.length < chosen.length) {
+    final shareReady = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Share ready copies?'),
+        content: Text(
+          '${readyTargets.length} of ${chosen.length} selected files have processed copies ready.\n\n'
+          'Share the ${readyTargets.length} ready copies now?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('Share ${readyTargets.length} copies'),
+          ),
+        ],
+      ),
+    );
+    if (shareReady != true) return;
+    shareOnlyReady = true;
+  }
+
+  if (!context.mounted) return;
+  final targets = shareOnlyReady ? readyTargets : chosen;
   final needs = targets.any(
     (s) => s.processing?.integrity.needsAcknowledgment ?? false,
   );
@@ -1038,6 +1116,6 @@ Future<void> _shareBatch(
   }
   await controller.shareSelectedBatch(
     acknowledgeIncomplete: acknowledgment,
-    onlyReady: onlyReady,
+    onlyReady: shareOnlyReady,
   );
 }

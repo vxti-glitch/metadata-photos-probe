@@ -408,4 +408,74 @@ void main() {
     expect(controller.isBatchMode, isTrue);
     expect(controller.selected?.id, 's-1');
   });
+
+  test(
+    'rememberSelectedProfile persists and restores across re-initialization',
+    () async {
+      await controller.initialize();
+      await controller.rememberSelectedProfile(
+        brand: 'Apple',
+        profileId: 'iphone-15-pro-max',
+        cameraId: 'main-24mm',
+      );
+      expect(controller.selectedBrand, 'Apple');
+      expect(controller.selectedProfileId, 'iphone-15-pro-max');
+      expect(controller.selectedCameraId, 'main-24mm');
+
+      // Create a new controller instance with the same bridge to test reload
+      final restoredController = EditorController(bridge);
+      await restoredController.initialize();
+      expect(restoredController.selectedBrand, 'Apple');
+      expect(restoredController.selectedProfileId, 'iphone-15-pro-max');
+      expect(restoredController.selectedCameraId, 'main-24mm');
+
+      // Reset presets also clears saved profile selection
+      await restoredController.resetPresets();
+      expect(restoredController.selectedBrand, isNull);
+      expect(restoredController.selectedProfileId, isNull);
+      expect(restoredController.selectedCameraId, isNull);
+
+      // Verify that after reset and another reload cycle, keys remain cleared in storage
+      final thirdController = EditorController(bridge);
+      await thirdController.initialize();
+      expect(thirdController.selectedBrand, isNull);
+      expect(thirdController.selectedProfileId, isNull);
+      expect(thirdController.selectedCameraId, isNull);
+    },
+  );
+
+  test(
+    'exportSelectedBatch sets clear qualification message when copies unready',
+    () async {
+      final items = [fixture(id: 's-unready-1', kind: MediaKind.jpeg)];
+      bridge.sessions = items;
+      await controller.initialize();
+      controller.toggleBatch(items.first, true);
+
+      await controller.exportSelectedBatch();
+      expect(controller.error, contains('No processed copies are ready'));
+    },
+  );
+
+  test(
+    'exportSelectedBatch sets partial unready message when some copies unready',
+    () async {
+      final readyItem = fixture(
+        id: 's-ready-1',
+        kind: MediaKind.jpeg,
+        status: IntegrityStatus.verified,
+      );
+      final unreadyItem = fixture(id: 's-unready-2', kind: MediaKind.jpeg);
+      bridge.sessions = [readyItem, unreadyItem];
+      await controller.initialize();
+      controller.toggleBatch(readyItem, true);
+      controller.toggleBatch(unreadyItem, true);
+
+      await controller.exportSelectedBatch();
+      expect(
+        controller.error,
+        contains('Selected files contain unprocessed copies'),
+      );
+    },
+  );
 }

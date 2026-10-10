@@ -227,6 +227,13 @@ String readableError(Object error) {
     }
   }
   if (error is FormatException) {
+    if (error.message.isNotEmpty &&
+        (error.message.contains('unprocessed') ||
+            error.message.contains('ready') ||
+            error.message.contains('unqualified') ||
+            error.message.contains('Select and process'))) {
+      return error.message;
+    }
     return 'The media engine returned an invalid response. Restart the app before retrying.';
   }
   if (error is MissingPluginException) {

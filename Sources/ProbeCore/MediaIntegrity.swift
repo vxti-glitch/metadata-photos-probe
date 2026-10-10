@@ -93,12 +93,21 @@ public enum MediaIntegrity {
         for (key, raw) in VideoMetadataFields.keys.merging(VideoMetadataFields.trackKeys, uniquingKeysWith: { a, _ in a }) where keys.contains(key) { keys.insert(raw); keys.insert("mdta/" + raw) }
         if !keys.isDisjoint(with: VideoMetadataFields.gpsKeys) {
             keys.formUnion(VideoMetadataFields.gpsKeys); keys.insert(VideoMetadataFields.locationKey); keys.insert("mdta/" + VideoMetadataFields.locationKey)
-            // The writer retires ISO `loci` and QuickTime legacy `©xyz` GPS
-            // tuples when it normalizes/removes the selected location. Exclude
-            // Apple's exact identifiers for those same selected representations;
-            // unknown location fields remain subject to non-target preservation.
+            // The writer normalizes or retires ISO `loci`, QuickTime legacy `©xyz`, and
+            // container-level ISO 6709 location. Exclude Apple's synthesized common identifier
+            // and exact container representations for those selected locations so non-target
+            // preservation accurately isolates unselected metadata.
             keys.insert(AVMetadataIdentifier.identifier3GPUserDataLocation.rawValue)
             keys.insert(AVMetadataIdentifier.quickTimeUserDataLocationISO6709.rawValue)
+            keys.insert(AVMetadataIdentifier.quickTimeMetadataLocationISO6709.rawValue)
+            keys.insert(AVMetadataIdentifier.commonIdentifierLocation.rawValue)
+            keys.insert("common/location")
+            keys.insert("location")
+            keys.insert("udta/©xyz")
+            keys.insert("©xyz")
+            keys.insert("udta/loci")
+            keys.insert("loci")
+            keys.insert("3gp/loci")
         }
         for (key, alias) in [("movieCreateDate", "createDate"), ("movieModifyDate", "modifyDate")] where keys.contains(key) || keys.contains(alias) { keys.insert(key); keys.insert(alias) }
         let retained = before.metadata.filter { !keys.contains($0.key) } == after.metadata.filter { !keys.contains($0.key) }

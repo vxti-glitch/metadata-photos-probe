@@ -24,6 +24,9 @@ class EditorController extends ChangeNotifier {
   List<SavedPreset> presets = [];
   final Set<String> batchSelection = {};
   List<QueueItem> queue = [];
+  String? selectedBrand;
+  String? selectedProfileId;
+  String? selectedCameraId;
   Map<String, Object?> _editorState = {};
   int queueCompleted = 0;
   Future<void> _persist() async {
@@ -34,6 +37,21 @@ class EditorController extends ChangeNotifier {
       'queue': queue.map((q) => q.toMap()).toList(),
       'selection': batchSelection.toList(),
     };
+    if (selectedBrand != null) {
+      state['selectedBrand'] = selectedBrand;
+    } else {
+      state.remove('selectedBrand');
+    }
+    if (selectedProfileId != null) {
+      state['selectedProfileId'] = selectedProfileId;
+    } else {
+      state.remove('selectedProfileId');
+    }
+    if (selectedCameraId != null) {
+      state['selectedCameraId'] = selectedCameraId;
+    } else {
+      state.remove('selectedCameraId');
+    }
     await bridge.saveEditorState(state);
     _editorState = state;
   }
@@ -211,6 +229,12 @@ class EditorController extends ChangeNotifier {
           throw const FormatException('Incompatible editor state.');
         }
         _editorState = state;
+        final storedBrand = state['selectedBrand'];
+        if (storedBrand is String) selectedBrand = storedBrand;
+        final storedProfileId = state['selectedProfileId'];
+        if (storedProfileId is String) selectedProfileId = storedProfileId;
+        final storedCameraId = state['selectedCameraId'];
+        if (storedCameraId is String) selectedCameraId = storedCameraId;
         final storedPresets = state['presets'];
         presets = storedPresets is List
             ? storedPresets.map(SavedPreset.decode).toList()
@@ -543,30 +567,26 @@ class EditorController extends ChangeNotifier {
     final chosen = onlyReady
         ? sessions.where((s) => completedIds.contains(s.id)).toList()
         : sessions.where((s) => batchSelection.contains(s.id)).toList();
-    final targets = onlyReady
-        ? chosen
-              .where(
-                (s) =>
-                    s.processing != null &&
-                    !s.processing!.integrity.hasMismatch &&
-                    (!s.processing!.integrity.needsAcknowledgment ||
-                        acknowledgeIncomplete),
-              )
-              .toList()
-        : chosen;
-    if (targets.isEmpty ||
-        (!onlyReady &&
-            chosen.any(
-              (s) =>
-                  s.processing == null ||
-                  s.processing!.integrity.hasMismatch ||
-                  (s.processing!.integrity.needsAcknowledgment &&
-                      !acknowledgeIncomplete),
-            ))) {
+    final readyTargets = chosen
+        .where(
+          (s) =>
+              s.processing != null &&
+              !s.processing!.integrity.hasMismatch &&
+              (!s.processing!.integrity.needsAcknowledgment ||
+                  acknowledgeIncomplete),
+        )
+        .toList();
+    if (readyTargets.isEmpty) {
       throw const FormatException(
-        'The batch contains unprocessed or unqualified copies.',
+        'No processed copies are ready for export. Process files first.',
       );
     }
+    if (!onlyReady && readyTargets.length < chosen.length) {
+      throw const FormatException(
+        'Selected files contain unprocessed copies. Process them before exporting.',
+      );
+    }
+    final targets = onlyReady ? readyTargets : chosen;
     final completed = await bridge.exportBatch(
       targets
           .map(
@@ -594,30 +614,26 @@ class EditorController extends ChangeNotifier {
     final chosen = onlyReady
         ? sessions.where((s) => completedIds.contains(s.id)).toList()
         : sessions.where((s) => batchSelection.contains(s.id)).toList();
-    final targets = onlyReady
-        ? chosen
-              .where(
-                (s) =>
-                    s.processing != null &&
-                    !s.processing!.integrity.hasMismatch &&
-                    (!s.processing!.integrity.needsAcknowledgment ||
-                        acknowledgeIncomplete),
-              )
-              .toList()
-        : chosen;
-    if (targets.isEmpty ||
-        (!onlyReady &&
-            chosen.any(
-              (s) =>
-                  s.processing == null ||
-                  s.processing!.integrity.hasMismatch ||
-                  (s.processing!.integrity.needsAcknowledgment &&
-                      !acknowledgeIncomplete),
-            ))) {
+    final readyTargets = chosen
+        .where(
+          (s) =>
+              s.processing != null &&
+              !s.processing!.integrity.hasMismatch &&
+              (!s.processing!.integrity.needsAcknowledgment ||
+                  acknowledgeIncomplete),
+        )
+        .toList();
+    if (readyTargets.isEmpty) {
       throw const FormatException(
-        'The batch contains unprocessed or unqualified copies.',
+        'No processed copies are ready to share. Process files first.',
       );
     }
+    if (!onlyReady && readyTargets.length < chosen.length) {
+      throw const FormatException(
+        'Selected files contain unprocessed copies. Process them before sharing.',
+      );
+    }
+    final targets = onlyReady ? readyTargets : chosen;
     final completed = await bridge.shareBatch(
       targets
           .map(
@@ -774,15 +790,37 @@ class EditorController extends ChangeNotifier {
   }
 
   Future<void> clearCache() => clear();
+
+  Future<void> rememberSelectedProfile({
+    String? brand,
+    String? profileId,
+    String? cameraId,
+  }) async {
+    selectedBrand = brand;
+    selectedProfileId = profileId;
+    selectedCameraId = cameraId;
+    notifyListeners();
+    await _persist();
+  }
+
   Future<void> resetPresets() async {
     final before = List<SavedPreset>.of(presets);
+    final beforeBrand = selectedBrand;
+    final beforeProfileId = selectedProfileId;
+    final beforeCameraId = selectedCameraId;
     presets = const [];
+    selectedBrand = null;
+    selectedProfileId = null;
+    selectedCameraId = null;
     try {
       await _persist();
       notice = 'Saved camera presets reset.';
       notifyListeners();
     } catch (error) {
       presets = before;
+      selectedBrand = beforeBrand;
+      selectedProfileId = beforeProfileId;
+      selectedCameraId = beforeCameraId;
       rethrow;
     }
   }

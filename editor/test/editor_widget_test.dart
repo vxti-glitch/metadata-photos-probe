@@ -1036,4 +1036,30 @@ void main() {
     expect(controller.isBatchMode, isTrue);
     expect(find.text('Batch Editor'), findsOneWidget);
   });
+
+  testWidgets('saved camera profile autofills form on new session', (
+    tester,
+  ) async {
+    final bridge = FakeMediaBridge()
+      ..importResult = fixture(id: 's-autofill', kind: MediaKind.jpeg);
+    final controller = await launch(tester, bridge);
+    await controller.rememberSelectedProfile(
+      brand: 'Apple',
+      profileId: 'apple-iphone-15-pro-max',
+      cameraId: 'main',
+    );
+    await tap(tester, 'importPhotos');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Apple'), findsOneWidget);
+    expect(find.text('iPhone 15 Pro Max'), findsOneWidget);
+    expect(find.text('Main Camera'), findsOneWidget);
+
+    await tap(tester, 'process');
+    final plan = bridge.sessions.single.processing!.metadataPatch!;
+    expect(plan.values['make'], 'Apple');
+    expect(plan.values['model'], 'iPhone 15 Pro Max');
+    expect(plan.values['fNumber'], 1.78);
+    expect(plan.values['lensModel'], contains('6.765mm'));
+  });
 }

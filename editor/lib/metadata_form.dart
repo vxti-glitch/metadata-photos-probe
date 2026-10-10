@@ -71,7 +71,6 @@ class _MetadataFormState extends State<MetadataForm>
       }
     });
     widget.controller.addListener(_refresh);
-    catalog = loadCameraProfiles();
     for (final f in metadataFields) {
       final source =
           widget.session.inspection.metadata[f.key] ??
@@ -84,6 +83,46 @@ class _MetadataFormState extends State<MetadataForm>
     }
     final patch = widget.session.processing?.metadataPatch;
     if (patch != null) _apply(patch, notify: false);
+
+    catalog = loadCameraProfiles().then((profiles) {
+      if (mounted) _restoreSavedProfile(profiles);
+      return profiles;
+    });
+  }
+
+  void _restoreSavedProfile(List<CameraProfile> profiles) {
+    if (profile != null) return;
+    final savedBrand = widget.controller.selectedBrand;
+    final savedProfileId = widget.controller.selectedProfileId;
+    final savedCameraId = widget.controller.selectedCameraId;
+    if (savedBrand == null && savedProfileId == null) return;
+
+    CameraProfile? matchedProfile;
+    if (savedProfileId != null) {
+      matchedProfile = profiles
+          .where((p) => p.id == savedProfileId)
+          .firstOrNull;
+    }
+    ProfileCamera? matchedCamera;
+    if (matchedProfile != null) {
+      if (savedCameraId != null) {
+        matchedCamera = matchedProfile.cameras
+            .where((c) => c.id == savedCameraId)
+            .firstOrNull;
+      }
+      matchedCamera ??= matchedProfile.cameras.firstOrNull;
+    }
+
+    setState(() {
+      brand = matchedProfile?.brand ?? savedBrand;
+      profile = matchedProfile;
+      camera = matchedCamera;
+      if (widget.session.processing?.metadataPatch == null &&
+          profile != null &&
+          camera != null) {
+        _apply(_profilePatch(widget.session), notify: false, fromProfile: true);
+      }
+    });
   }
 
   void _refresh() {
@@ -587,6 +626,11 @@ class _MetadataFormState extends State<MetadataForm>
         _appliedFeedback = false;
         _apply(_profilePatch(widget.session), notify: false, fromProfile: true);
       });
+      widget.controller.rememberSelectedProfile(
+        brand: selected.brand,
+        profileId: selected.id,
+        cameraId: camera?.id,
+      );
     }
   }
 
@@ -613,8 +657,14 @@ class _MetadataFormState extends State<MetadataForm>
         brand = selected;
         profile = null;
         camera = null;
+        profileBaseline = null;
         _appliedFeedback = false;
       });
+      widget.controller.rememberSelectedProfile(
+        brand: selected,
+        profileId: null,
+        cameraId: null,
+      );
     }
   }
 
@@ -641,6 +691,11 @@ class _MetadataFormState extends State<MetadataForm>
         _appliedFeedback = false;
         _apply(_profilePatch(widget.session), notify: false, fromProfile: true);
       });
+      widget.controller.rememberSelectedProfile(
+        brand: brand ?? profile?.brand,
+        profileId: profile?.id,
+        cameraId: selected.id,
+      );
     }
   }
 
@@ -1616,6 +1671,11 @@ class _MetadataFormState extends State<MetadataForm>
           camera = null;
           brand = null;
         });
+        widget.controller.rememberSelectedProfile(
+          brand: null,
+          profileId: null,
+          cameraId: null,
+        );
         _apply(
           widget.batch
               ? preset.patch
@@ -1647,6 +1707,11 @@ class _MetadataFormState extends State<MetadataForm>
       camera = cameras.single;
       brand = model.brand;
       settings = recipe.settings;
+      widget.controller.rememberSelectedProfile(
+        brand: model.brand,
+        profileId: model.id,
+        cameraId: cameras.single.id,
+      );
       final generated = _profilePatch(widget.session);
       final values = {...generated.values};
       final removals = {...generated.removals};
