@@ -805,10 +805,7 @@ class _MetadataFormState extends State<MetadataForm>
           ],
         ),
         const SizedBox(height: 16),
-        IndexedStack(
-          index: _tabIndex,
-          children: [_presets(context), _manual(context)],
-        ),
+        _tabIndex == 0 ? _presets(context) : _manual(context),
         const SizedBox(height: 16),
         FilledButton.icon(
           key: const Key('process'),
@@ -926,14 +923,15 @@ class _MetadataFormState extends State<MetadataForm>
             children: [
               DropdownButtonFormField<String>(
                 isExpanded: true,
-                menuMaxHeight: 220,
+                isDense: true,
+                menuMaxHeight: 180,
                 itemHeight: 48.0,
-                dropdownColor: const Color(0xFF162032),
-                borderRadius: BorderRadius.circular(12),
+                dropdownColor: const Color(0xFF141C28),
+                borderRadius: BorderRadius.circular(10),
                 elevation: 4,
                 icon: const Icon(
                   Icons.keyboard_arrow_down_rounded,
-                  size: 20,
+                  size: 18,
                   color: Color(0xFF9CB5FF),
                 ),
                 alignment: AlignmentDirectional.centerStart,
@@ -943,37 +941,56 @@ class _MetadataFormState extends State<MetadataForm>
                   labelText: 'Brand',
                   isDense: true,
                   contentPadding: EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 12,
+                    horizontal: 12,
+                    vertical: 8,
                   ),
                 ),
+                selectedItemBuilder: (context) => brands
+                    .map(
+                      (b) => Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          b,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.white,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    )
+                    .toList(),
                 items: brands.map((b) {
                   final isSelected = brand == b;
                   return DropdownMenuItem<String>(
                     value: b,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            b,
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: isSelected
-                                  ? FontWeight.w600
-                                  : FontWeight.w400,
-                              color: isSelected
-                                  ? const Color(0xFF9CB5FF)
-                                  : Colors.white,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              b,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: isSelected
+                                    ? FontWeight.w600
+                                    : FontWeight.w400,
+                                color: isSelected
+                                    ? const Color(0xFF9CB5FF)
+                                    : Colors.white,
+                              ),
                             ),
                           ),
-                        ),
-                        if (isSelected)
-                          const Icon(
-                            Icons.check,
-                            size: 16,
-                            color: Color(0xFF9CB5FF),
-                          ),
-                      ],
+                          if (isSelected)
+                            const Icon(
+                              Icons.check_rounded,
+                              size: 16,
+                              color: Color(0xFF9CB5FF),
+                            ),
+                        ],
+                      ),
                     ),
                   );
                 }).toList(),
@@ -986,13 +1003,14 @@ class _MetadataFormState extends State<MetadataForm>
                         _appliedFeedback = false;
                       }),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
               DropdownButtonFormField<String>(
                 isExpanded: true,
-                menuMaxHeight: 240,
+                isDense: true,
+                menuMaxHeight: 180,
                 itemHeight: 48.0,
-                dropdownColor: const Color(0xFF162032),
-                borderRadius: BorderRadius.circular(12),
+                dropdownColor: const Color(0xFF141C28),
+                borderRadius: BorderRadius.circular(10),
                 elevation: 4,
                 icon: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -1001,9 +1019,16 @@ class _MetadataFormState extends State<MetadataForm>
                       IconButton(
                         key: const Key('searchModels'),
                         tooltip: 'Search models',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 26,
+                          minHeight: 26,
+                        ),
+                        visualDensity: VisualDensity.compact,
+                        splashRadius: 16,
                         icon: const Icon(
                           Icons.search_rounded,
-                          size: 20,
+                          size: 18,
                           color: Color(0xFF9CB5FF),
                         ),
                         onPressed: widget.controller.busy
@@ -1017,7 +1042,7 @@ class _MetadataFormState extends State<MetadataForm>
                       ),
                     const Icon(
                       Icons.keyboard_arrow_down_rounded,
-                      size: 20,
+                      size: 18,
                       color: Color(0xFF9CB5FF),
                     ),
                   ],
@@ -1031,38 +1056,58 @@ class _MetadataFormState extends State<MetadataForm>
                   labelText: 'Model',
                   isDense: true,
                   contentPadding: EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 12,
+                    horizontal: 12,
+                    vertical: 8,
                   ),
                 ),
+                selectedItemBuilder: (context) => profiles
+                    .where((p) => p.brand == brand)
+                    .map(
+                      (p) => Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          p.model,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.white,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    )
+                    .toList(),
                 items: profiles.where((p) => p.brand == brand).map((p) {
                   final isSelected = profile?.id == p.id;
                   return DropdownMenuItem<String>(
                     value: p.id,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            p.model,
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: isSelected
-                                  ? FontWeight.w600
-                                  : FontWeight.w400,
-                              color: isSelected
-                                  ? const Color(0xFF9CB5FF)
-                                  : Colors.white,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              p.model,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: isSelected
+                                    ? FontWeight.w600
+                                    : FontWeight.w400,
+                                color: isSelected
+                                    ? const Color(0xFF9CB5FF)
+                                    : Colors.white,
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            overflow: TextOverflow.ellipsis,
                           ),
-                        ),
-                        if (isSelected)
-                          const Icon(
-                            Icons.check,
-                            size: 16,
-                            color: Color(0xFF9CB5FF),
-                          ),
-                      ],
+                          if (isSelected)
+                            const Icon(
+                              Icons.check_rounded,
+                              size: 16,
+                              color: Color(0xFF9CB5FF),
+                            ),
+                        ],
+                      ),
                     ),
                   );
                 }).toList(),
@@ -1079,17 +1124,18 @@ class _MetadataFormState extends State<MetadataForm>
                         );
                       }),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
               DropdownButtonFormField<String>(
                 isExpanded: true,
-                menuMaxHeight: 200,
+                isDense: true,
+                menuMaxHeight: 180,
                 itemHeight: 48.0,
-                dropdownColor: const Color(0xFF162032),
-                borderRadius: BorderRadius.circular(12),
+                dropdownColor: const Color(0xFF141C28),
+                borderRadius: BorderRadius.circular(10),
                 elevation: 4,
                 icon: const Icon(
                   Icons.keyboard_arrow_down_rounded,
-                  size: 20,
+                  size: 18,
                   color: Color(0xFF9CB5FF),
                 ),
                 alignment: AlignmentDirectional.centerStart,
@@ -1101,38 +1147,58 @@ class _MetadataFormState extends State<MetadataForm>
                   labelText: 'Camera',
                   isDense: true,
                   contentPadding: EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 12,
+                    horizontal: 12,
+                    vertical: 8,
                   ),
                 ),
+                selectedItemBuilder: (context) =>
+                    (profile?.cameras ?? <ProfileCamera>[])
+                        .map(
+                          (c) => Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              c.name,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.white,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
+                        .toList(),
                 items: (profile?.cameras ?? <ProfileCamera>[]).map((c) {
                   final isSelected = camera?.id == c.id;
                   return DropdownMenuItem<String>(
                     value: c.id,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            c.name,
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: isSelected
-                                  ? FontWeight.w600
-                                  : FontWeight.w400,
-                              color: isSelected
-                                  ? const Color(0xFF9CB5FF)
-                                  : Colors.white,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              c.name,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: isSelected
+                                    ? FontWeight.w600
+                                    : FontWeight.w400,
+                                color: isSelected
+                                    ? const Color(0xFF9CB5FF)
+                                    : Colors.white,
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            overflow: TextOverflow.ellipsis,
                           ),
-                        ),
-                        if (isSelected)
-                          const Icon(
-                            Icons.check,
-                            size: 16,
-                            color: Color(0xFF9CB5FF),
-                          ),
-                      ],
+                          if (isSelected)
+                            const Icon(
+                              Icons.check_rounded,
+                              size: 16,
+                              color: Color(0xFF9CB5FF),
+                            ),
+                        ],
+                      ),
                     ),
                   );
                 }).toList(),
@@ -1150,7 +1216,7 @@ class _MetadataFormState extends State<MetadataForm>
                         );
                       }),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
               FilledButton(
                 key: const Key('applyProfile'),
                 style: FilledButton.styleFrom(
