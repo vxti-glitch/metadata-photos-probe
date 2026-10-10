@@ -1394,86 +1394,86 @@ class _MetadataFormState extends State<MetadataForm>
           child: Material(
             color: const Color(0xFF1C1C1E),
             child: Column(
-            children: [
-              for (var i = 0; i < widget.controller.presets.length; i++) ...[
-                if (i > 0)
-                  const Divider(
-                    height: 1,
-                    thickness: 1,
-                    color: Color(0xFF2C2C2E),
-                    indent: 52,
-                  ),
-                ListTile(
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 2,
-                  ),
-                  leading: Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: widget.controller.presets[i].recipe == null
-                          ? const Color(0xFF2C2C2E)
-                          : const Color(0xFF1E2A3E),
-                      borderRadius: BorderRadius.circular(8),
+              children: [
+                for (var i = 0; i < widget.controller.presets.length; i++) ...[
+                  if (i > 0)
+                    const Divider(
+                      height: 1,
+                      thickness: 1,
+                      color: Color(0xFF2C2C2E),
+                      indent: 52,
                     ),
-                    child: Icon(
+                  ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 2,
+                    ),
+                    leading: Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: widget.controller.presets[i].recipe == null
+                            ? const Color(0xFF2C2C2E)
+                            : const Color(0xFF1E2A3E),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        widget.controller.presets[i].recipe == null
+                            ? Icons.tune_rounded
+                            : Icons.auto_awesome_rounded,
+                        size: 16,
+                        color: widget.controller.presets[i].recipe == null
+                            ? const Color(0xFF8E8E93)
+                            : const Color(0xFF0A84FF),
+                      ),
+                    ),
+                    title: Text(
+                      widget.controller.presets[i].name,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                      ),
+                    ),
+                    subtitle: Text(
                       widget.controller.presets[i].recipe == null
-                          ? Icons.tune_rounded
-                          : Icons.auto_awesome_rounded,
-                      size: 16,
-                      color: widget.controller.presets[i].recipe == null
-                          ? const Color(0xFF8E8E93)
-                          : const Color(0xFF0A84FF),
-                    ),
-                  ),
-                  title: Text(
-                    widget.controller.presets[i].name,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 14,
-                    ),
-                  ),
-                  subtitle: Text(
-                    widget.controller.presets[i].recipe == null
-                        ? 'Fixed metadata values'
-                        : 'Camera & randomization recipe',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Color(0xFF8E8E93),
-                    ),
-                  ),
-                  onTap: widget.controller.busy
-                      ? null
-                      : () => _loadPreset(widget.controller.presets[i]),
-                  trailing: PopupMenuButton<String>(
-                    onSelected: (v) {
-                      if (v == 'export') {
-                        widget.controller.exportPreset(
-                          widget.controller.presets[i],
-                        );
-                      } else {
-                        widget.controller.deletePreset(
-                          widget.controller.presets[i],
-                        );
-                      }
-                    },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(
-                        value: 'export',
-                        child: Text('Export preset'),
+                          ? 'Fixed metadata values'
+                          : 'Camera & randomization recipe',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF8E8E93),
                       ),
-                      PopupMenuItem(
-                        value: 'delete',
-                        child: Text('Delete preset'),
-                      ),
-                    ],
+                    ),
+                    onTap: widget.controller.busy
+                        ? null
+                        : () => _loadPreset(widget.controller.presets[i]),
+                    trailing: PopupMenuButton<String>(
+                      onSelected: (v) {
+                        if (v == 'export') {
+                          widget.controller.exportPreset(
+                            widget.controller.presets[i],
+                          );
+                        } else {
+                          widget.controller.deletePreset(
+                            widget.controller.presets[i],
+                          );
+                        }
+                      },
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(
+                          value: 'export',
+                          child: Text('Export preset'),
+                        ),
+                        PopupMenuItem(
+                          value: 'delete',
+                          child: Text('Delete preset'),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
+                ],
               ],
-            ],
+            ),
           ),
-        ),
         ),
       const SizedBox(height: 12),
       Wrap(
@@ -1561,31 +1561,40 @@ class _MetadataFormState extends State<MetadataForm>
                           ),
                         ],
                       ),
-                      if (modes[field.key] == 'set')
-                        TextField(
-                          key: Key(
-                            field.key == 'lensModel' ? 'lens' : field.key,
+                      if (modes[field.key] == 'set') ...[
+                        const SizedBox(height: 6),
+                        Semantics(
+                          label: field.label,
+                          child: TextField(
+                            key: Key(
+                              field.key == 'lensModel' ? 'lens' : field.key,
+                            ),
+                            controller: inputs[field.key],
+                            onChanged: (_) => explicitOverrides.add(field.key),
+                            enabled: !widget.controller.busy,
+                            decoration: InputDecoration(
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 12,
+                              ),
+                              hintText:
+                                  field.group == 'Dates' &&
+                                      !field.key.startsWith('offset')
+                                  ? (widget.session.inspection.kind.isImage
+                                        ? 'YYYY:MM:DD HH:mm:ss'
+                                        : 'YYYY-MM-DDTHH:mm:ssZ')
+                                  : null,
+                            ),
+                            keyboardType: field.numeric
+                                ? const TextInputType.numberWithOptions(
+                                    signed: true,
+                                    decimal: true,
+                                  )
+                                : TextInputType.text,
                           ),
-                          controller: inputs[field.key],
-                          onChanged: (_) => explicitOverrides.add(field.key),
-                          enabled: !widget.controller.busy,
-                          decoration: InputDecoration(
-                            labelText: field.label,
-                            hintText:
-                                field.group == 'Dates' &&
-                                    !field.key.startsWith('offset')
-                                ? (widget.session.inspection.kind.isImage
-                                      ? 'YYYY:MM:DD HH:mm:ss'
-                                      : 'YYYY-MM-DDTHH:mm:ssZ')
-                                : null,
-                          ),
-                          keyboardType: field.numeric
-                              ? const TextInputType.numberWithOptions(
-                                  signed: true,
-                                  decimal: true,
-                                )
-                              : TextInputType.text,
                         ),
+                      ],
                     ],
                   ),
                 ),
