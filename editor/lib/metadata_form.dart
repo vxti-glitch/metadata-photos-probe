@@ -1775,6 +1775,7 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
               const SizedBox(height: 14),
               Container(
                 height: 38,
+                clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(
                   color: const Color(0xFF162032),
                   borderRadius: BorderRadius.circular(10),
@@ -1794,6 +1795,8 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                       fontSize: 13,
                       color: Color(0xFF788596),
                     ),
+                    filled: false,
+                    fillColor: Colors.transparent,
                     prefixIconConstraints: const BoxConstraints(
                       minWidth: 36,
                       minHeight: 38,
