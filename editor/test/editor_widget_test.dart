@@ -944,13 +944,10 @@ void main() {
 
   testWidgets('importing multiple files navigates directly to batch editor', (tester) async {
     final bridge = FakeMediaBridge()
-      ..batchImportResult = BatchImportResult(
-        sessions: [
-          fixture(id: 's-1', kind: MediaKind.jpeg),
-          fixture(id: 's-2', kind: MediaKind.png),
-        ],
-        errors: [],
-      );
+      ..batchImportResult = [
+        fixture(id: 's-1', kind: MediaKind.jpeg),
+        fixture(id: 's-2', kind: MediaKind.png),
+      ];
     final controller = await launch(tester, bridge);
     await tap(tester, 'importPhotos');
     await tester.pumpAndSettle();

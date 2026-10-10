@@ -399,7 +399,7 @@ void main() {
       fixture(id: 's-1', kind: MediaKind.jpeg),
       fixture(id: 's-2', kind: MediaKind.png),
     ];
-    bridge.batchImportResult = BatchImportResult(sessions: items, errors: []);
+    bridge.batchImportResult = items;
     await controller.importBatch(photos: true);
     expect(controller.isBatchMode, isTrue);
     expect(controller.batchSelection.length, 2);
