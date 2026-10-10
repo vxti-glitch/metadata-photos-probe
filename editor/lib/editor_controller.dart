@@ -103,9 +103,13 @@ class EditorController extends ChangeNotifier {
   void startBatchEditing() {
     if (busy || !ready || batchSelection.isEmpty) return;
     isBatchMode = true;
+    final targetId = batchSelection.first;
     selected = sessions.firstWhere(
-      (s) => batchSelection.contains(s.id),
-      orElse: () => sessions.first,
+      (s) => s.id == targetId,
+      orElse: () => sessions.firstWhere(
+        (s) => batchSelection.contains(s.id),
+        orElse: () => sessions.first,
+      ),
     );
     acknowledgedProcessingId = null;
     error = null;
@@ -275,8 +279,12 @@ class EditorController extends ChangeNotifier {
         final result = await bridge.importBatch(photos: photos);
         if (!_current(generation)) return;
         batchSelection.clear();
+        final incomingIds = result.sessions.map((s) => s.id).toSet();
+        _sessions = [
+          ...result.sessions,
+          ..._sessions.where((item) => !incomingIds.contains(item.id)),
+        ];
         for (final session in result.sessions) {
-          _upsert(session);
           batchSelection.add(session.id);
         }
         if (result.sessions.length > 1) {

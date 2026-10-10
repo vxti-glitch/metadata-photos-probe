@@ -772,6 +772,11 @@ class _MetadataFormState extends State<MetadataForm>
         const SizedBox(height: 20),
         TabBar(
           controller: _tabController,
+          onTap: (index) {
+            if (_tabIndex != index) {
+              setState(() => _tabIndex = index);
+            }
+          },
           indicatorColor: const Color(0xFF9CB5FF),
           labelColor: const Color(0xFF9CB5FF),
           unselectedLabelColor: Colors.white60,
@@ -781,7 +786,13 @@ class _MetadataFormState extends State<MetadataForm>
           ],
         ),
         const SizedBox(height: 16),
-        _tabIndex == 0 ? _presets(context) : _manual(context),
+        IndexedStack(
+          index: _tabIndex,
+          children: [
+            _presets(context),
+            _manual(context),
+          ],
+        ),
         const SizedBox(height: 16),
         FilledButton.icon(
           key: const Key('process'),
