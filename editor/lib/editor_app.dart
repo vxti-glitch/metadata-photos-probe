@@ -7,10 +7,11 @@ import 'media_bridge.dart';
 import 'metadata_form.dart';
 import 'settings_screen.dart';
 
-const _background = Color(0xFF0E1115);
-const _surface = Color(0xFF191E25);
-const _accent = Color(0xFF9CB5FF);
-const _muted = Color(0xFF9BA6B4);
+const _background = Color(0xFF000000);
+const _surface = Color(0xFF1C1C1E);
+const _accent = Color(0xFF0A84FF);
+const _muted = Color(0xFF8E8E93);
+const _border = Color(0xFF2C2C2E);
 
 class MetadataEditorApp extends StatelessWidget {
   const MetadataEditorApp({super.key, this.controller});
@@ -27,11 +28,11 @@ class MetadataEditorApp extends StatelessWidget {
       colorScheme: const ColorScheme.dark(
         primary: _accent,
         surface: _surface,
-        onPrimary: Color(0xFF0F1B2E),
-        onSurface: Color(0xFFE7EDF4),
-        secondary: Color(0xFF7A9AE0),
-        secondaryContainer: Color(0xFF243044),
-        onSecondaryContainer: Color(0xFFDCE6F8),
+        onPrimary: Color(0xFFFFFFFF),
+        onSurface: Color(0xFFFFFFFF),
+        secondary: Color(0xFF0A84FF),
+        secondaryContainer: Color(0xFF2C2C2E),
+        onSecondaryContainer: Color(0xFFFFFFFF),
       ),
       appBarTheme: const AppBarTheme(
         backgroundColor: _background,
@@ -44,14 +45,14 @@ class MetadataEditorApp extends StatelessWidget {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: _background,
+        fillColor: _surface,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide.none,
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Color(0xFF323A45)),
+          borderSide: const BorderSide(color: _border),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
@@ -78,7 +79,7 @@ class MetadataEditorApp extends StatelessWidget {
           ),
         ),
       ),
-      dividerColor: const Color(0xFF303743),
+      dividerColor: _border,
     ),
     home: EditorHome(controller: controller),
   );
@@ -271,8 +272,8 @@ class MetadataMark extends StatelessWidget {
 
 typedef _MetadataMark = MetadataMark;
 
-/// Neutral vector: four frame corners surrounding three metadata rows.
-/// Geometry uses a 32-unit canvas so the app icon can share the same construction.
+/// Concept B Precision Viewfinder HUD:
+/// Hairline reticle corners, precision crosshair ticks, and three telemetry tracks with an Apple System Blue focal dot.
 class MetadataMarkPainter extends CustomPainter {
   const MetadataMarkPainter();
   @override
@@ -284,31 +285,69 @@ class MetadataMarkPainter extends CustomPainter {
         const Rect.fromLTWH(0, 0, 32, 32),
         const Radius.circular(8),
       ),
-      Paint()..color = _background,
+      Paint()..color = const Color(0xFF1C1C1E),
     );
     final stroke = Paint()
-      ..color = _accent
-      ..strokeWidth = 1.8
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round
+      ..color = const Color(0xFFF5F5F7)
+      ..strokeWidth = 1.3
+      ..strokeCap = StrokeCap.square
       ..style = PaintingStyle.stroke;
+
+    // Hairline reticle corners
     final corners = Path()
-      ..moveTo(10, 4)
+      ..moveTo(8, 4)
       ..lineTo(4, 4)
-      ..lineTo(4, 10)
-      ..moveTo(22, 4)
+      ..lineTo(4, 8)
+      ..moveTo(24, 4)
       ..lineTo(28, 4)
-      ..lineTo(28, 10)
-      ..moveTo(4, 22)
+      ..lineTo(28, 8)
+      ..moveTo(4, 24)
       ..lineTo(4, 28)
-      ..lineTo(10, 28)
-      ..moveTo(22, 28)
+      ..lineTo(8, 28)
+      ..moveTo(24, 28)
       ..lineTo(28, 28)
-      ..lineTo(28, 22);
+      ..lineTo(28, 24);
     canvas.drawPath(corners, stroke);
-    canvas.drawLine(const Offset(11, 10), const Offset(23, 10), stroke);
-    canvas.drawLine(const Offset(11, 17), const Offset(20, 17), stroke);
-    canvas.drawLine(const Offset(11, 24), const Offset(17, 24), stroke);
+
+    // Crosshairs
+    final crossPaint = Paint()
+      ..color = const Color(0xFF636366)
+      ..strokeWidth = 1.0
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(const Offset(16, 2), const Offset(16, 4.5), crossPaint);
+    canvas.drawLine(const Offset(16, 27.5), const Offset(16, 30), crossPaint);
+    canvas.drawLine(const Offset(2, 16), const Offset(4.5, 16), crossPaint);
+    canvas.drawLine(const Offset(27.5, 16), const Offset(30, 16), crossPaint);
+
+    // Telemetry lines
+    final linePaint = Paint()
+      ..color = const Color(0xFFFFFFFF)
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.round;
+
+    // Line 1 with glowing blue focal dot
+    final dotPaint = Paint()..color = const Color(0xFF0A84FF);
+    canvas.drawCircle(const Offset(10, 11), 1.3, dotPaint);
+    canvas.drawLine(const Offset(13, 11), const Offset(23, 11), linePaint);
+
+    // Line 2
+    final line2Paint = Paint()
+      ..color = const Color(0xFFD1D1D6)
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.round;
+    final dot2Paint = Paint()..color = const Color(0x660A84FF);
+    canvas.drawCircle(const Offset(10, 16), 1.1, dot2Paint);
+    canvas.drawLine(const Offset(13, 16), const Offset(20, 16), line2Paint);
+
+    // Line 3
+    final line3Paint = Paint()
+      ..color = const Color(0xFF8E8E93)
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.round;
+    final dot3Paint = Paint()..color = const Color(0x330A84FF);
+    canvas.drawCircle(const Offset(10, 21), 0.9, dot3Paint);
+    canvas.drawLine(const Offset(13, 21), const Offset(17, 21), line3Paint);
+
     canvas.restore();
   }
 
@@ -424,7 +463,7 @@ class _Projects extends StatelessWidget {
                         style: const TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 14,
-                          color: Color(0xFF9CB5FF),
+                          color: _accent,
                         ),
                       ),
                     ),
@@ -514,10 +553,7 @@ class _Projects extends StatelessWidget {
                     ),
                     Text(
                       '${controller.queueCompletedCount}/${controller.queueTotal} ready',
-                      style: const TextStyle(
-                        color: Color(0xFF9CB5FF),
-                        fontSize: 12,
-                      ),
+                      style: const TextStyle(color: _accent, fontSize: 12),
                     ),
                   ],
                 ),
@@ -539,8 +575,8 @@ class _Projects extends StatelessWidget {
                         ? controller.queueCompletedCount / controller.queueTotal
                         : 0,
                     minHeight: 6,
-                    backgroundColor: const Color(0xFF141C28),
-                    color: const Color(0xFF9CB5FF),
+                    backgroundColor: _border,
+                    color: _accent,
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -608,7 +644,7 @@ class _Projects extends StatelessWidget {
                               : Icons.hourglass_top_outlined,
                           size: 18,
                           color: item.status == 'completed'
-                              ? const Color(0xFF9CB5FF)
+                              ? _accent
                               : item.status == 'failed' ||
                                     item.status == 'interrupted'
                               ? Colors.redAccent
@@ -792,11 +828,9 @@ class _Message extends StatelessWidget {
     child: Container(
       padding: const EdgeInsets.fromLTRB(14, 10, 4, 10),
       decoration: BoxDecoration(
-        color: error ? const Color(0xFF352025) : const Color(0xFF152238),
+        color: error ? const Color(0xFF2C1518) : _surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: error ? const Color(0xFF5A2530) : const Color(0xFF233658),
-        ),
+        border: Border.all(color: error ? const Color(0xFF5A2026) : _border),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,

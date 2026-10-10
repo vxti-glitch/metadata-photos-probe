@@ -5,16 +5,16 @@ import 'editor_app.dart';
 import 'editor_controller.dart';
 import 'legal_documents.dart';
 
-const _background = Color(0xFF0E1115);
-const _panel = Color(0xFF162032);
-const _cardBorder = Color(0xFF243044);
-const _accent = Color(0xFF9CB5FF);
-const _activeGreen = Color(0xFF7BE5A3);
+const _background = Color(0xFF000000);
+const _panel = Color(0xFF1C1C1E);
+const _cardBorder = Color(0xFF2C2C2E);
+const _accent = Color(0xFF0A84FF);
+const _activeGreen = Color(0xFF34C759);
 const _activeGreenBg = Color(0xFF132720);
 const _activeGreenBorder = Color(0xFF2A5B44);
-const _muted = Color(0xFF8DA0BC);
-const _subtle = Color(0xFF4A5B73);
-const _iconBg = Color(0xFF1B263B);
+const _muted = Color(0xFF8E8E93);
+const _subtle = Color(0xFF636366);
+const _iconBg = Color(0xFF2C2C2E);
 
 /// Grouped iOS Settings screen for Metadata Editor.
 class SettingsScreen extends StatelessWidget {
@@ -566,7 +566,7 @@ class SettingsScreen extends StatelessWidget {
           FilledButton(
             key: const Key('confirmResetPresetsButton'),
             style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFF243044),
+              backgroundColor: _cardBorder,
               foregroundColor: _accent,
             ),
             onPressed: () async {
@@ -619,7 +619,7 @@ class _LegalDocumentSheet extends StatelessWidget {
     return Container(
       constraints: BoxConstraints(maxHeight: maxHeight),
       decoration: const BoxDecoration(
-        color: Color(0xFF0F141C),
+        color: Color(0xFF121214),
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
         border: Border(
           top: BorderSide(color: _cardBorder),
@@ -673,7 +673,7 @@ class _LegalDocumentSheet extends StatelessWidget {
                   child: SelectableText(
                     content,
                     style: const TextStyle(
-                      color: Color(0xFFD4E0F0),
+                      color: Color(0xFFE5E5EA),
                       fontSize: 13.5,
                       height: 1.55,
                       fontFamily: 'monospace',

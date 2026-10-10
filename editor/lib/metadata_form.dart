@@ -517,7 +517,7 @@ class _MetadataFormState extends State<MetadataForm>
     final selected = await showModalBottomSheet<CameraProfile>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF0F141C),
+      backgroundColor: const Color(0xFF121214),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
@@ -545,7 +545,7 @@ class _MetadataFormState extends State<MetadataForm>
     final selected = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF0F141C),
+      backgroundColor: const Color(0xFF121214),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
@@ -572,7 +572,7 @@ class _MetadataFormState extends State<MetadataForm>
     final selected = await showModalBottomSheet<ProfileCamera>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF0F141C),
+      backgroundColor: const Color(0xFF121214),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
@@ -619,7 +619,7 @@ class _MetadataFormState extends State<MetadataForm>
                 Icon(
                   Icons.keyboard_arrow_down_rounded,
                   size: 18,
-                  color: enabled ? const Color(0xFF9CB5FF) : Colors.white24,
+                  color: enabled ? const Color(0xFF0A84FF) : Colors.white24,
                 ),
             suffixIconConstraints: const BoxConstraints(
               minWidth: 32,
@@ -650,10 +650,10 @@ class _MetadataFormState extends State<MetadataForm>
       margin: const EdgeInsets.only(top: 20),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: isMismatch ? const Color(0xFF281418) : const Color(0xFF141C28),
+        color: isMismatch ? const Color(0xFF2C1518) : const Color(0xFF1C1C1E),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: isMismatch ? const Color(0xFF5A2530) : const Color(0xFF233658),
+          color: isMismatch ? const Color(0xFF5A2026) : const Color(0xFF2C2C2E),
         ),
       ),
       child: Column(
@@ -665,7 +665,7 @@ class _MetadataFormState extends State<MetadataForm>
                 isMismatch
                     ? Icons.error_outline_rounded
                     : Icons.check_circle_outline_rounded,
-                color: isMismatch ? Colors.redAccent : const Color(0xFF9CB5FF),
+                color: isMismatch ? Colors.redAccent : const Color(0xFF0A84FF),
                 size: 22,
               ),
               const SizedBox(width: 10),
@@ -677,9 +677,7 @@ class _MetadataFormState extends State<MetadataForm>
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w700,
-                    color: isMismatch
-                        ? Colors.redAccent
-                        : const Color(0xFFE7EDF4),
+                    color: isMismatch ? Colors.redAccent : Colors.white,
                   ),
                 ),
               ),
@@ -689,7 +687,7 @@ class _MetadataFormState extends State<MetadataForm>
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: const Color(0xFF0E1115),
+              color: const Color(0xFF121214),
               borderRadius: BorderRadius.circular(10),
             ),
             child: Column(
@@ -717,18 +715,18 @@ class _MetadataFormState extends State<MetadataForm>
                   style: const TextStyle(
                     fontWeight: FontWeight.w600,
                     fontSize: 15,
-                    color: Color(0xFFE7EDF4),
+                    color: Colors.white,
                   ),
                 ),
                 const SizedBox(height: 8),
-                const Divider(height: 1, color: Color(0xFF222B38)),
+                const Divider(height: 1, color: Color(0xFF2C2C2E)),
                 const SizedBox(height: 8),
                 const Row(
                   children: [
                     Icon(
                       Icons.folder_outlined,
                       size: 16,
-                      color: Color(0xFF9CB5FF),
+                      color: Color(0xFF0A84FF),
                     ),
                     SizedBox(width: 6),
                     Expanded(
@@ -736,7 +734,7 @@ class _MetadataFormState extends State<MetadataForm>
                         'Saved to: On My iPhone › Metadata Editor › Processed Media',
                         style: TextStyle(
                           fontSize: 11,
-                          color: Color(0xFF9BA6B4),
+                          color: Color(0xFF8E8E93),
                         ),
                       ),
                     ),
@@ -843,7 +841,7 @@ class _MetadataFormState extends State<MetadataForm>
           Text(
             '${controller.batchSelection.length} files selected · Settings apply across all batch items',
             style: const TextStyle(
-              color: Color(0xFF9CB5FF),
+              color: Color(0xFF0A84FF),
               fontSize: 13,
               fontWeight: FontWeight.w500,
             ),
@@ -852,15 +850,15 @@ class _MetadataFormState extends State<MetadataForm>
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
-              color: const Color(0xFF141C28),
+              color: const Color(0xFF1C1C1E),
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFF233658)),
+              border: Border.all(color: const Color(0xFF2C2C2E)),
             ),
             child: Row(
               children: [
                 const Icon(
                   Icons.auto_awesome_motion_outlined,
-                  color: Color(0xFF9CB5FF),
+                  color: Color(0xFF0A84FF),
                   size: 20,
                 ),
                 const SizedBox(width: 10),
@@ -901,8 +899,8 @@ class _MetadataFormState extends State<MetadataForm>
               setState(() => _tabIndex = index);
             }
           },
-          indicatorColor: const Color(0xFF9CB5FF),
-          labelColor: const Color(0xFF9CB5FF),
+          indicatorColor: const Color(0xFF0A84FF),
+          labelColor: const Color(0xFF0A84FF),
           unselectedLabelColor: Colors.white60,
           tabs: const [
             Tab(text: 'Presets'),
@@ -1067,7 +1065,7 @@ class _MetadataFormState extends State<MetadataForm>
                         icon: const Icon(
                           Icons.search_rounded,
                           size: 18,
-                          color: Color(0xFF9CB5FF),
+                          color: Color(0xFF0A84FF),
                         ),
                         onPressed: widget.controller.busy
                             ? null
@@ -1082,7 +1080,7 @@ class _MetadataFormState extends State<MetadataForm>
                       Icons.keyboard_arrow_down_rounded,
                       size: 18,
                       color: brand != null
-                          ? const Color(0xFF9CB5FF)
+                          ? const Color(0xFF0A84FF)
                           : Colors.white24,
                     ),
                   ],
@@ -1109,11 +1107,11 @@ class _MetadataFormState extends State<MetadataForm>
                 key: const Key('applyProfile'),
                 style: FilledButton.styleFrom(
                   backgroundColor: _appliedFeedback
-                      ? const Color(0xFF233658)
-                      : const Color(0xFF243044),
+                      ? const Color(0xFF2C2C2E)
+                      : const Color(0xFF1C1C1E),
                   foregroundColor: _appliedFeedback
-                      ? const Color(0xFF9CB5FF)
-                      : const Color(0xFFDCE6F8),
+                      ? const Color(0xFF0A84FF)
+                      : Colors.white,
                 ),
                 onPressed:
                     profile == null || camera == null || widget.controller.busy
@@ -1716,7 +1714,7 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                 height: 5,
                 margin: const EdgeInsets.only(bottom: 14),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF323E52),
+                  color: const Color(0xFF3A3A3C),
                   borderRadius: BorderRadius.circular(2.5),
                 ),
               ),
@@ -1739,7 +1737,7 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                           '$brandName catalog · ${widget.availableProfiles.length} profiles',
                           style: const TextStyle(
                             fontSize: 11,
-                            color: Color(0xFF9BA6B4),
+                            color: Color(0xFF8E8E93),
                           ),
                         ),
                       ],
@@ -1758,13 +1756,13 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                           width: 28,
                           height: 28,
                           decoration: const BoxDecoration(
-                            color: Color(0xFF243044),
+                            color: Color(0xFF2C2C2E),
                             shape: BoxShape.circle,
                           ),
                           child: const Icon(
                             Icons.close_rounded,
                             size: 16,
-                            color: Color(0xFF9BA6B4),
+                            color: Color(0xFF8E8E93),
                           ),
                         ),
                       ),
@@ -1777,15 +1775,15 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                 height: 38,
                 clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF162032),
+                  color: const Color(0xFF1C1C1E),
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFF243044)),
+                  border: Border.all(color: const Color(0xFF2C2C2E)),
                 ),
                 child: TextField(
                   controller: _searchController,
                   autofocus: false,
                   textAlignVertical: TextAlignVertical.center,
-                  cursorColor: const Color(0xFF9CB5FF),
+                  cursorColor: const Color(0xFF0A84FF),
                   cursorWidth: 1.5,
                   cursorHeight: 16,
                   style: const TextStyle(fontSize: 13, color: Colors.white),
@@ -1793,7 +1791,7 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                     hintText: 'Search $brandName models…',
                     hintStyle: const TextStyle(
                       fontSize: 13,
-                      color: Color(0xFF788596),
+                      color: Color(0xFF636366),
                     ),
                     filled: false,
                     fillColor: Colors.transparent,
@@ -1806,7 +1804,7 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                       child: Icon(
                         Icons.search_rounded,
                         size: 16,
-                        color: Color(0xFF9CB5FF),
+                        color: Color(0xFF0A84FF),
                       ),
                     ),
                     isDense: true,
@@ -1834,7 +1832,7 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                             icon: const Icon(
                               Icons.clear_rounded,
                               size: 16,
-                              color: Color(0xFF9BA6B4),
+                              color: Color(0xFF8E8E93),
                             ),
                             onPressed: () {
                               _searchController.clear();
@@ -1850,9 +1848,9 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
               Expanded(
                 child: Container(
                   decoration: BoxDecoration(
-                    color: const Color(0xFF162032),
+                    color: const Color(0xFF1C1C1E),
                     borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: const Color(0xFF243044)),
+                    border: Border.all(color: const Color(0xFF2C2C2E)),
                   ),
                   clipBehavior: Clip.antiAlias,
                   child: filtered.isEmpty
@@ -1865,13 +1863,13 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                                 Icon(
                                   Icons.search_off_rounded,
                                   size: 32,
-                                  color: Color(0xFF788596),
+                                  color: Color(0xFF636366),
                                 ),
                                 SizedBox(height: 8),
                                 Text(
                                   'No matching models found.',
                                   style: TextStyle(
-                                    color: Color(0xFF9BA6B4),
+                                    color: Color(0xFF8E8E93),
                                     fontSize: 13,
                                   ),
                                 ),
@@ -1888,7 +1886,7 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                             thickness: 1,
                             indent: 16,
                             endIndent: 16,
-                            color: Color(0xFF243044),
+                            color: Color(0xFF2C2C2E),
                           ),
                           itemBuilder: (context, index) {
                             final p = filtered[index];
@@ -1900,7 +1898,7 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                               onTap: () => Navigator.of(context).pop(p),
                               child: Container(
                                 color: isSelected
-                                    ? const Color(0xFF1E2A3E)
+                                    ? const Color(0xFF2C2C2E)
                                     : Colors.transparent,
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 16,
@@ -1921,7 +1919,7 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                                                   ? FontWeight.w700
                                                   : FontWeight.w600,
                                               color: isSelected
-                                                  ? const Color(0xFF9CB5FF)
+                                                  ? const Color(0xFF0A84FF)
                                                   : Colors.white,
                                             ),
                                           ),
@@ -1930,7 +1928,7 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                                             '${p.brand} · $cameraSummary',
                                             style: const TextStyle(
                                               fontSize: 11,
-                                              color: Color(0xFF9BA6B4),
+                                              color: Color(0xFF8E8E93),
                                             ),
                                           ),
                                         ],
@@ -1941,13 +1939,13 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                                         width: 20,
                                         height: 20,
                                         decoration: const BoxDecoration(
-                                          color: Color(0xFF9CB5FF),
+                                          color: Color(0xFF0A84FF),
                                           shape: BoxShape.circle,
                                         ),
                                         child: const Icon(
                                           Icons.check_rounded,
                                           size: 13,
-                                          color: Color(0xFF0F1B2E),
+                                          color: Color(0xFFFFFFFF),
                                         ),
                                       ),
                                   ],
@@ -2022,7 +2020,7 @@ class _BrandPickerSheet extends StatelessWidget {
               height: 5,
               margin: const EdgeInsets.only(bottom: 14),
               decoration: BoxDecoration(
-                color: const Color(0xFF323E52),
+                color: const Color(0xFF3A3A3C),
                 borderRadius: BorderRadius.circular(2.5),
               ),
             ),
@@ -2045,7 +2043,7 @@ class _BrandPickerSheet extends StatelessWidget {
                         '${brands.length} camera manufacturers available',
                         style: const TextStyle(
                           fontSize: 11,
-                          color: Color(0xFF9BA6B4),
+                          color: Color(0xFF8E8E93),
                         ),
                       ),
                     ],
@@ -2064,13 +2062,13 @@ class _BrandPickerSheet extends StatelessWidget {
                         width: 28,
                         height: 28,
                         decoration: const BoxDecoration(
-                          color: Color(0xFF243044),
+                          color: Color(0xFF2C2C2E),
                           shape: BoxShape.circle,
                         ),
                         child: const Icon(
                           Icons.close_rounded,
                           size: 16,
-                          color: Color(0xFF9BA6B4),
+                          color: Color(0xFF8E8E93),
                         ),
                       ),
                     ),
@@ -2082,9 +2080,9 @@ class _BrandPickerSheet extends StatelessWidget {
             Flexible(
               child: Container(
                 decoration: BoxDecoration(
-                  color: const Color(0xFF162032),
+                  color: const Color(0xFF1C1C1E),
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFF243044)),
+                  border: Border.all(color: const Color(0xFF2C2C2E)),
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: ListView.separated(
@@ -2097,7 +2095,7 @@ class _BrandPickerSheet extends StatelessWidget {
                     thickness: 1,
                     indent: 56,
                     endIndent: 16,
-                    color: Color(0xFF243044),
+                    color: Color(0xFF2C2C2E),
                   ),
                   itemBuilder: (context, index) {
                     final b = brands[index];
@@ -2106,7 +2104,7 @@ class _BrandPickerSheet extends StatelessWidget {
                       onTap: () => Navigator.of(context).pop(b),
                       child: Container(
                         color: isSelected
-                            ? const Color(0xFF1E2A3E)
+                            ? const Color(0xFF2C2C2E)
                             : Colors.transparent,
                         padding: const EdgeInsets.symmetric(
                           horizontal: 16,
@@ -2118,7 +2116,7 @@ class _BrandPickerSheet extends StatelessWidget {
                               width: 28,
                               height: 28,
                               decoration: BoxDecoration(
-                                color: const Color(0xFF243044),
+                                color: const Color(0xFF2C2C2E),
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               alignment: Alignment.center,
@@ -2144,7 +2142,7 @@ class _BrandPickerSheet extends StatelessWidget {
                                           ? FontWeight.w700
                                           : FontWeight.w600,
                                       color: isSelected
-                                          ? const Color(0xFF9CB5FF)
+                                          ? const Color(0xFF0A84FF)
                                           : Colors.white,
                                     ),
                                   ),
@@ -2153,7 +2151,7 @@ class _BrandPickerSheet extends StatelessWidget {
                                     _brandSubtitle(b),
                                     style: const TextStyle(
                                       fontSize: 11,
-                                      color: Color(0xFF9BA6B4),
+                                      color: Color(0xFF8E8E93),
                                     ),
                                   ),
                                 ],
@@ -2164,13 +2162,13 @@ class _BrandPickerSheet extends StatelessWidget {
                                 width: 20,
                                 height: 20,
                                 decoration: const BoxDecoration(
-                                  color: Color(0xFF9CB5FF),
+                                  color: Color(0xFF0A84FF),
                                   shape: BoxShape.circle,
                                 ),
                                 child: const Icon(
                                   Icons.check_rounded,
                                   size: 13,
-                                  color: Color(0xFF0F1B2E),
+                                  color: Color(0xFFFFFFFF),
                                 ),
                               ),
                           ],
@@ -2233,7 +2231,7 @@ class _CameraPickerSheet extends StatelessWidget {
               height: 5,
               margin: const EdgeInsets.only(bottom: 14),
               decoration: BoxDecoration(
-                color: const Color(0xFF323E52),
+                color: const Color(0xFF3A3A3C),
                 borderRadius: BorderRadius.circular(2.5),
               ),
             ),
@@ -2259,14 +2257,14 @@ class _CameraPickerSheet extends StatelessWidget {
                               profileModel!,
                               style: const TextStyle(
                                 fontSize: 11,
-                                color: Color(0xFF9BA6B4),
+                                color: Color(0xFF8E8E93),
                               ),
                             ),
                             Text(
                               ' · $lensSummary',
                               style: const TextStyle(
                                 fontSize: 11,
-                                color: Color(0xFF9BA6B4),
+                                color: Color(0xFF8E8E93),
                               ),
                             ),
                           ],
@@ -2288,13 +2286,13 @@ class _CameraPickerSheet extends StatelessWidget {
                         width: 28,
                         height: 28,
                         decoration: const BoxDecoration(
-                          color: Color(0xFF243044),
+                          color: Color(0xFF2C2C2E),
                           shape: BoxShape.circle,
                         ),
                         child: const Icon(
                           Icons.close_rounded,
                           size: 16,
-                          color: Color(0xFF9BA6B4),
+                          color: Color(0xFF8E8E93),
                         ),
                       ),
                     ),
@@ -2306,9 +2304,9 @@ class _CameraPickerSheet extends StatelessWidget {
             Flexible(
               child: Container(
                 decoration: BoxDecoration(
-                  color: const Color(0xFF162032),
+                  color: const Color(0xFF1C1C1E),
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFF243044)),
+                  border: Border.all(color: const Color(0xFF2C2C2E)),
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: ListView.separated(
@@ -2321,7 +2319,7 @@ class _CameraPickerSheet extends StatelessWidget {
                     thickness: 1,
                     indent: 16,
                     endIndent: 16,
-                    color: Color(0xFF243044),
+                    color: Color(0xFF2C2C2E),
                   ),
                   itemBuilder: (context, index) {
                     final c = cameras[index];
@@ -2331,7 +2329,7 @@ class _CameraPickerSheet extends StatelessWidget {
                       onTap: () => Navigator.of(context).pop(c),
                       child: Container(
                         color: isSelected
-                            ? const Color(0xFF1E2A3E)
+                            ? const Color(0xFF2C2C2E)
                             : Colors.transparent,
                         padding: const EdgeInsets.symmetric(
                           horizontal: 16,
@@ -2351,7 +2349,7 @@ class _CameraPickerSheet extends StatelessWidget {
                                           ? FontWeight.w700
                                           : FontWeight.w600,
                                       color: isSelected
-                                          ? const Color(0xFF9CB5FF)
+                                          ? const Color(0xFF0A84FF)
                                           : Colors.white,
                                     ),
                                   ),
@@ -2361,7 +2359,7 @@ class _CameraPickerSheet extends StatelessWidget {
                                       subtitle,
                                       style: const TextStyle(
                                         fontSize: 11,
-                                        color: Color(0xFF9BA6B4),
+                                        color: Color(0xFF8E8E93),
                                       ),
                                     ),
                                   ],
@@ -2373,13 +2371,13 @@ class _CameraPickerSheet extends StatelessWidget {
                                 width: 20,
                                 height: 20,
                                 decoration: const BoxDecoration(
-                                  color: Color(0xFF9CB5FF),
+                                  color: Color(0xFF0A84FF),
                                   shape: BoxShape.circle,
                                 ),
                                 child: const Icon(
                                   Icons.check_rounded,
                                   size: 13,
-                                  color: Color(0xFF0F1B2E),
+                                  color: Color(0xFFFFFFFF),
                                 ),
                               ),
                           ],
