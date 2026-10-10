@@ -517,9 +517,9 @@ class _MetadataFormState extends State<MetadataForm>
     final selected = await showModalBottomSheet<CameraProfile>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF191E25),
+      backgroundColor: const Color(0xFF0F141C),
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       builder: (ctx) => _ModelSearchSheet(
         availableProfiles: availableProfiles,
@@ -539,16 +539,21 @@ class _MetadataFormState extends State<MetadataForm>
 
   Future<void> _openBrandPickerSheet(
     BuildContext context,
-    List<String> brands,
-  ) async {
+    List<String> brands, {
+    List<CameraProfile>? profiles,
+  }) async {
     final selected = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF191E25),
+      backgroundColor: const Color(0xFF0F141C),
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      builder: (ctx) => _BrandPickerSheet(brands: brands, selectedBrand: brand),
+      builder: (ctx) => _BrandPickerSheet(
+        brands: brands,
+        selectedBrand: brand,
+        profiles: profiles,
+      ),
     );
     if (selected != null && mounted && selected != brand) {
       setState(() {
@@ -567,9 +572,9 @@ class _MetadataFormState extends State<MetadataForm>
     final selected = await showModalBottomSheet<ProfileCamera>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF191E25),
+      backgroundColor: const Color(0xFF0F141C),
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       builder: (ctx) => _CameraPickerSheet(
         cameras: cameras,
@@ -1026,7 +1031,8 @@ class _MetadataFormState extends State<MetadataForm>
                 label: 'Brand',
                 value: brand ?? 'Select brand',
                 enabled: true,
-                onTap: () => _openBrandPickerSheet(context, brands),
+                onTap: () =>
+                    _openBrandPickerSheet(context, brands, profiles: profiles),
               ),
               const SizedBox(height: 8),
               _buildSelectorField(
@@ -1685,6 +1691,10 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
           p.brand.toLowerCase().contains(query);
     }).toList();
 
+    final brandName = widget.availableProfiles.isNotEmpty
+        ? widget.availableProfiles.first.brand
+        : 'Camera';
+
     return DraggableScrollableSheet(
       initialChildSize: 0.65,
       minChildSize: 0.4,
@@ -1703,102 +1713,223 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
             children: [
               Container(
                 width: 36,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 16),
+                height: 5,
+                margin: const EdgeInsets.only(bottom: 14),
                 decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(2),
+                  color: const Color(0xFF323E52),
+                  borderRadius: BorderRadius.circular(2.5),
                 ),
               ),
               Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      'Select Camera Model',
-                      style: Theme.of(context).textTheme.titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w700),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Select Camera Model',
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                              ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '$brandName catalog · ${widget.availableProfiles.length} profiles',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Color(0xFF9BA6B4),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.close, size: 20),
-                    onPressed: () => Navigator.of(context).pop(),
+                  InkWell(
+                    onTap: () => Navigator.of(context).pop(),
+                    borderRadius: BorderRadius.circular(22),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(
+                        minWidth: 44,
+                        minHeight: 44,
+                      ),
+                      child: Center(
+                        child: Container(
+                          width: 28,
+                          height: 28,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF243044),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.close_rounded,
+                            size: 16,
+                            color: Color(0xFF9BA6B4),
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _searchController,
-                autofocus: false,
-                decoration: InputDecoration(
-                  hintText: 'Search models…',
-                  prefixIcon: const Icon(Icons.search, size: 20),
-                  isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                  suffixIcon: _searchController.text.isNotEmpty
-                      ? IconButton(
-                          icon: const Icon(Icons.clear, size: 18),
-                          onPressed: () {
-                            _searchController.clear();
-                            setState(() {});
-                          },
-                        )
-                      : null,
+              const SizedBox(height: 14),
+              Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF162032),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFF243044)),
                 ),
-                onChanged: (_) => setState(() {}),
-              ),
-              const SizedBox(height: 12),
-              Expanded(
-                child: filtered.isEmpty
-                    ? const Center(
-                        child: Text(
-                          'No matching models found.',
-                          style: TextStyle(color: Colors.white60),
-                        ),
-                      )
-                    : ListView.separated(
-                        controller: scrollController,
-                        itemCount: filtered.length,
-                        separatorBuilder: (context, index) =>
-                            const Divider(height: 1),
-                        itemBuilder: (context, index) {
-                          final p = filtered[index];
-                          final isSelected = widget.selectedProfileId == p.id;
-                          return ListTile(
-                            dense: true,
-                            title: Text(
-                              p.model,
-                              style: TextStyle(
-                                fontWeight: isSelected
-                                    ? FontWeight.w700
-                                    : FontWeight.w500,
-                                color: isSelected
-                                    ? const Color(0xFF9CB5FF)
-                                    : Colors.white,
-                              ),
+                child: TextField(
+                  controller: _searchController,
+                  autofocus: false,
+                  style: const TextStyle(fontSize: 13, color: Colors.white),
+                  decoration: InputDecoration(
+                    hintText: 'Search $brandName models…',
+                    hintStyle: const TextStyle(
+                      fontSize: 13,
+                      color: Color(0xFF788596),
+                    ),
+                    prefixIcon: const Icon(
+                      Icons.search_rounded,
+                      size: 18,
+                      color: Color(0xFF9CB5FF),
+                    ),
+                    isDense: true,
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    suffixIcon: _searchController.text.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(
+                              Icons.clear_rounded,
+                              size: 16,
+                              color: Color(0xFF9BA6B4),
                             ),
-                            subtitle: Text(
-                              '${p.brand} · ${p.cameras.length} camera(s)',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Colors.white60,
-                              ),
-                            ),
-                            trailing: isSelected
-                                ? const Icon(
-                                    Icons.check_rounded,
-                                    color: Color(0xFF9CB5FF),
-                                    size: 20,
-                                  )
-                                : null,
-                            onTap: () {
-                              Navigator.of(context).pop(p);
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() {});
                             },
-                          );
-                        },
-                      ),
+                          )
+                        : null,
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF162032),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0xFF243044)),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: filtered.isEmpty
+                      ? const Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(24),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.search_off_rounded,
+                                  size: 32,
+                                  color: Color(0xFF788596),
+                                ),
+                                SizedBox(height: 8),
+                                Text(
+                                  'No matching models found.',
+                                  style: TextStyle(
+                                    color: Color(0xFF9BA6B4),
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      : ListView.separated(
+                          controller: scrollController,
+                          padding: EdgeInsets.zero,
+                          itemCount: filtered.length,
+                          separatorBuilder: (context, index) => const Divider(
+                            height: 1,
+                            thickness: 1,
+                            indent: 16,
+                            endIndent: 16,
+                            color: Color(0xFF243044),
+                          ),
+                          itemBuilder: (context, index) {
+                            final p = filtered[index];
+                            final isSelected = widget.selectedProfileId == p.id;
+                            final cameraSummary = p.cameras.length == 1
+                                ? '1 camera'
+                                : '${p.cameras.length} cameras';
+                            return InkWell(
+                              onTap: () => Navigator.of(context).pop(p),
+                              child: Container(
+                                color: isSelected
+                                    ? const Color(0xFF1E2A3E)
+                                    : Colors.transparent,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 12,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            p.model,
+                                            style: TextStyle(
+                                              fontSize: 13,
+                                              fontWeight: isSelected
+                                                  ? FontWeight.w700
+                                                  : FontWeight.w600,
+                                              color: isSelected
+                                                  ? const Color(0xFF9CB5FF)
+                                                  : Colors.white,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            '${p.brand} · $cameraSummary',
+                                            style: const TextStyle(
+                                              fontSize: 11,
+                                              color: Color(0xFF9BA6B4),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    if (isSelected)
+                                      Container(
+                                        width: 20,
+                                        height: 20,
+                                        decoration: const BoxDecoration(
+                                          color: Color(0xFF9CB5FF),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: const Icon(
+                                          Icons.check_rounded,
+                                          size: 13,
+                                          color: Color(0xFF0F1B2E),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                ),
               ),
             ],
           ),
@@ -1809,76 +1940,218 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
 }
 
 class _BrandPickerSheet extends StatelessWidget {
-  const _BrandPickerSheet({required this.brands, required this.selectedBrand});
+  const _BrandPickerSheet({
+    required this.brands,
+    required this.selectedBrand,
+    this.profiles,
+  });
 
   final List<String> brands;
   final String? selectedBrand;
+  final List<CameraProfile>? profiles;
+
+  String _brandGlyph(String brand) {
+    switch (brand.toLowerCase()) {
+      case 'apple':
+        return '';
+      case 'google':
+        return 'G';
+      case 'samsung':
+        return 'S';
+      default:
+        return brand.isNotEmpty ? brand.substring(0, 1).toUpperCase() : '?';
+    }
+  }
+
+  String _brandSubtitle(String brand) {
+    final count = profiles?.where((p) => p.brand == brand).length;
+    if (brand.toLowerCase() == 'apple') {
+      return count != null
+          ? '$count researched iPhone models'
+          : 'Apple iPhone models';
+    } else if (brand.toLowerCase() == 'google') {
+      return count != null
+          ? '$count Pixel phone models'
+          : 'Google Pixel models';
+    } else if (brand.toLowerCase() == 'samsung') {
+      return count != null
+          ? '$count Galaxy S-series models'
+          : 'Samsung Galaxy models';
+    }
+    return count != null ? '$count camera models' : '$brand models';
+  }
 
   @override
   Widget build(BuildContext context) {
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
               width: 36,
-              height: 4,
-              margin: const EdgeInsets.only(bottom: 16),
+              height: 5,
+              margin: const EdgeInsets.only(bottom: 14),
               decoration: BoxDecoration(
-                color: Colors.white24,
-                borderRadius: BorderRadius.circular(2),
+                color: const Color(0xFF323E52),
+                borderRadius: BorderRadius.circular(2.5),
               ),
             ),
             Row(
               children: [
                 Expanded(
-                  child: Text(
-                    'Select Brand',
-                    style: Theme.of(context).textTheme.titleMedium
-                        ?.copyWith(fontWeight: FontWeight.w700),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Select Brand',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${brands.length} camera manufacturers available',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF9BA6B4),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.close, size: 20),
-                  onPressed: () => Navigator.of(context).pop(),
+                InkWell(
+                  onTap: () => Navigator.of(context).pop(),
+                  borderRadius: BorderRadius.circular(22),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      minWidth: 44,
+                      minHeight: 44,
+                    ),
+                    child: Center(
+                      child: Container(
+                        width: 28,
+                        height: 28,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF243044),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.close_rounded,
+                          size: 16,
+                          color: Color(0xFF9BA6B4),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ],
             ),
-            const Divider(height: 16),
+            const SizedBox(height: 16),
             Flexible(
-              child: ListView.separated(
-                shrinkWrap: true,
-                itemCount: brands.length,
-                separatorBuilder: (context, index) => const Divider(height: 1),
-                itemBuilder: (context, index) {
-                  final b = brands[index];
-                  final isSelected = selectedBrand == b;
-                  return ListTile(
-                    dense: true,
-                    title: Text(
-                      b,
-                      style: TextStyle(
-                        fontWeight: isSelected
-                            ? FontWeight.w700
-                            : FontWeight.w500,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF162032),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFF243044)),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  physics: const ClampingScrollPhysics(),
+                  padding: EdgeInsets.zero,
+                  itemCount: brands.length,
+                  separatorBuilder: (context, index) => const Divider(
+                    height: 1,
+                    thickness: 1,
+                    indent: 56,
+                    endIndent: 16,
+                    color: Color(0xFF243044),
+                  ),
+                  itemBuilder: (context, index) {
+                    final b = brands[index];
+                    final isSelected = selectedBrand == b;
+                    return InkWell(
+                      onTap: () => Navigator.of(context).pop(b),
+                      child: Container(
                         color: isSelected
-                            ? const Color(0xFF9CB5FF)
-                            : Colors.white,
+                            ? const Color(0xFF1E2A3E)
+                            : Colors.transparent,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 28,
+                              height: 28,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF243044),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              alignment: Alignment.center,
+                              child: Text(
+                                _brandGlyph(b),
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    b,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: isSelected
+                                          ? FontWeight.w700
+                                          : FontWeight.w600,
+                                      color: isSelected
+                                          ? const Color(0xFF9CB5FF)
+                                          : Colors.white,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 1),
+                                  Text(
+                                    _brandSubtitle(b),
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      color: Color(0xFF9BA6B4),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (isSelected)
+                              Container(
+                                width: 20,
+                                height: 20,
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFF9CB5FF),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.check_rounded,
+                                  size: 13,
+                                  color: Color(0xFF0F1B2E),
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
-                    ),
-                    trailing: isSelected
-                        ? const Icon(
-                            Icons.check_rounded,
-                            color: Color(0xFF9CB5FF),
-                            size: 20,
-                          )
-                        : null,
-                    onTap: () => Navigator.of(context).pop(b),
-                  );
-                },
+                    );
+                  },
+                ),
               ),
             ),
           ],
@@ -1899,22 +2172,46 @@ class _CameraPickerSheet extends StatelessWidget {
   final String? selectedCameraId;
   final String? profileModel;
 
+  String? _cameraSubtitle(ProfileCamera c) {
+    final parts = <String>[];
+    if (c.fields.containsKey('focalLength35mm')) {
+      parts.add('${c.fields['focalLength35mm']}mm equivalent');
+    } else if (c.fields.containsKey('focalLength')) {
+      parts.add('${c.fields['focalLength']}mm');
+    }
+    if (c.fields.containsKey('fNumber')) {
+      parts.add('f/${c.fields['fNumber']}');
+    }
+    if (c.fields.containsKey('focalLength') &&
+        c.fields.containsKey('focalLength35mm')) {
+      parts.add('${c.fields['focalLength']}mm physical');
+    }
+    if (parts.isNotEmpty) {
+      return parts.join(' · ');
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final lensSummary = cameras.length == 1
+        ? '1 lens'
+        : '${cameras.length} lenses';
+
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
               width: 36,
-              height: 4,
-              margin: const EdgeInsets.only(bottom: 16),
+              height: 5,
+              margin: const EdgeInsets.only(bottom: 14),
               decoration: BoxDecoration(
-                color: Colors.white24,
-                borderRadius: BorderRadius.circular(2),
+                color: const Color(0xFF323E52),
+                borderRadius: BorderRadius.circular(2.5),
               ),
             ),
             Row(
@@ -1926,69 +2223,148 @@ class _CameraPickerSheet extends StatelessWidget {
                       Text(
                         'Select Camera',
                         style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w700),
+                            ?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
                       ),
-                      if (profileModel != null)
-                        Text(
-                          profileModel!,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Colors.white60,
-                          ),
-                          overflow: TextOverflow.ellipsis,
+                      if (profileModel != null) ...[
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            Text(
+                              profileModel!,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Color(0xFF9BA6B4),
+                              ),
+                            ),
+                            Text(
+                              ' · $lensSummary',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Color(0xFF9BA6B4),
+                              ),
+                            ),
+                          ],
                         ),
+                      ],
                     ],
                   ),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.close, size: 20),
-                  onPressed: () => Navigator.of(context).pop(),
+                InkWell(
+                  onTap: () => Navigator.of(context).pop(),
+                  borderRadius: BorderRadius.circular(22),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      minWidth: 44,
+                      minHeight: 44,
+                    ),
+                    child: Center(
+                      child: Container(
+                        width: 28,
+                        height: 28,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF243044),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.close_rounded,
+                          size: 16,
+                          color: Color(0xFF9BA6B4),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ],
             ),
-            const Divider(height: 16),
+            const SizedBox(height: 16),
             Flexible(
-              child: ListView.separated(
-                shrinkWrap: true,
-                itemCount: cameras.length,
-                separatorBuilder: (context, index) => const Divider(height: 1),
-                itemBuilder: (context, index) {
-                  final c = cameras[index];
-                  final isSelected = selectedCameraId == c.id;
-                  return ListTile(
-                    dense: true,
-                    title: Text(
-                      c.name,
-                      style: TextStyle(
-                        fontWeight: isSelected
-                            ? FontWeight.w700
-                            : FontWeight.w500,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF162032),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFF243044)),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  physics: const ClampingScrollPhysics(),
+                  padding: EdgeInsets.zero,
+                  itemCount: cameras.length,
+                  separatorBuilder: (context, index) => const Divider(
+                    height: 1,
+                    thickness: 1,
+                    indent: 16,
+                    endIndent: 16,
+                    color: Color(0xFF243044),
+                  ),
+                  itemBuilder: (context, index) {
+                    final c = cameras[index];
+                    final isSelected = selectedCameraId == c.id;
+                    final subtitle = _cameraSubtitle(c);
+                    return InkWell(
+                      onTap: () => Navigator.of(context).pop(c),
+                      child: Container(
                         color: isSelected
-                            ? const Color(0xFF9CB5FF)
-                            : Colors.white,
-                      ),
-                    ),
-                    subtitle:
-                        c.fields.containsKey('focalLength') &&
-                            c.fields.containsKey('fNumber')
-                        ? Text(
-                            '${c.fields['focalLength']}mm · f/${c.fields['fNumber']}',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Colors.white60,
+                            ? const Color(0xFF1E2A3E)
+                            : Colors.transparent,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    c.name,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: isSelected
+                                          ? FontWeight.w700
+                                          : FontWeight.w600,
+                                      color: isSelected
+                                          ? const Color(0xFF9CB5FF)
+                                          : Colors.white,
+                                    ),
+                                  ),
+                                  if (subtitle != null) ...[
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      subtitle,
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: Color(0xFF9BA6B4),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
                             ),
-                          )
-                        : null,
-                    trailing: isSelected
-                        ? const Icon(
-                            Icons.check_rounded,
-                            color: Color(0xFF9CB5FF),
-                            size: 20,
-                          )
-                        : null,
-                    onTap: () => Navigator.of(context).pop(c),
-                  );
-                },
+                            if (isSelected)
+                              Container(
+                                width: 20,
+                                height: 20,
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFF9CB5FF),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.check_rounded,
+                                  size: 13,
+                                  color: Color(0xFF0F1B2E),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ),
             ),
           ],
