@@ -200,7 +200,7 @@ public enum MetadataEngine {
         if brand == "qt  " { return .mov }
         var brands = [brand]
         if data.count >= 16 {
-            let limit = min(data.count, boxSize >= 16 ? boxSize : data.count)
+            let limit = boxSize == 0 ? data.count : min(data.count, boxSize)
             var offset = 16
             while offset + 4 <= limit {
                 brands.append(String(decoding: data[offset..<offset + 4], as: UTF8.self))

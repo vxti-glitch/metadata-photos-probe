@@ -367,8 +367,9 @@ private enum VideoBMFF {
         var prefixLength = 0
         if body.count >= 4 { if try u32(body, 0) == 0 { prefixLength = 4 } }
         let children = try atoms(body.subdata(in: prefixLength..<body.count))
-        try only(children, ["hdlr", "keys", "ilst", "mhdr", "ctry", "lang", "free"])
-        _ = try unique(children, "hdlr")
+        if let hdlr = try? unique(children, "hdlr"), (try? u32(hdlr.payload, 8)) == code("mdta") {
+            try only(children, ["hdlr", "keys", "ilst", "mhdr", "ctry", "lang", "free"])
+        }
         return (Data(body.prefix(prefixLength)), children)
     }
     static func retainUserData(_ item: Atom, patch: MetadataPatch) throws -> Data {
