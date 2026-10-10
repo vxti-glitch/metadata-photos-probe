@@ -94,6 +94,7 @@ class EditorHome extends StatefulWidget {
 
 class _EditorHomeState extends State<EditorHome> {
   late final EditorController controller;
+  int _selectedTabIndex = 0;
   @override
   void initState() {
     super.initState();
@@ -118,8 +119,10 @@ class _EditorHomeState extends State<EditorHome> {
     final session = controller.selected;
     final isBatch =
         controller.isBatchMode && controller.batchSelection.isNotEmpty;
-    return Scaffold(
-      appBar: AppBar(
+
+    PreferredSizeWidget? appBar;
+    if (_selectedTabIndex == 0) {
+      appBar = AppBar(
         leading: (session == null && !isBatch)
             ? null
             : IconButton(
@@ -171,6 +174,16 @@ class _EditorHomeState extends State<EditorHome> {
         ),
         actions: [
           IconButton(
+            key: const Key('openErrorGuideFromBar'),
+            tooltip: 'Error Codes & Fixes',
+            icon: Badge(
+              isLabelVisible: controller.lastErrorCode != null,
+              backgroundColor: const Color(0xFFFF453A),
+              child: const Icon(Icons.help_outline_rounded),
+            ),
+            onPressed: () => setState(() => _selectedTabIndex = 1),
+          ),
+          IconButton(
             key: const Key('openSettings'),
             tooltip: 'Settings',
             icon: const Icon(Icons.settings_outlined),
@@ -181,8 +194,63 @@ class _EditorHomeState extends State<EditorHome> {
             ),
           ),
         ],
-      ),
-      body: SafeArea(
+      );
+    } else if (_selectedTabIndex == 1) {
+      appBar = AppBar(
+        title: const Row(
+          children: [
+            Icon(Icons.menu_book_rounded, color: _accent, size: 20),
+            SizedBox(width: 10),
+            Text(
+              'ERROR CODES & FIXES',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.5,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          if (controller.lastErrorCode != null)
+            TextButton.icon(
+              key: const Key('clearLastErrorBarButton'),
+              icon: const Icon(
+                Icons.check_circle_outline_rounded,
+                size: 16,
+                color: Color(0xFF30D158),
+              ),
+              label: const Text(
+                'Clear Active',
+                style: TextStyle(color: Color(0xFF30D158), fontSize: 13),
+              ),
+              onPressed: controller.clearLastError,
+            ),
+          IconButton(
+            key: const Key('openSettings'),
+            tooltip: 'Settings',
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => SettingsScreen(controller: controller),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    Widget body;
+    if (_selectedTabIndex == 1) {
+      body = ErrorGuideSheet(
+        highlightedCode: controller.lastErrorCode,
+        isModal: false,
+        controller: controller,
+      );
+    } else if (_selectedTabIndex == 2) {
+      body = SettingsScreen(controller: controller, isTab: true);
+    } else {
+      body = SafeArea(
         top: false,
         child: Align(
           alignment: Alignment.topCenter,
@@ -195,10 +263,12 @@ class _EditorHomeState extends State<EditorHome> {
                   child: Column(
                     children: [
                       if (controller.error != null)
-                        _Message(
-                          text: controller.error!,
-                          error: true,
-                          dismiss: controller.dismissMessage,
+                        _DiagnosticErrorBanner(
+                          rawError: controller.error!,
+                          errorCode: controller.lastErrorCode,
+                          onViewFix: () =>
+                              setState(() => _selectedTabIndex = 1),
+                          onDismiss: controller.dismissMessage,
                         ),
                       if (controller.notice != null)
                         _Message(
@@ -252,6 +322,40 @@ class _EditorHomeState extends State<EditorHome> {
             ),
           ),
         ),
+      );
+    }
+
+    return Scaffold(
+      appBar: appBar,
+      body: body,
+      bottomNavigationBar: NavigationBar(
+        key: const Key('mainNavigationBar'),
+        selectedIndex: _selectedTabIndex,
+        onDestinationSelected: (index) =>
+            setState(() => _selectedTabIndex = index),
+        backgroundColor: const Color(0xFF121214),
+        indicatorColor: _accent.withValues(alpha: 0.25),
+        destinations: [
+          const NavigationDestination(
+            key: Key('tabEditor'),
+            icon: Icon(Icons.tune_rounded),
+            label: 'Editor',
+          ),
+          NavigationDestination(
+            key: const Key('tabErrorCodes'),
+            icon: Badge(
+              isLabelVisible: controller.lastErrorCode != null,
+              backgroundColor: const Color(0xFFFF453A),
+              child: const Icon(Icons.menu_book_rounded),
+            ),
+            label: 'Error Codes',
+          ),
+          const NavigationDestination(
+            key: Key('tabSettings'),
+            icon: Icon(Icons.settings_outlined),
+            label: 'Settings',
+          ),
+        ],
       ),
     );
   }
@@ -821,14 +925,138 @@ class WorkflowNote extends StatelessWidget {
 
 typedef _WorkflowNote = WorkflowNote;
 
-class _Message extends StatelessWidget {
-  const _Message({
-    required this.text,
-    required this.dismiss,
-    this.error = false,
+class _DiagnosticErrorBanner extends StatelessWidget {
+  const _DiagnosticErrorBanner({
+    required this.rawError,
+    required this.errorCode,
+    required this.onViewFix,
+    required this.onDismiss,
   });
+
+  final String rawError;
+  final String? errorCode;
+  final VoidCallback onViewFix;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final simplified = simplifyUserError(rawError);
+    final code = errorCode ?? 'ERR_GENERAL';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Container(
+        key: const Key('diagnosticErrorBanner'),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: const Color(0xFF221114),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: const Color(0xFFFF453A).withValues(alpha: 0.6),
+            width: 1.2,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFF453A).withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: const Color(0xFFFF453A).withValues(alpha: 0.4),
+                    ),
+                  ),
+                  child: Text(
+                    code,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFFFF453A),
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Attention Needed',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  key: const Key('dismissErrorBannerButton'),
+                  tooltip: 'Dismiss message',
+                  onPressed: onDismiss,
+                  icon: const Icon(Icons.close, size: 18, color: _muted),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              simplified,
+              style: const TextStyle(
+                fontSize: 13,
+                color: Color(0xFFE5E5EA),
+                height: 1.45,
+              ),
+            ),
+            if (simplified != rawError)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  rawError,
+                  style: const TextStyle(fontSize: 11, color: _muted),
+                ),
+              ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                FilledButton.icon(
+                  key: const Key('viewSolutionButton'),
+                  onPressed: onViewFix,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFFFF453A),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 8,
+                    ),
+                    minimumSize: const Size(0, 36),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  icon: const Icon(Icons.lightbulb_outline_rounded, size: 16),
+                  label: const Text(
+                    'View Solution & Steps',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Message extends StatelessWidget {
+  const _Message({required this.text, required this.dismiss});
   final String text;
-  final bool error;
   final VoidCallback dismiss;
   @override
   Widget build(BuildContext context) => Padding(
@@ -836,9 +1064,9 @@ class _Message extends StatelessWidget {
     child: Container(
       padding: const EdgeInsets.fromLTRB(14, 10, 4, 10),
       decoration: BoxDecoration(
-        color: error ? const Color(0xFF2C1518) : _surface,
+        color: _surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: error ? const Color(0xFF5A2026) : _border),
+        border: Border.all(color: _border),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,

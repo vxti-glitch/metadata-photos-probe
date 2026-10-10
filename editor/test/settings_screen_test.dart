@@ -418,4 +418,100 @@ void main() {
       expect(find.text('Privacy Guarantee'), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'Main navigation bar switches between Editor, Error Codes, and Settings tabs',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(home: MetadataEditorApp(controller: controller)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('mainNavigationBar')), findsOneWidget);
+      expect(find.byKey(const Key('tabEditor')), findsOneWidget);
+      expect(find.byKey(const Key('tabErrorCodes')), findsOneWidget);
+      expect(find.byKey(const Key('tabSettings')), findsOneWidget);
+
+      // Tap Error Codes tab
+      await tester.tap(find.byKey(const Key('tabErrorCodes')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('ERROR CODES & FIXES'), findsOneWidget);
+      expect(find.text('Error Reference Guide'), findsOneWidget);
+      expect(find.text('8 error codes with diagnostic fixes'), findsOneWidget);
+
+      // Tap Settings tab
+      await tester.tap(find.byKey(const Key('tabSettings')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('SYSTEM HEALTH & DIAGNOSTICS'), findsOneWidget);
+
+      // Tap Editor tab
+      await tester.tap(find.byKey(const Key('tabEditor')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('LOCAL PROJECTS'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'DiagnosticErrorBanner displays simplified text, error code pill, and View Solution switches to Error Codes tab',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(home: MetadataEditorApp(controller: controller)),
+      );
+      await tester.pumpAndSettle();
+
+      // Trigger an integrity error
+      controller.error =
+          'Integrity verification mismatch: retained embedded metadata';
+      controller.recordError(controller.error!);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('diagnosticErrorBanner')), findsOneWidget);
+      expect(find.text('ERR_MEDIA_INTEGRITY'), findsOneWidget);
+      expect(find.text('Attention Needed'), findsOneWidget);
+      expect(
+        find.textContaining('Video metadata check failed'),
+        findsOneWidget,
+      );
+
+      // Tap View Solution & Steps
+      await tester.tap(find.byKey(const Key('viewSolutionButton')));
+      await tester.pumpAndSettle();
+
+      // Should have switched to Error Codes tab
+      expect(find.text('ERROR CODES & FIXES'), findsOneWidget);
+      expect(find.text('ERR_MEDIA_INTEGRITY'), findsWidgets);
+      expect(
+        find.byKey(const Key('justEncounteredBadge_ERR_MEDIA_INTEGRITY')),
+        findsOneWidget,
+      );
+      expect(find.text('JUST ENCOUNTERED'), findsOneWidget);
+
+      // Switch back to Editor and dismiss banner
+      await tester.tap(find.byKey(const Key('tabEditor')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('diagnosticErrorBanner')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('dismissErrorBannerButton')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('diagnosticErrorBanner')), findsNothing);
+    },
+  );
 }

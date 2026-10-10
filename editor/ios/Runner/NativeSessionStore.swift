@@ -261,8 +261,11 @@ actor NativeSessionStore {
         else { throw NativeMediaError.invalidArgument }
         try Task.checkCancellation()
         try Self.requireRegularFile(output, maximumBytes: mediaSizeLimit)
-        guard try WholeFileDigest.sha256(source) == original.sourceSHA256,
-              result.integrity.status != .mismatch else { throw NativeMediaError.processing }
+        guard try WholeFileDigest.sha256(source) == original.sourceSHA256 else { throw NativeMediaError.processing }
+        guard result.integrity.status != .mismatch else {
+            let failed = result.integrity.checks.filter { $0.status == .failed }.map(\.name).joined(separator: ", ")
+            throw ProbeError.writeFailed("Integrity verification mismatch: \(failed)")
+        }
         let outputDisplayName = try nextOutputDisplayName(extension: outputExtension)
         let processing = NativeProcessing(id: processingID, createdAt: Date(), patch: cameraPatch,
             metadataPatch: metadataPatch, outputDisplayName: outputDisplayName,

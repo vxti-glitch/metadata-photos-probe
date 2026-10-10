@@ -121,6 +121,10 @@ public enum MetadataEngine {
         }
         if let lens = patch.lens, outputInspection.metadata["lens"] != lens { throw ProbeError.readbackFailed("Requested lens is not present exactly") }
         let integrity = try await MediaIntegrity.compare(source: source, output: output, patch: patch)
+        guard integrity.status != .mismatch else {
+            let names = integrity.checks.filter { $0.status == .failed }.map(\.name).joined(separator: ", ")
+            throw ProbeError.writeFailed("Media or non-target metadata integrity check failed: \(names)")
+        }
         completed = true
         return ProcessingResult(outputURL: output, sourceInspection: sourceInspection, outputInspection: outputInspection, integrity: integrity)
     }

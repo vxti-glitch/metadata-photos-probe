@@ -347,8 +347,12 @@ String simplifyUserError(String message) {
   // Retained / competing metadata integrity conflict
   if (trimmed.contains('integrity verification failed') ||
       trimmed.contains('retained embedded metadata') ||
-      trimmed.contains('unqualified media structure')) {
-    return 'Conflicting metadata tags detected in this media file. Fix: select a clean Camera Profile (e.g. iPhone 15 Pro Max) to replace legacy tags, then tap "Process".';
+      trimmed.contains('Integrity check failed') ||
+      trimmed.contains('Integrity verification mismatch') ||
+      trimmed.contains('integrity verification mismatch') ||
+      trimmed.contains('unqualified media structure') ||
+      trimmed.contains('integrity')) {
+    return 'Video metadata check failed. The file\'s internal track headers or metadata tags conflicted with the requested changes. How to fix: tap "View Solution & Steps" below or select a clean Camera Profile before processing.';
   }
 
   // Storage / quota

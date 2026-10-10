@@ -19,9 +19,14 @@ const _iconBg = Color(0xFF2C2C2E);
 
 /// Grouped iOS Settings screen for Metadata Editor.
 class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({super.key, required this.controller});
+  const SettingsScreen({
+    super.key,
+    required this.controller,
+    this.isTab = false,
+  });
 
   final EditorController controller;
+  final bool isTab;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -29,12 +34,14 @@ class SettingsScreen extends StatelessWidget {
     appBar: AppBar(
       backgroundColor: _background,
       elevation: 0,
-      leading: IconButton(
-        key: const Key('settingsBackButton'),
-        tooltip: 'Back',
-        icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
-        onPressed: () => Navigator.of(context).pop(),
-      ),
+      leading: isTab
+          ? null
+          : IconButton(
+              key: const Key('settingsBackButton'),
+              tooltip: 'Back',
+              icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
       title: const Text(
         'Settings',
         style: TextStyle(
@@ -861,13 +868,29 @@ class SettingsScreen extends StatelessWidget {
   }
 
   void _openErrorGuideSheet(BuildContext context, {String? highlightedCode}) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => _ErrorGuideSheet(highlightedCode: highlightedCode),
+    openErrorGuideSheet(
+      context,
+      highlightedCode: highlightedCode,
+      controller: controller,
     );
   }
+}
+
+void openErrorGuideSheet(
+  BuildContext context, {
+  String? highlightedCode,
+  EditorController? controller,
+}) {
+  showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (context) => ErrorGuideSheet(
+      highlightedCode: highlightedCode,
+      isModal: true,
+      controller: controller,
+    ),
+  );
 }
 
 class ErrorGuideItem {
@@ -988,16 +1011,23 @@ const List<ErrorGuideItem> kErrorGuideCatalog = [
   ),
 ];
 
-class _ErrorGuideSheet extends StatefulWidget {
-  const _ErrorGuideSheet({this.highlightedCode});
+class ErrorGuideSheet extends StatefulWidget {
+  const ErrorGuideSheet({
+    super.key,
+    this.highlightedCode,
+    this.isModal = true,
+    this.controller,
+  });
 
   final String? highlightedCode;
+  final bool isModal;
+  final EditorController? controller;
 
   @override
-  State<_ErrorGuideSheet> createState() => _ErrorGuideSheetState();
+  State<ErrorGuideSheet> createState() => _ErrorGuideSheetState();
 }
 
-class _ErrorGuideSheetState extends State<_ErrorGuideSheet> {
+class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
   static const _categories = [
     'All',
     'Dates',
@@ -1015,12 +1045,9 @@ class _ErrorGuideSheetState extends State<_ErrorGuideSheet> {
   void initState() {
     super.initState();
     _searchController = TextEditingController();
-    _expandedCodes = {
-      if (widget.highlightedCode != null)
-        widget.highlightedCode!
-      else
-        'ERR_DATE_FMT',
-    };
+    final activeCode =
+        widget.highlightedCode ?? widget.controller?.lastErrorCode;
+    _expandedCodes = {if (activeCode != null) activeCode else 'ERR_DATE_FMT'};
   }
 
   @override
@@ -1043,9 +1070,11 @@ class _ErrorGuideSheetState extends State<_ErrorGuideSheet> {
           item.steps.any((s) => s.toLowerCase().contains(query));
     }).toList();
 
-    if (widget.highlightedCode != null) {
+    final activeHighlight =
+        widget.highlightedCode ?? widget.controller?.lastErrorCode;
+    if (activeHighlight != null) {
       final highlightIndex = items.indexWhere(
-        (it) => it.code == widget.highlightedCode,
+        (it) => it.code == activeHighlight,
       );
       if (highlightIndex > 0) {
         final highlighted = items.removeAt(highlightIndex);
@@ -1068,276 +1097,284 @@ class _ErrorGuideSheetState extends State<_ErrorGuideSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final maxHeight = MediaQuery.sizeOf(context).height * 0.90;
     final items = _filteredItems;
 
+    final sheetContent = Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF121214),
+        borderRadius: widget.isModal
+            ? const BorderRadius.vertical(top: Radius.circular(28))
+            : BorderRadius.zero,
+        border: widget.isModal
+            ? const Border(
+                top: BorderSide(color: _cardBorder),
+                left: BorderSide(color: _cardBorder),
+                right: BorderSide(color: _cardBorder),
+              )
+            : null,
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            if (widget.isModal) ...[
+              const SizedBox(height: 10),
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: _cardBorder,
+                    borderRadius: BorderRadius.circular(2.5),
+                  ),
+                ),
+              ),
+            ],
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 12, 8),
+              child: Row(
+                children: [
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: _iconBg,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    alignment: Alignment.center,
+                    child: const Icon(
+                      Icons.menu_book_rounded,
+                      size: 18,
+                      color: _accent,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Error Reference Guide',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          '8 error codes with diagnostic fixes',
+                          style: TextStyle(fontSize: 12, color: _muted),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (widget.isModal)
+                    IconButton(
+                      key: const Key('closeErrorGuideButton'),
+                      tooltip: 'Close',
+                      icon: const Icon(Icons.close_rounded, color: _muted),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: _cardBorder),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: Container(
+                height: 40,
+                decoration: BoxDecoration(
+                  color: _panel,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: _cardBorder),
+                ),
+                child: TextField(
+                  key: const Key('errorSearchInput'),
+                  controller: _searchController,
+                  style: const TextStyle(fontSize: 14, color: Colors.white),
+                  textInputAction: TextInputAction.search,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    hintText: 'Search code, keyword, or symptom...',
+                    hintStyle: const TextStyle(fontSize: 13, color: _subtle),
+                    prefixIcon: const Icon(
+                      Icons.search_rounded,
+                      size: 18,
+                      color: _muted,
+                    ),
+                    suffixIcon: _searchController.text.isNotEmpty
+                        ? IconButton(
+                            key: const Key('clearSearchButton'),
+                            tooltip: 'Clear search',
+                            icon: const Icon(
+                              Icons.close_rounded,
+                              size: 16,
+                              color: _muted,
+                            ),
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() {});
+                            },
+                          )
+                        : null,
+                    isDense: true,
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 11,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Row(
+                children: _categories.map((cat) {
+                  final isSelected = _selectedCategory == cat;
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Semantics(
+                      selected: isSelected,
+                      button: true,
+                      child: InkWell(
+                        key: Key('categoryPill_$cat'),
+                        borderRadius: BorderRadius.circular(16),
+                        onTap: () => setState(() => _selectedCategory = cat),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: isSelected ? _accent : _panel,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: isSelected ? _accent : _cardBorder,
+                            ),
+                          ),
+                          child: Text(
+                            cat,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: isSelected
+                                  ? FontWeight.w700
+                                  : FontWeight.w500,
+                              color: isSelected ? Colors.white : _muted,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
+              child: Row(
+                children: [
+                  Text(
+                    '${items.length} of ${kErrorGuideCatalog.length} codes',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: _muted,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: _cardBorder),
+            Expanded(
+              child: items.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.search_off_rounded,
+                            size: 40,
+                            color: _subtle,
+                          ),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'No matching error codes found',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'Try a different code or keyword',
+                            style: TextStyle(fontSize: 12, color: _muted),
+                          ),
+                          const SizedBox(height: 16),
+                          FilledButton(
+                            key: const Key('resetFiltersButton'),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: _panel,
+                              foregroundColor: _accent,
+                              side: const BorderSide(color: _cardBorder),
+                            ),
+                            onPressed: () {
+                              setState(() {
+                                _searchController.clear();
+                                _selectedCategory = 'All';
+                              });
+                            },
+                            child: const Text('Reset Filters'),
+                          ),
+                        ],
+                      ),
+                    )
+                  : ListView.separated(
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+                      itemCount: items.length,
+                      separatorBuilder: (context, index) =>
+                          const SizedBox(height: 10),
+                      itemBuilder: (context, index) {
+                        final item = items[index];
+                        final isExpanded = _expandedCodes.contains(item.code);
+                        return _buildErrorCard(item, isExpanded);
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (!widget.isModal) {
+      return Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720),
+          child: sheetContent,
+        ),
+      );
+    }
+
+    final maxHeight = MediaQuery.sizeOf(context).height * 0.90;
     return Center(
       child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: maxHeight, maxWidth: 720),
-        child: Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF121214),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-            border: Border(
-              top: BorderSide(color: _cardBorder),
-              left: BorderSide(color: _cardBorder),
-              right: BorderSide(color: _cardBorder),
-            ),
-          ),
-          child: SafeArea(
-            top: false,
-            child: Column(
-              children: [
-                const SizedBox(height: 10),
-                Center(
-                  child: Container(
-                    width: 36,
-                    height: 5,
-                    decoration: BoxDecoration(
-                      color: _cardBorder,
-                      borderRadius: BorderRadius.circular(2.5),
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 12, 12, 8),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 32,
-                        height: 32,
-                        decoration: BoxDecoration(
-                          color: _iconBg,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        alignment: Alignment.center,
-                        child: const Icon(
-                          Icons.menu_book_rounded,
-                          size: 18,
-                          color: _accent,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Error Reference Guide',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white,
-                              ),
-                            ),
-                            SizedBox(height: 2),
-                            Text(
-                              '8 error codes with diagnostic fixes',
-                              style: TextStyle(fontSize: 12, color: _muted),
-                            ),
-                          ],
-                        ),
-                      ),
-                      IconButton(
-                        key: const Key('closeErrorGuideButton'),
-                        tooltip: 'Close',
-                        icon: const Icon(Icons.close_rounded, color: _muted),
-                        onPressed: () => Navigator.of(context).pop(),
-                      ),
-                    ],
-                  ),
-                ),
-                const Divider(height: 1, color: _cardBorder),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                  child: Container(
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: _panel,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: _cardBorder),
-                    ),
-                    child: TextField(
-                      key: const Key('errorSearchInput'),
-                      controller: _searchController,
-                      style: const TextStyle(fontSize: 14, color: Colors.white),
-                      textInputAction: TextInputAction.search,
-                      onChanged: (_) => setState(() {}),
-                      decoration: InputDecoration(
-                        hintText: 'Search code, keyword, or symptom...',
-                        hintStyle: const TextStyle(
-                          fontSize: 13,
-                          color: _subtle,
-                        ),
-                        prefixIcon: const Icon(
-                          Icons.search_rounded,
-                          size: 18,
-                          color: _muted,
-                        ),
-                        suffixIcon: _searchController.text.isNotEmpty
-                            ? IconButton(
-                                key: const Key('clearSearchButton'),
-                                tooltip: 'Clear search',
-                                icon: const Icon(
-                                  Icons.close_rounded,
-                                  size: 16,
-                                  color: _muted,
-                                ),
-                                onPressed: () {
-                                  _searchController.clear();
-                                  setState(() {});
-                                },
-                              )
-                            : null,
-                        isDense: true,
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 11,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 4,
-                  ),
-                  child: Row(
-                    children: _categories.map((cat) {
-                      final isSelected = _selectedCategory == cat;
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: Semantics(
-                          selected: isSelected,
-                          button: true,
-                          child: InkWell(
-                            key: Key('categoryPill_$cat'),
-                            borderRadius: BorderRadius.circular(16),
-                            onTap: () =>
-                                setState(() => _selectedCategory = cat),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 6,
-                              ),
-                              decoration: BoxDecoration(
-                                color: isSelected ? _accent : _panel,
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(
-                                  color: isSelected ? _accent : _cardBorder,
-                                ),
-                              ),
-                              child: Text(
-                                cat,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: isSelected
-                                      ? FontWeight.w700
-                                      : FontWeight.w500,
-                                  color: isSelected ? Colors.white : _muted,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 18,
-                    vertical: 4,
-                  ),
-                  child: Row(
-                    children: [
-                      Text(
-                        '${items.length} of ${kErrorGuideCatalog.length} codes',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: _muted,
-                          letterSpacing: 0.3,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const Divider(height: 1, color: _cardBorder),
-                Expanded(
-                  child: items.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(
-                                Icons.search_off_rounded,
-                                size: 40,
-                                color: _subtle,
-                              ),
-                              const SizedBox(height: 12),
-                              const Text(
-                                'No matching error codes found',
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.white,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              const Text(
-                                'Try a different code or keyword',
-                                style: TextStyle(fontSize: 12, color: _muted),
-                              ),
-                              const SizedBox(height: 16),
-                              FilledButton(
-                                key: const Key('resetFiltersButton'),
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: _panel,
-                                  foregroundColor: _accent,
-                                  side: const BorderSide(color: _cardBorder),
-                                ),
-                                onPressed: () {
-                                  setState(() {
-                                    _searchController.clear();
-                                    _selectedCategory = 'All';
-                                  });
-                                },
-                                child: const Text('Reset Filters'),
-                              ),
-                            ],
-                          ),
-                        )
-                      : ListView.separated(
-                          keyboardDismissBehavior:
-                              ScrollViewKeyboardDismissBehavior.onDrag,
-                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-                          itemCount: items.length,
-                          separatorBuilder: (context, index) =>
-                              const SizedBox(height: 10),
-                          itemBuilder: (context, index) {
-                            final item = items[index];
-                            final isExpanded = _expandedCodes.contains(
-                              item.code,
-                            );
-                            return _buildErrorCard(item, isExpanded);
-                          },
-                        ),
-                ),
-              ],
-            ),
-          ),
-        ),
+        child: sheetContent,
       ),
     );
   }
 
   Widget _buildErrorCard(ErrorGuideItem item, bool isExpanded) {
-    final isHighlighted = item.code == widget.highlightedCode;
+    final isHighlighted =
+        item.code ==
+        (widget.highlightedCode ?? widget.controller?.lastErrorCode);
     return Container(
       key: Key('errorTile_${item.code}'),
       decoration: BoxDecoration(

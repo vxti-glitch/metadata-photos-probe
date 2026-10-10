@@ -69,7 +69,8 @@ public enum MediaIntegrity {
                     check("track \(index + 1) compressed data / timing / format", original[index] == edited[index],
                         "Compare encoded samples/timing/format/transform. Source: \(original[index].payloadBytes) encoded bytes, \(original[index].sampleBuffers) buffers, \(original[index].emptyMarkers) empty no-image markers; output: \(edited[index].payloadBytes) encoded bytes, \(edited[index].sampleBuffers) buffers, \(edited[index].emptyMarkers) empty no-image markers. Empty markers have no compressed bytes to verify.")
                 }
-            } catch ProbeError.unsupported(let detail) {
+            } catch {
+                let detail = (error as? ProbeError)?.localizedDescription ?? error.localizedDescription
                 checks.append(IntegrityCheck(name: "video compressed samples", status: .notChecked, detail: detail))
                 limitations.append("Compressed verification unsupported for this structure: \(detail)")
             }
@@ -89,7 +90,15 @@ public enum MediaIntegrity {
         do { try patch.validateReadback(after); checks.append(IntegrityCheck(name: "requested metadata", status: .passed, detail: "Every selected value and removal was independently read back.")) }
         catch { checks.append(IntegrityCheck(name: "requested metadata", status: .failed, detail: error.localizedDescription)) }
         var keys = patch.targetedKeys
-        if keys.contains("lensModel") { keys.insert("lens") }
+        if keys.contains("lensModel") {
+            keys.insert("lens")
+            keys.insert("com.apple.quicktime.camera.lens_model")
+            keys.insert("mdta/com.apple.quicktime.camera.lens_model")
+            keys.insert("quickTimeMetadata/com.apple.quicktime.camera.lens_model")
+            keys.insert("commonIdentifier/cameraLensModel")
+            keys.insert("common/cameraLensModel")
+            keys.insert("cameraLensModel")
+        }
         for (key, raw) in VideoMetadataFields.keys.merging(VideoMetadataFields.trackKeys, uniquingKeysWith: { a, _ in a }) where keys.contains(key) {
             keys.insert(raw)
             keys.insert("mdta/" + raw)
@@ -161,44 +170,75 @@ public enum MediaIntegrity {
         for track in tracks {
             var items = [AVMetadataItem]()
             for format in try await track.load(.availableMetadataFormats) { items += try await track.loadMetadata(for: format) }
+            if items.isEmpty {
+                items = (try? await track.load(.metadata)) ?? []
+            }
             trackItems.append(items)
         }
+        let containerInspected = (try? VideoMetadataWriter.inspect(url)) ?? [:]
         for (key, atom) in VideoMetadataFields.keys.merging(VideoMetadataFields.trackKeys, uniquingKeysWith: { a, _ in a }) where patch.targetedKeys.contains(key) {
-            let collections = VideoMetadataFields.trackKeys[key] == nil ? [movieItems] : trackItems
+            let isTrackKey = VideoMetadataFields.trackKeys[key] != nil
+            let collections = isTrackKey ? trackItems : [movieItems]
             guard !collections.isEmpty else { checks.append(IntegrityCheck(name: "AVFoundation target \(key)", status: .failed, detail: "No video track is available for target readback.")); continue }
-            var matches = true
-            for collection in collections {
-                let found = collection.filter {
-                    $0.identifier?.rawValue == "mdta/" + atom ||
-                    $0.identifier?.rawValue == "quickTimeMetadata/" + atom ||
-                    $0.identifier?.rawValue == atom ||
-                    $0.identifier?.rawValue?.hasSuffix("/" + atom) == true ||
-                    ($0.key as? String) == atom
-                }
-                if let target = patch.values[key] {
-                    guard !found.isEmpty else { matches = false; continue }
-                    for item in found {
-                        guard let value = try await item.load(.stringValue) else { matches = false; continue }
-                        if let n = target.number {
-                            let scalar = Double(value.hasPrefix("F") ? String(value.dropFirst()) : value)
-                            if scalar == nil || abs(scalar! - n) > MetadataPatch.numericTolerance(for: key, value: n) { matches = false }
-                        } else if key.lowercased().contains("date") {
-                            let actualDate = try? MetadataPatch.date(value)
-                            let targetDate = try? MetadataPatch.date(target.text)
-                            if let actualDate, let targetDate {
-                                if abs(actualDate.timeIntervalSince(targetDate)) >= 1 { matches = false }
+            var matches = false
+            if let target = patch.values[key] {
+                for collection in collections {
+                    let found = collection.filter {
+                        $0.identifier?.rawValue == "mdta/" + atom ||
+                        $0.identifier?.rawValue == "quickTimeMetadata/" + atom ||
+                        $0.identifier?.rawValue == atom ||
+                        $0.identifier?.rawValue?.hasSuffix("/" + atom) == true ||
+                        ($0.key as? String) == atom
+                    }
+                    if found.isEmpty {
+                        // Fallback: If AVFoundation does not deserialize track-level mdta items,
+                        // verify directly against the binary container inspector.
+                        if let containerVal = containerInspected[atom] ?? containerInspected[key] {
+                            if let n = target.number {
+                                let scalar = Double(containerVal.hasPrefix("F") ? String(containerVal.dropFirst()) : containerVal)
+                                if let scalar, abs(scalar - n) <= MetadataPatch.numericTolerance(for: key, value: n) { matches = true; break }
+                            } else {
+                                let sanitized = MetadataPatch.sanitizeText(target.text)
+                                let trimmed = containerVal.trimmingCharacters(in: CharacterSet(charactersIn: "\0"))
+                                if containerVal == target.text || containerVal == sanitized || trimmed == target.text || trimmed == sanitized { matches = true; break }
+                            }
+                        }
+                    } else {
+                        var allItemsMatch = true
+                        for item in found {
+                            guard let value = try await item.load(.stringValue) else { allItemsMatch = false; break }
+                            if let n = target.number {
+                                let scalar = Double(value.hasPrefix("F") ? String(value.dropFirst()) : value)
+                                if scalar == nil || abs(scalar! - n) > MetadataPatch.numericTolerance(for: key, value: n) { allItemsMatch = false; break }
+                            } else if key.lowercased().contains("date") {
+                                let actualDate = try? MetadataPatch.date(value)
+                                let targetDate = try? MetadataPatch.date(target.text)
+                                if let actualDate, let targetDate {
+                                    if abs(actualDate.timeIntervalSince(targetDate)) >= 1 { allItemsMatch = false; break }
+                                } else {
+                                    let sanitized = MetadataPatch.sanitizeText(target.text)
+                                    let trimmed = value.trimmingCharacters(in: CharacterSet(charactersIn: "\0"))
+                                    if value != target.text && value != sanitized && trimmed != target.text && trimmed != sanitized { allItemsMatch = false; break }
+                                }
                             } else {
                                 let sanitized = MetadataPatch.sanitizeText(target.text)
                                 let trimmed = value.trimmingCharacters(in: CharacterSet(charactersIn: "\0"))
-                                if value != target.text && value != sanitized && trimmed != target.text && trimmed != sanitized { matches = false }
+                                if value != target.text && value != sanitized && trimmed != target.text && trimmed != sanitized { allItemsMatch = false; break }
                             }
-                        } else {
-                            let sanitized = MetadataPatch.sanitizeText(target.text)
-                            let trimmed = value.trimmingCharacters(in: CharacterSet(charactersIn: "\0"))
-                            if value != target.text && value != sanitized && trimmed != target.text && trimmed != sanitized { matches = false }
                         }
+                        if allItemsMatch { matches = true; break }
                     }
-                } else if !found.isEmpty { matches = false }
+                }
+            } else {
+                matches = collections.allSatisfy { collection in
+                    collection.filter {
+                        $0.identifier?.rawValue == "mdta/" + atom ||
+                        $0.identifier?.rawValue == "quickTimeMetadata/" + atom ||
+                        $0.identifier?.rawValue == atom ||
+                        $0.identifier?.rawValue?.hasSuffix("/" + atom) == true ||
+                        ($0.key as? String) == atom
+                    }.isEmpty
+                }
             }
             checks.append(IntegrityCheck(name: "AVFoundation target \(key)", status: matches ? .passed : .failed, detail: "Read selected UTF-8 camera values from the correct movie/video-track key space with AVFoundation."))
         }
@@ -288,10 +328,28 @@ public enum MediaIntegrity {
     private static func retainedMetadata(_ metadata: [String: String], patch: CameraPatch?) -> [String: String] {
         guard let patch else { return metadata }
         var retained = metadata
-        for key in ["make", "model", "com.apple.quicktime.make", "com.apple.quicktime.model", AVMetadataIdentifier.quickTimeMetadataMake.rawValue, AVMetadataIdentifier.quickTimeMetadataModel.rawValue] {
-            retained.removeValue(forKey: key)
+        let cameraKeys: Set<String> = [
+            "make", "model",
+            "com.apple.quicktime.make", "com.apple.quicktime.model",
+            "mdta/com.apple.quicktime.make", "mdta/com.apple.quicktime.model",
+            "quickTimeMetadata/com.apple.quicktime.make", "quickTimeMetadata/com.apple.quicktime.model",
+            "quickTimeUserData/©mak", "quickTimeUserData/©mod",
+            "commonIdentifier/make", "commonIdentifier/model",
+            "common/make", "common/model",
+            "©mak", "©mod", "udta/©mak", "udta/©mod",
+            AVMetadataIdentifier.quickTimeMetadataMake.rawValue,
+            AVMetadataIdentifier.quickTimeMetadataModel.rawValue
+        ]
+        for key in cameraKeys { retained.removeValue(forKey: key) }
+        if patch.lens != nil {
+            let lensKeys: Set<String> = [
+                "lens", "lensModel",
+                "com.apple.quicktime.camera.lens_model",
+                "mdta/com.apple.quicktime.camera.lens_model",
+                "quickTimeMetadata/com.apple.quicktime.camera.lens_model"
+            ]
+            for key in lensKeys { retained.removeValue(forKey: key) }
         }
-        if patch.lens != nil { retained.removeValue(forKey: "lens"); retained.removeValue(forKey: "lensModel") }
         return retained
     }
 
