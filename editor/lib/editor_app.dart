@@ -5,6 +5,7 @@ import 'editor_controller.dart';
 import 'media_bridge.dart';
 
 import 'metadata_form.dart';
+import 'settings_screen.dart';
 
 const _background = Color(0xFF0E1115);
 const _surface = Color(0xFF191E25);
@@ -169,9 +170,14 @@ class _EditorHomeState extends State<EditorHome> {
         ),
         actions: [
           IconButton(
-            tooltip: 'About this build',
-            icon: const Icon(Icons.info_outline_rounded),
-            onPressed: () => _showAbout(context),
+            key: const Key('openSettings'),
+            tooltip: 'Settings',
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => SettingsScreen(controller: controller),
+              ),
+            ),
           ),
         ],
       ),
@@ -250,18 +256,25 @@ class _EditorHomeState extends State<EditorHome> {
   }
 }
 
-class _MetadataMark extends StatelessWidget {
-  const _MetadataMark();
+class MetadataMark extends StatelessWidget {
+  const MetadataMark({super.key, this.size = 34});
+  final double size;
+
   @override
-  Widget build(BuildContext context) => const ExcludeSemantics(
-    child: CustomPaint(size: Size(34, 34), painter: _MetadataMarkPainter()),
+  Widget build(BuildContext context) => ExcludeSemantics(
+    child: CustomPaint(
+      size: Size(size, size),
+      painter: const MetadataMarkPainter(),
+    ),
   );
 }
 
+typedef _MetadataMark = MetadataMark;
+
 /// Neutral vector: four frame corners surrounding three metadata rows.
 /// Geometry uses a 32-unit canvas so the app icon can share the same construction.
-class _MetadataMarkPainter extends CustomPainter {
-  const _MetadataMarkPainter();
+class MetadataMarkPainter extends CustomPainter {
+  const MetadataMarkPainter();
   @override
   void paint(Canvas canvas, Size size) {
     canvas.save();
@@ -300,7 +313,7 @@ class _MetadataMarkPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _MetadataMarkPainter oldDelegate) => false;
+  bool shouldRepaint(covariant MetadataMarkPainter oldDelegate) => false;
 }
 
 class _Projects extends StatelessWidget {
@@ -994,26 +1007,3 @@ Future<void> _shareBatch(
     onlyReady: onlyReady,
   );
 }
-
-void _showAbout(BuildContext context) => showDialog<void>(
-  context: context,
-  builder: (context) => AlertDialog(
-    title: const Text(AppBrand.name),
-    content: const SingleChildScrollView(
-      child: Text(
-        '0.4.0 · Build 5\n\nFlutter interface · Swift media engine\n\n'
-        'Image camera changes have physical-device evidence on tested JPEG and HEIC samples. Video camera editing remains provisional. '
-        'Files → Safari/iCloud → Photos is the selected workflow. Direct Photos saving without attribution is not established.\n\n'
-        'Manual metadata editing, camera profiles, saved presets and batch processing run locally. Supported fields depend on the source format. '
-        'Live Photo conversion and video editing are outside scope.\n\n'
-        'Media and metadata stay local. Nothing is uploaded automatically.',
-      ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('Done'),
-      ),
-    ],
-  ),
-);

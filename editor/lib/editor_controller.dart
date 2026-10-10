@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 
+import 'app_brand.dart';
 import 'camera_profiles.dart';
 import 'metadata_patch.dart';
 
@@ -750,6 +751,22 @@ class EditorController extends ChangeNotifier {
   }, reconcileOnFailure: true);
   Future<void> openICloud() =>
       _run(EditorOperation.openingBrowser, (_) => bridge.openICloud());
+  Future<void> openUrl(String url) =>
+      _run(EditorOperation.openingBrowser, (_) => bridge.openUrl(url));
+  Future<void> openWebsite() => openUrl(AppBrand.websiteUrl);
+  Future<void> clearCache() => clear();
+  Future<void> resetPresets() async {
+    final before = List<SavedPreset>.of(presets);
+    presets = const [];
+    try {
+      await _persist();
+      notice = 'Saved camera presets reset.';
+      notifyListeners();
+    } catch (error) {
+      presets = before;
+      rethrow;
+    }
+  }
 
   @override
   void dispose() {

@@ -197,8 +197,10 @@ class FakeMediaBridge implements MediaBridge {
     if (deleteAfterCommitError != null) throw deleteAfterCommitError!;
   }
 
+  int clears = 0;
   @override
   Future<void> clearSessions() async {
+    clears++;
     sessions = [];
     if (clearAfterCommitError != null) throw clearAfterCommitError!;
   }
@@ -318,5 +320,11 @@ class FakeMediaBridge implements MediaBridge {
   @override
   Future<void> openICloud() async {
     opens++;
+  }
+
+  final List<String> openedUrls = [];
+  @override
+  Future<void> openUrl(String url) async {
+    openedUrls.add(url);
   }
 }

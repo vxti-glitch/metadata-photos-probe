@@ -18,6 +18,7 @@ abstract interface class MediaBridge {
   Future<void> deleteSession(String sessionId);
   Future<void> clearSessions();
   Future<void> openICloud();
+  Future<void> openUrl(String url);
   Future<Map<String, Object?>> loadEditorState();
   Future<void> saveEditorState(Map<String, Object?> state);
   Future<BatchImport> importBatch({required bool photos});
@@ -185,6 +186,9 @@ class NativeMediaBridge implements MediaBridge {
       true;
   @override
   Future<void> openICloud() => _channel.invokeMethod<void>('openICloud');
+  @override
+  Future<void> openUrl(String url) =>
+      _channel.invokeMethod<void>('openUrl', {'url': url});
 }
 
 String readableError(Object error) {

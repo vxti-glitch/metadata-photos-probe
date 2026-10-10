@@ -192,6 +192,15 @@ final class NativeMediaBridge: NSObject {
                 UIApplication.shared.open(URL(string: "https://www.icloud.com/photos/")!, options: [:]) { opened in
                     result(opened ? nil : FlutterError(code: "unsupported", message: "Safari could not open iCloud Photos.", details: nil))
                 }
+            case "openUrl":
+                guard !gate.busy else { throw NativeMediaError.busy }
+                let rawUrl = try Self.string(Self.arguments(call.arguments), "url")
+                guard let url = URL(string: rawUrl), url.scheme?.lowercased() == "https" else {
+                    throw NativeMediaError.unsupported("Only secure web links can be opened.")
+                }
+                UIApplication.shared.open(url, options: [:]) { opened in
+                    result(opened ? nil : FlutterError(code: "unsupported", message: "Could not open URL.", details: nil))
+                }
             default: result(FlutterMethodNotImplemented)
             }
         } catch { result(Self.flutterError(error)) }
@@ -457,6 +466,11 @@ final class NativeMediaBridge: NSObject {
     static func identifier(_ map: [String: Any], _ key: String) throws -> UUID {
         guard let raw = map[key] as? String, let id = UUID(uuidString: raw) else { throw NativeMediaError.invalidArgument }
         return id
+    }
+
+    static func string(_ map: [String: Any], _ key: String) throws -> String {
+        guard let raw = map[key] as? String, !raw.isEmpty else { throw NativeMediaError.invalidArgument }
+        return raw
     }
 
     static func patch(_ arguments: [String: Any]) throws -> CameraPatch {
