@@ -149,8 +149,19 @@ enum ExifMetadataEditor {
             if ["title", "keywords"].contains(key) { payload = value.text.data(using: .utf16LittleEndian)! + Data([0, 0]) }
             else if f.type == 2 {
                 let text = key.lowercased().contains("date") ? try MetadataPatch.exifDate(value.text) : value.text
-                guard text.utf8.allSatisfy({ $0 < 128 }) else { throw ProbeError.unsupported("EXIF ASCII field \(key) cannot store non-ASCII text") }
-                payload = Data(text.utf8) + Data([0])
+                var sanitized = text
+                if !sanitized.utf8.allSatisfy({ $0 < 128 }) {
+                    sanitized = sanitized
+                        .replacingOccurrences(of: "\u{2018}", with: "'")
+                        .replacingOccurrences(of: "\u{2019}", with: "'")
+                        .replacingOccurrences(of: "\u{201C}", with: "\"")
+                        .replacingOccurrences(of: "\u{201D}", with: "\"")
+                        .replacingOccurrences(of: "\u{2013}", with: "-")
+                        .replacingOccurrences(of: "\u{2014}", with: "-")
+                        .folding(options: .diacriticInsensitive, locale: Locale(identifier: "en_US_POSIX"))
+                }
+                guard sanitized.utf8.allSatisfy({ $0 < 128 }) else { throw ProbeError.unsupported("EXIF ASCII field \(key) cannot store non-ASCII text") }
+                payload = Data(sanitized.utf8) + Data([0])
             } else if f.type == 3 { payload = number(UInt32(value.number!), width: 2, little: t.little) }
             else if ["latitude", "longitude"].contains(key) {
                 let n = abs(value.number!), degrees = floor(n), minuteValue = (n - degrees) * 60, minutes = floor(minuteValue)

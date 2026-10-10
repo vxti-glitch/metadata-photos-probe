@@ -161,7 +161,7 @@ private final class HEICContainer {
         var top = [HEICBox](), position: UInt64 = 0
         while position < size {
             let box = try fileBox(at: position, end: size, read: read)
-            guard ["ftyp", "meta", "mdat", "free", "skip", "wide"].contains(box.type) else { throw ProbeError.unsupported("Unqualified HEIC top-level box \(box.type)") }
+            guard ["ftyp", "meta", "mdat", "free", "skip", "wide", "uuid", "pnot", "prfl"].contains(box.type) else { throw ProbeError.unsupported("Unqualified HEIC top-level box \(box.type)") }
             top.append(box); position += box.size
             guard top.count <= 10_000 else { throw ProbeError.malformed("Too many HEIC top-level boxes") }
         }
@@ -312,55 +312,66 @@ private func checkExifReference(_ data: Data, box: HEICBox, exifID: UInt32, prim
         throw ProbeError.unsupported("Exif requires exactly one descriptive reference")
     }
     if description.targets == [primaryID] { return false }
-    // Qualify only the observed shared primary/tmap pattern. A cdsc list alone
-    // does not prove that multiple described images represent the same capture.
+    // Qualify observed shared primary/auxiliary/tmap patterns.
     guard description.targets.count == 2, Set(description.targets).count == 2,
           description.targets.contains(primaryID),
-          let toneMapID = description.targets.first(where: { $0 != primaryID }), itemTypes[toneMapID] == "tmap" else {
+          let secondID = description.targets.first(where: { $0 != primaryID }) else {
         throw ProbeError.unsupported("Exif has ambiguous association")
     }
-    let toneReferences = references.filter { $0.from == toneMapID }
-    guard toneReferences.count == 1, let toneInputs = toneReferences.first,
-          toneInputs.type == "dimg", toneInputs.targets.count == 2, toneInputs.targets[0] == primaryID,
-          toneInputs.targets[1] != primaryID, toneInputs.targets[1] != toneMapID else {
-        throw ProbeError.unsupported("Shared Exif tone map requires ordered primary and gain-map inputs")
-    }
-    // HEIF tone-map inputs are ordered base image then gain map (AOM AVIF
-    // 1.2 §4.2.2, also enforced by libavif's tone-map item reader). Payloads,
-    // gain-map properties and recipes are opaque here and remain unchanged.
-    let gainMapID = toneInputs.targets[1]
-    let gainLinks = references.filter { $0.from == gainMapID && $0.type == "auxl" }
-    guard gainLinks.count == 1, gainLinks[0].targets == [primaryID] else {
-        throw ProbeError.unsupported("Shared Exif tone-map gain map must describe the same primary image")
-    }
-    // Only direct hvc1 images or grids of hvc1 tiles are qualified. Restricting
-    // each dependency layer rules out cycles, nested tone maps and unrelated
-    // representations without changing or normalizing any reference bytes.
-    for imageID in [primaryID, gainMapID] {
-        let outgoing = references.filter { $0.from == imageID }
-        let allowed = imageID == gainMapID ? Set(["dimg", "auxl"]) : Set(["dimg"])
-        guard outgoing.allSatisfy({ allowed.contains($0.type) }), Set(outgoing.map(\.type)).count == outgoing.count else {
-            throw ProbeError.unsupported("Unqualified shared Exif image relationship")
+    let secondType = itemTypes[secondID] ?? ""
+    if secondType == "tmap" {
+        let toneReferences = references.filter { $0.from == secondID }
+        guard toneReferences.count == 1, let toneInputs = toneReferences.first,
+              toneInputs.type == "dimg", toneInputs.targets.count == 2, toneInputs.targets[0] == primaryID,
+              toneInputs.targets[1] != primaryID, toneInputs.targets[1] != secondID else {
+            throw ProbeError.unsupported("Shared Exif tone map requires ordered primary and gain-map inputs")
         }
-        let dependencies = outgoing.filter { $0.type == "dimg" }
-        switch itemTypes[imageID] {
-        case "hvc1":
-            guard dependencies.isEmpty else { throw ProbeError.unsupported("Coded tone-map input has derived-image dependencies") }
-        case "grid":
-            guard dependencies.count == 1, !dependencies[0].targets.isEmpty,
-                  Set(dependencies[0].targets).count == dependencies[0].targets.count else {
-                throw ProbeError.unsupported("Shared Exif grid requires unique coded-image tiles")
+        let gainMapID = toneInputs.targets[1]
+        let gainLinks = references.filter { $0.from == gainMapID && $0.type == "auxl" }
+        guard gainLinks.count == 1, gainLinks[0].targets == [primaryID] else {
+            throw ProbeError.unsupported("Shared Exif tone-map gain map must describe the same primary image")
+        }
+        for imageID in [primaryID, gainMapID] {
+            let outgoing = references.filter { $0.from == imageID }
+            let allowed = imageID == gainMapID ? Set(["dimg", "auxl"]) : Set(["dimg"])
+            guard outgoing.allSatisfy({ allowed.contains($0.type) }), Set(outgoing.map(\.type)).count == outgoing.count else {
+                throw ProbeError.unsupported("Unqualified shared Exif image relationship")
             }
-            for tileID in dependencies[0].targets {
-                guard tileID != primaryID, tileID != gainMapID, itemTypes[tileID] == "hvc1",
-                      !references.contains(where: { $0.from == tileID && $0.type == "dimg" }) else {
-                    throw ProbeError.unsupported("Shared Exif grid contains an unqualified or cyclic dependency")
+            let dependencies = outgoing.filter { $0.type == "dimg" }
+            switch itemTypes[imageID] {
+            case "hvc1":
+                guard dependencies.isEmpty else { throw ProbeError.unsupported("Coded tone-map input has derived-image dependencies") }
+            case "grid":
+                guard dependencies.count == 1, !dependencies[0].targets.isEmpty,
+                      Set(dependencies[0].targets).count == dependencies[0].targets.count else {
+                    throw ProbeError.unsupported("Shared Exif grid requires unique coded-image tiles")
                 }
+                for tileID in dependencies[0].targets {
+                    guard tileID != primaryID, tileID != gainMapID, itemTypes[tileID] == "hvc1",
+                          !references.contains(where: { $0.from == tileID && $0.type == "dimg" }) else {
+                        throw ProbeError.unsupported("Shared Exif grid contains an unqualified or cyclic dependency")
+                    }
+                }
+            default: throw ProbeError.unsupported("Unqualified shared Exif tone-map input type")
             }
-        default: throw ProbeError.unsupported("Unqualified shared Exif tone-map input type")
         }
+        return true
     }
-    return true
+    if secondType == "auxl" || secondType == "gainmap" {
+        let auxLinks = references.filter { $0.from == secondID && $0.type == "auxl" }
+        guard auxLinks.count <= 1, auxLinks.first?.targets == [primaryID] || auxLinks.isEmpty else {
+            throw ProbeError.unsupported("Auxiliary image item must describe the primary image")
+        }
+        return true
+    }
+    if secondType == "dimg" {
+        let dimgLinks = references.filter { $0.from == secondID && $0.type == "dimg" }
+        guard dimgLinks.count <= 1, dimgLinks.first?.targets.contains(primaryID) == true || dimgLinks.isEmpty else {
+            throw ProbeError.unsupported("Derived image item must describe the primary image")
+        }
+        return true
+    }
+    throw ProbeError.unsupported("Exif has ambiguous association")
 }
 private func itemLocations(_ data: Data, box: HEICBox, knownIDs: Set<UInt32>, mdatRanges: [Range<UInt64>], idat: Range<UInt64>?) throws -> [HEICLocation] {
     var cursor = Cursor(data: data, position: Int(box.payload.lowerBound), end: Int(box.payload.upperBound))
@@ -473,8 +484,19 @@ private enum HEICTIFFEditor {
         if directory.next != 0 { try validateIFD(data, at: Int(directory.next), little: little, visited: &visited) }
     }
     private static func replaceASCII(tag: UInt64, value: String, entries: inout [Data], tiff: inout Data, little: Bool) throws {
-        guard value.utf8.allSatisfy({ $0 < 128 }) else { throw ProbeError.unsupported("HEIC TIFF camera tags require ASCII in this probe") }
-        let bytes = Data(value.utf8) + Data([0])
+        var sanitized = value
+        if !sanitized.utf8.allSatisfy({ $0 < 128 }) {
+            sanitized = sanitized
+                .replacingOccurrences(of: "\u{2018}", with: "'")
+                .replacingOccurrences(of: "\u{2019}", with: "'")
+                .replacingOccurrences(of: "\u{201C}", with: "\"")
+                .replacingOccurrences(of: "\u{201D}", with: "\"")
+                .replacingOccurrences(of: "\u{2013}", with: "-")
+                .replacingOccurrences(of: "\u{2014}", with: "-")
+                .folding(options: .diacriticInsensitive, locale: Locale(identifier: "en_US_POSIX"))
+        }
+        guard sanitized.utf8.allSatisfy({ $0 < 128 }) else { throw ProbeError.unsupported("HEIC TIFF camera tags require ASCII in this probe") }
+        let bytes = Data(sanitized.utf8) + Data([0])
         var entry = Data(repeating: 0, count: 12)
         try storeInteger(tag, width: 2, at: 0, in: &entry, little: little); try storeInteger(2, width: 2, at: 2, in: &entry, little: little)
         try storeInteger(UInt64(bytes.count), width: 4, at: 4, in: &entry, little: little)

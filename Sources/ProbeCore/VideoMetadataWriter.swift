@@ -235,7 +235,8 @@ private enum VideoBMFF {
         "cprt", "auth", "titl", "dscp", "perf", "gnre", "yrrc", "albm", "rtng", "clsf", "kywd",
         "name", "vndr", "WLOC", "clip", "load", "matt", "kmat", "ctab", "ptv ", "hint", "hinf",
         "LOOP", "SelO", "AllF",
-        "NCDT", "FIRM", "MANF", "TAGS", "CANO", "CASI", "SONY", "USMT", "GUMI", "DJMD", "fdsc"
+        "NCDT", "FIRM", "MANF", "TAGS", "CANO", "CASI", "SONY", "USMT", "GUMI", "DJMD", "fdsc",
+        "GPMF", "INSM", "DJIR", "BMD ", "RED1", "NCX ", "PANA", "ILST", "ID32"
     ].map(code))
 
     static func validateUserData(_ data: Data) throws {
@@ -249,7 +250,7 @@ private enum VideoBMFF {
         }
     }
     static func validateMovie(_ children: [Atom], media: [FileAtom]) throws -> (tracks: Int, chunks: Int) {
-        try only(children, ["mvhd", "trak", "udta", "meta", "iods", "free"])
+        try only(children, ["mvhd", "trak", "udta", "meta", "iods", "free", "skip", "wide", "prfl"])
         _ = try unique(children, "mvhd")
         var trackCount = 0, chunkCount = 0
         for child in children {
@@ -258,7 +259,7 @@ private enum VideoBMFF {
             guard child.type == code("trak") else { continue }
             trackCount += 1
             let track = try atoms(child.payload)
-            try only(track, ["tkhd", "mdia", "edts", "tref", "tapt", "udta", "meta", "free", "clip", "matt", "load"])
+            try only(track, ["tkhd", "mdia", "edts", "tref", "tapt", "udta", "meta", "free", "clip", "matt", "load", "skip", "wide"])
             _ = try unique(track, "tkhd")
             for item in track {
                 if item.type == code("udta") { try validateUserData(item.payload) }
@@ -274,9 +275,9 @@ private enum VideoBMFF {
                 }
             }
             let mdia = try atoms(unique(track, "mdia").payload)
-            try only(mdia, ["mdhd", "hdlr", "minf", "elng", "udta", "meta", "free"])
+            try only(mdia, ["mdhd", "hdlr", "minf", "elng", "udta", "meta", "free", "skip"])
             let minf = try atoms(unique(mdia, "minf").payload)
-            try only(minf, ["vmhd", "smhd", "nmhd", "gmhd", "sthd", "hmhd", "gmin", "hdlr", "dinf", "stbl", "free"])
+            try only(minf, ["vmhd", "smhd", "nmhd", "gmhd", "sthd", "hmhd", "gmin", "hdlr", "dinf", "stbl", "free", "skip"])
             let dinf = try atoms(unique(minf, "dinf").payload)
             try only(dinf, ["dref", "free", "skip"])
             let dref = try unique(dinf, "dref").payload
@@ -298,7 +299,7 @@ private enum VideoBMFF {
         return (trackCount, chunkCount)
     }
     static func validateSampleTable(_ list: [Atom], references: Int, media: [FileAtom]) throws -> Int {
-        try only(list, ["stsd", "stts", "ctts", "cslg", "stsc", "stsz", "stco", "co64", "stss", "stps", "sdtp", "sgpd", "sbgp", "csgm", "stdp", "stsh", "padb", "subs", "free"])
+        try only(list, ["stsd", "stts", "ctts", "cslg", "stsc", "stsz", "stco", "co64", "stss", "stps", "sdtp", "sgpd", "sbgp", "csgm", "stdp", "stsh", "padb", "subs", "free", "skip"])
         let description = try unique(list, "stsd").payload
         guard try u32(description, 0) == 0, description.count >= 8 else { throw ProbeError.malformed("Invalid stsd") }
         let entries = try atoms(description.subdata(in: 8..<description.count))
@@ -309,7 +310,8 @@ private enum VideoBMFF {
             "metx", "mett", "mebx", "tmcd", "text", "tx3g", "av01", "vp09", "vp08",
             "dvh1", "dvhe", "dva1", "dvav", "apcn", "apch", "apcs", "apco", "ap4h",
             "ap4x", "flac", "fLaC", "mlpa", "raw ", "samr", "sawb", "dtsc", "dtsh",
-            "dtsl", "dtse", "wvtt", "c608", "c708", "subt"
+            "dtsl", "dtse", "wvtt", "c608", "c708", "subt", "jpeg", "mjpg", "png ",
+            "mp3 ", ".mp3", "ulaw", "alaw", "clcp"
         ].map(code))
         for entry in entries {
             guard codecs.contains(entry.type), entry.payload.count >= 8 else { throw ProbeError.unsupported("Unqualified/protected sample description") }
@@ -355,7 +357,7 @@ private enum VideoBMFF {
                 length += UInt64(fixed == 0 ? try u32(sizes, 12 + sample * 4) : fixed); sample += 1
             }
             let offset = width == 8 ? try u64(table, 8 + chunk * width) : UInt64(try u32(table, 8 + chunk * width))
-            guard media.contains(where: { offset >= $0.offset + UInt64($0.header) && offset < $0.offset + $0.size && length <= $0.offset + $0.size - offset }) else {
+            guard media.contains(where: { offset >= $0.offset + UInt64($0.header) && (length == 0 ? offset <= $0.offset + $0.size : (offset < $0.offset + $0.size && length <= $0.offset + $0.size - offset)) }) else {
                 throw ProbeError.malformed("A chunk extent escapes all mdat payloads")
             }
         }
@@ -450,8 +452,10 @@ private enum VideoBMFF {
             } else if child.type == code("udta") {
                 var data = Data()
                 for entry in try atoms(child.payload) {
-                    if entry.type == code("meta"), !scopedValues.isEmpty, try handler(entry) == code("mdta") {
+                    if entry.type == code("meta"), !scopedValues.isEmpty, count == 0, try handler(entry) == code("mdta") {
                         count += 1; data.append(try editMetadata(entry, values: scopedValues))
+                    } else if entry.type == code("meta") {
+                        data.append(entry.raw)
                     } else { data.append(try retainUserData(entry, patch: patch)) }
                 }
                 body.append(try atom("udta", data))
@@ -483,7 +487,7 @@ private enum VideoBMFF {
             guard values.count <= 1 else { throw ProbeError.unsupported("Multiple metadata values cannot be represented as a scalar") }
             if let value = values.first, value.payload.count >= 8, try u32(value.payload, 0) == 1 {
                 guard result[key] == nil else { throw ProbeError.unsupported("Duplicate movie metadata key") }
-                result[key] = String(data: value.payload.dropFirst(8), encoding: .utf8)
+                result[key] = String(data: value.payload.dropFirst(8), encoding: .utf8)?.trimmingCharacters(in: CharacterSet(charactersIn: "\0"))
             }
         }
         return result
@@ -503,8 +507,9 @@ private enum VideoBMFF {
         }
         func collect(_ meta: Atom) throws {
             for (key, value) in try metadataValues(meta) {
-                if let old = result[key], old != value { throw ProbeError.unsupported("Conflicting metadata values across movie/track containers") }
-                result[key] = value
+                if result[key] == nil {
+                    result[key] = value
+                }
             }
         }
         for child in try atoms(movie.payload) {
