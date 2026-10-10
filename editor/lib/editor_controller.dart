@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -27,6 +28,9 @@ class EditorController extends ChangeNotifier {
   String? selectedBrand;
   String? selectedProfileId;
   String? selectedCameraId;
+  String? lastErrorCode;
+  String? lastErrorMessage;
+  DateTime? lastErrorTime;
   Map<String, Object?> _editorState = {};
   int queueCompleted = 0;
   Future<void> _persist() async {
@@ -51,6 +55,21 @@ class EditorController extends ChangeNotifier {
       state['selectedCameraId'] = selectedCameraId;
     } else {
       state.remove('selectedCameraId');
+    }
+    if (lastErrorCode != null) {
+      state['lastErrorCode'] = lastErrorCode;
+    } else {
+      state.remove('lastErrorCode');
+    }
+    if (lastErrorMessage != null) {
+      state['lastErrorMessage'] = lastErrorMessage;
+    } else {
+      state.remove('lastErrorMessage');
+    }
+    if (lastErrorTime != null) {
+      state['lastErrorTime'] = lastErrorTime!.toIso8601String();
+    } else {
+      state.remove('lastErrorTime');
     }
     await bridge.saveEditorState(state);
     _editorState = state;
@@ -104,6 +123,79 @@ class EditorController extends ChangeNotifier {
   void dismissMessage() {
     error = null;
     notice = null;
+    _emit();
+  }
+
+  static String classifyErrorCode(String message) {
+    final text = message.toLowerCase();
+    if (text.contains('date') ||
+        text.contains('datetimeoriginal') ||
+        text.contains('iso 8601') ||
+        text.contains('timestamp') ||
+        text.contains('err_date_fmt')) {
+      return 'ERR_DATE_FMT';
+    }
+    if (text.contains('latitude') ||
+        text.contains('longitude') ||
+        text.contains('altitude') ||
+        text.contains('coordinate') ||
+        text.contains('err_gps_bounds')) {
+      return 'ERR_GPS_BOUNDS';
+    }
+    if (text.contains('integrity') ||
+        text.contains('retained embedded metadata') ||
+        text.contains('verification failed') ||
+        text.contains('err_media_integrity')) {
+      return 'ERR_MEDIA_INTEGRITY';
+    }
+    if (text.contains('cannot be changed and removed together') ||
+        text.contains('conflict') ||
+        text.contains('err_field_conflict')) {
+      return 'ERR_FIELD_CONFLICT';
+    }
+    if (text.contains('unprocessed') ||
+        text.contains('no processed copies') ||
+        text.contains('ready') ||
+        text.contains('select and process') ||
+        text.contains('err_export_unready')) {
+      return 'ERR_EXPORT_UNREADY';
+    }
+    if (text.contains('photos access') ||
+        text.contains('photos permission') ||
+        text.contains('permission') ||
+        text.contains('err_photos_access')) {
+      return 'ERR_PHOTOS_ACCESS';
+    }
+    if (text.contains('storage') ||
+        text.contains('space') ||
+        text.contains('quota') ||
+        text.contains('disk') ||
+        text.contains('err_storage_full')) {
+      return 'ERR_STORAGE_FULL';
+    }
+    if (text.contains('unsupported') ||
+        text.contains('malformed') ||
+        text.contains('codec') ||
+        text.contains('format') ||
+        text.contains('err_unsupported_media')) {
+      return 'ERR_UNSUPPORTED_MEDIA';
+    }
+    return 'ERR_MEDIA_INTEGRITY';
+  }
+
+  void recordError(String message, {String? code}) {
+    lastErrorCode = code ?? classifyErrorCode(message);
+    lastErrorMessage = message;
+    lastErrorTime = DateTime.now();
+    unawaited(_persist().catchError((_) {}));
+    _emit();
+  }
+
+  void clearLastError() {
+    lastErrorCode = null;
+    lastErrorMessage = null;
+    lastErrorTime = null;
+    unawaited(_persist().catchError((_) {}));
     _emit();
   }
 
@@ -174,6 +266,7 @@ class EditorController extends ChangeNotifier {
     } catch (failure) {
       if (!_disposed && generation == _generation) {
         error = readableError(failure);
+        recordError(error!);
         if (reconcileOnFailure) {
           acknowledgedProcessingId = null;
           try {
@@ -235,6 +328,14 @@ class EditorController extends ChangeNotifier {
         if (storedProfileId is String) selectedProfileId = storedProfileId;
         final storedCameraId = state['selectedCameraId'];
         if (storedCameraId is String) selectedCameraId = storedCameraId;
+        final storedErrorCode = state['lastErrorCode'];
+        if (storedErrorCode is String) lastErrorCode = storedErrorCode;
+        final storedErrorMessage = state['lastErrorMessage'];
+        if (storedErrorMessage is String) lastErrorMessage = storedErrorMessage;
+        final storedErrorTime = state['lastErrorTime'];
+        if (storedErrorTime is String) {
+          lastErrorTime = DateTime.tryParse(storedErrorTime);
+        }
         final storedPresets = state['presets'];
         presets = storedPresets is List
             ? storedPresets.map(SavedPreset.decode).toList()

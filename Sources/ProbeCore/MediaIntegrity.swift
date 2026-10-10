@@ -109,7 +109,15 @@ public enum MediaIntegrity {
             keys.insert("loci")
             keys.insert("3gp/loci")
         }
-        for (key, alias) in [("movieCreateDate", "createDate"), ("movieModifyDate", "modifyDate")] where keys.contains(key) || keys.contains(alias) { keys.insert(key); keys.insert(alias) }
+        let videoDateKeys: Set<String> = [
+            "createDate", "modifyDate", "movieCreateDate", "movieModifyDate",
+            "trackCreateDate", "trackModifyDate", "mediaCreateDate", "mediaModifyDate",
+            "dateTimeOriginal", "com.apple.quicktime.creationdate", "mdta/com.apple.quicktime.creationdate",
+            AVMetadataIdentifier.quickTimeMetadataCreationDate.rawValue
+        ]
+        if !keys.isDisjoint(with: videoDateKeys) {
+            keys.formUnion(videoDateKeys)
+        }
         let retained = before.metadata.filter { !keys.contains($0.key) } == after.metadata.filter { !keys.contains($0.key) }
         checks.append(IntegrityCheck(name: "retained embedded metadata", status: retained ? .passed : .failed, detail: "Compare all exposed non-target metadata keys; exclude only selected fields and their documented aliases."))
         if patch.targetedKeys.isDisjoint(with: Set(["latitude", "longitude", "altitude", "imageDirection"])) {

@@ -478,4 +478,79 @@ void main() {
       );
     },
   );
+
+  test('classifyErrorCode correctly categorizes error messages', () {
+    expect(
+      EditorController.classifyErrorCode('Invalid date format in EXIF header'),
+      'ERR_DATE_FMT',
+    );
+    expect(
+      EditorController.classifyErrorCode('Latitude must be between -90 and 90'),
+      'ERR_GPS_BOUNDS',
+    );
+    expect(
+      EditorController.classifyErrorCode(
+        'Independent integrity verification failed: retained embedded metadata mismatch',
+      ),
+      'ERR_MEDIA_INTEGRITY',
+    );
+    expect(
+      EditorController.classifyErrorCode(
+        'make cannot be changed and removed together',
+      ),
+      'ERR_FIELD_CONFLICT',
+    );
+    expect(
+      EditorController.classifyErrorCode('No processed copies are ready'),
+      'ERR_EXPORT_UNREADY',
+    );
+    expect(
+      EditorController.classifyErrorCode('Photos access permission denied'),
+      'ERR_PHOTOS_ACCESS',
+    );
+    expect(
+      EditorController.classifyErrorCode('Insufficient disk storage space'),
+      'ERR_STORAGE_FULL',
+    );
+    expect(
+      EditorController.classifyErrorCode('Unsupported container or codec'),
+      'ERR_UNSUPPORTED_MEDIA',
+    );
+  });
+
+  test('recordError and clearLastError persist and restore across re-initialization', () async {
+    await controller.initialize();
+    expect(controller.lastErrorCode, isNull);
+
+    controller.recordError(
+      'Native metadata processing or independent integrity verification failed',
+    );
+    expect(controller.lastErrorCode, 'ERR_MEDIA_INTEGRITY');
+    expect(
+      controller.lastErrorMessage,
+      'Native metadata processing or independent integrity verification failed',
+    );
+    expect(controller.lastErrorTime, isNotNull);
+
+    // Verify persistence across re-initialization
+    final restored = EditorController(bridge);
+    await restored.initialize();
+    expect(restored.lastErrorCode, 'ERR_MEDIA_INTEGRITY');
+    expect(
+      restored.lastErrorMessage,
+      'Native metadata processing or independent integrity verification failed',
+    );
+    expect(restored.lastErrorTime, isNotNull);
+
+    // Clear error and verify persistence
+    restored.clearLastError();
+    expect(restored.lastErrorCode, isNull);
+    expect(restored.lastErrorMessage, isNull);
+    expect(restored.lastErrorTime, isNull);
+
+    final third = EditorController(bridge);
+    await third.initialize();
+    expect(third.lastErrorCode, isNull);
+    expect(third.lastErrorMessage, isNull);
+  });
 }

@@ -589,6 +589,7 @@ final class NativeMediaBridge: NSObject {
         case ProbeError.sameFile: code = "invalid_argument"; message = "Source and output must be different files."
         case ProbeError.writeFailed(let detail): code = "processing"; message = detail
         case ProbeError.readbackFailed(let detail): code = "processing"; message = detail
+        case NativeMediaError.processingFailed(let detail): code = "processing"; message = detail
         default: code = "processing"; message = "Native metadata processing or independent integrity verification failed. No new output is available."
         }
         return FlutterError(code: code, message: message, details: nil)

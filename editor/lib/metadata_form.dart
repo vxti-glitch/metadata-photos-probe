@@ -330,6 +330,7 @@ class _MetadataFormState extends State<MetadataForm>
       }
       setState(() => formError = null);
     } on FormatException catch (e) {
+      widget.controller.recordError(e.message);
       setState(() => formError = e.message);
     }
   }
@@ -630,6 +631,7 @@ class _MetadataFormState extends State<MetadataForm>
       }
       if (mounted) setState(() => formError = null);
     } on FormatException catch (e) {
+      widget.controller.recordError(e.message);
       setState(() => formError = e.message);
     }
   }
@@ -1469,11 +1471,13 @@ class _MetadataFormState extends State<MetadataForm>
                           });
                         } catch (e) {
                           _appliedTimer?.cancel();
+                          final err = e is FormatException
+                              ? e.message
+                              : e.toString();
+                          widget.controller.recordError(err);
                           setState(() {
                             _appliedFeedback = false;
-                            formError = e is FormatException
-                                ? e.message
-                                : e.toString();
+                            formError = err;
                           });
                         }
                       },
@@ -1873,6 +1877,7 @@ class _MetadataFormState extends State<MetadataForm>
       explicitOverrides.addAll(overrides?.removals ?? <String>{});
       explicitOverrides.addAll(recipe.keepFields);
     } on FormatException catch (e) {
+      widget.controller.recordError(e.message);
       if (mounted) setState(() => formError = e.message);
     }
   }
@@ -1957,6 +1962,7 @@ class _MetadataFormState extends State<MetadataForm>
         );
       }
     } on FormatException catch (e) {
+      widget.controller.recordError(e.message);
       setState(() => formError = e.message);
     }
   }

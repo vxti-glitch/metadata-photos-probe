@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 import ProbeCore
 
 enum NativeMediaError: Error {
-    case busy, canceled, permission, invalidArgument, notFound, storage, unsupported(String), processing
+    case busy, canceled, permission, invalidArgument, notFound, storage, unsupported(String), processing, processingFailed(String)
 }
 
 struct NativeProcessing: Codable, Sendable {
@@ -261,8 +261,11 @@ actor NativeSessionStore {
         else { throw NativeMediaError.invalidArgument }
         try Task.checkCancellation()
         try Self.requireRegularFile(output, maximumBytes: mediaSizeLimit)
-        guard try WholeFileDigest.sha256(source) == original.sourceSHA256,
-              result.integrity.status != .mismatch else { throw NativeMediaError.processing }
+        guard try WholeFileDigest.sha256(source) == original.sourceSHA256 else { throw NativeMediaError.processing }
+        guard result.integrity.status != .mismatch else {
+            let failedChecks = result.integrity.checks.filter { $0.status == .failed }.map { "\($0.name): \($0.detail)" }.joined(separator: "; ")
+            throw NativeMediaError.processingFailed("Media or metadata integrity check failed: \(failedChecks.isEmpty ? "mismatch" : failedChecks)")
+        }
         let outputDisplayName = try nextOutputDisplayName(extension: outputExtension)
         let processing = NativeProcessing(id: processingID, createdAt: Date(), patch: cameraPatch,
             metadataPatch: metadataPatch, outputDisplayName: outputDisplayName,
@@ -310,7 +313,10 @@ actor NativeSessionStore {
         let qualificationKey = QualificationKey(session: sessionID, processing: output.id)
         var comparison = qualifiedComparisons[qualificationKey] ?? output.integrity
         guard !comparison.checks.isEmpty, comparison.status != .mismatch,
-              !comparison.checks.contains(where: { $0.status == .failed }) else { throw NativeMediaError.processing }
+              !comparison.checks.contains(where: { $0.status == .failed }) else {
+            let failedChecks = comparison.checks.filter { $0.status == .failed }.map { "\($0.name): \($0.detail)" }.joined(separator: "; ")
+            throw NativeMediaError.processingFailed("Integrity verification failed: \(failedChecks.isEmpty ? "mismatch" : failedChecks)")
+        }
         let inconsistent = comparison.status == .verified && (!comparison.limitations.isEmpty || comparison.checks.contains { $0.status == .notChecked })
         guard !inconsistent else { throw NativeMediaError.processing }
         let incomplete = comparison.status == .incomplete || !comparison.limitations.isEmpty

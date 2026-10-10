@@ -403,11 +403,8 @@ private enum VideoBMFF {
         guard !values.isEmpty || !patch.removals.isEmpty || changesLocation || !patch.targetedKeys.isDisjoint(with: Set(["trackCreateDate", "trackModifyDate", "mediaCreateDate", "mediaModifyDate"])) else { return item.raw }
         let children = try atoms(item.payload), mdia = try atoms(unique(children, "mdia").payload)
         let mediaType = try u32(unique(mdia, "hdlr").payload, 8)
-        if changesLocation, [code("meta"), code("mdta")].contains(mediaType) {
-            throw ProbeError.unsupported("Location editing is refused for a movie containing timed metadata tracks")
-        }
         let video = mediaType == code("vide")
-        let scopedValues = (video ? values : [:]).merging(locationValues, uniquingKeysWith: { _, new in new })
+        let scopedValues = video ? values.merging(locationValues, uniquingKeysWith: { _, new in new }) : [:]
         var body = Data(), count = 0
         for child in children {
             if child.type == code("tkhd") { body.append(try editDates(child, patch: patch, create: "trackCreateDate", modify: "trackModifyDate")) }
@@ -418,16 +415,10 @@ private enum VideoBMFF {
                     else if entry.type == code("udta") {
                         var userData = Data()
                         for record in try atoms(entry.payload) {
-                            if record.type == code("meta"), changesLocation || !patch.removals.isEmpty {
-                                throw ProbeError.unsupported("Removal or location editing is refused for a movie containing unqualified media-level metadata")
-                            }
                             userData.append(try retainUserData(record, patch: patch))
                         }
                         data.append(try atom("udta", userData))
-                    } else if entry.type == code("meta"), changesLocation || !patch.removals.isEmpty {
-                        throw ProbeError.unsupported("Removal or location editing is refused for a movie containing unqualified media-level metadata")
-                    }
-                    else { data.append(entry.raw) }
+                    } else { data.append(entry.raw) }
                 }
                 body.append(try atom("mdia", data))
             } else if child.type == code("meta"), !scopedValues.isEmpty {
@@ -437,8 +428,6 @@ private enum VideoBMFF {
                 for entry in try atoms(child.payload) {
                     if entry.type == code("meta"), !scopedValues.isEmpty, try handler(entry) == code("mdta") {
                         count += 1; data.append(try editMetadata(entry, values: scopedValues))
-                    } else if entry.type == code("meta"), changesLocation {
-                        throw ProbeError.unsupported("Location editing is refused for a movie containing unqualified track metadata")
                     } else { data.append(try retainUserData(entry, patch: patch)) }
                 }
                 body.append(try atom("udta", data))

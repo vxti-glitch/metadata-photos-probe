@@ -70,7 +70,7 @@ void main() {
 
     expect(find.text(AppBrand.name), findsOneWidget);
     expect(find.text('by vxti'), findsOneWidget);
-    expect(find.text('Version 1.0'), findsOneWidget);
+    expect(find.text('Version ${AppBrand.version}'), findsOneWidget);
     expect(find.byType(MetadataMark), findsOneWidget);
   });
 
@@ -224,8 +224,198 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.text('Metadata Editor 1.0 (Build 7) · © 2026 vxti'),
+      find.text(
+        '${AppBrand.name} ${AppBrand.version} (Build ${AppBrand.buildNumber}) · © 2026 ${AppBrand.developer}',
+      ),
       findsOneWidget,
     );
   });
+
+  testWidgets(
+    'Help & Troubleshooting section displays Error Codes & Fixes and Photos Attribution Guide',
+    (tester) async {
+      await pumpSettings(tester);
+
+      expect(find.text('HELP & TROUBLESHOOTING'), findsOneWidget);
+      expect(find.text('Error Codes & Fixes'), findsOneWidget);
+      expect(find.text('8 CODES'), findsOneWidget);
+      expect(find.text('Photos Attribution Guide'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Photos Attribution Guide row opens explanation dialog with attribution details',
+    (tester) async {
+      await pumpSettings(tester);
+
+      await tester.tap(find.byKey(const Key('photosAttributionRow')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Photos Attribution Guide'), findsAtLeastNWidgets(1));
+      expect(
+        find.textContaining(
+          'Why does Photos show "Saved from Metadata Editor"?',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('How to prevent attribution stamps:'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('Got it'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('How to prevent attribution stamps:'),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'Error Codes & Fixes row opens Error Reference Guide modal sheet with search and filtering',
+    (tester) async {
+      await pumpSettings(tester);
+
+      await tester.tap(find.byKey(const Key('errorGuideRow')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Error Reference Guide'), findsOneWidget);
+      expect(find.text('8 error codes with diagnostic fixes'), findsOneWidget);
+      expect(find.text('ERR_DATE_FMT'), findsOneWidget);
+      expect(find.text('ERR_GPS_BOUNDS'), findsOneWidget);
+
+      // Search filtering for 'GPS'
+      await tester.enterText(find.byKey(const Key('errorSearchInput')), 'GPS');
+      await tester.pumpAndSettle();
+
+      expect(find.text('ERR_GPS_BOUNDS'), findsOneWidget);
+      expect(find.text('ERR_DATE_FMT'), findsNothing);
+
+      // Clear search
+      await tester.tap(find.byKey(const Key('clearSearchButton')));
+      await tester.pumpAndSettle();
+      expect(find.text('ERR_DATE_FMT'), findsOneWidget);
+
+      // Category filter for 'Integrity'
+      await tester.tap(find.byKey(const Key('categoryPill_Integrity')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('ERR_MEDIA_INTEGRITY'), findsOneWidget);
+      expect(find.text('ERR_GPS_BOUNDS'), findsNothing);
+
+      // Reset category filter to 'All'
+      await tester.tap(find.byKey(const Key('categoryPill_All')));
+      await tester.pumpAndSettle();
+
+      // Expand ERR_GPS_BOUNDS
+      await tester.tap(find.byKey(const Key('errorTile_ERR_GPS_BOUNDS')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining(
+          'Geographic coordinates must fall within standard physical boundaries',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('WHY THIS HAPPENS'), findsAtLeastNWidgets(1));
+      // Zero-match search query test
+      await tester.enterText(
+        find.byKey(const Key('errorSearchInput')),
+        'XYZ_NO_MATCH_CODE',
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('No matching error codes found'), findsOneWidget);
+      expect(find.byKey(const Key('resetFiltersButton')), findsOneWidget);
+
+      // Tap Reset Filters
+      await tester.tap(find.byKey(const Key('resetFiltersButton')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('No matching error codes found'), findsNothing);
+      expect(find.text('ERR_DATE_FMT'), findsOneWidget);
+
+      // Close sheet
+      await tester.tap(find.byKey(const Key('closeErrorGuideButton')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Error Reference Guide'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'Recent Error Detected banner displays when lastErrorCode is set, and dismiss button clears it',
+    (tester) async {
+      controller.recordError(
+        'Native metadata processing or independent integrity verification failed',
+      );
+      await pumpSettings(tester);
+
+      expect(find.text('RECENT ERROR DETECTED'), findsOneWidget);
+      expect(find.byKey(const Key('recentErrorBanner')), findsOneWidget);
+      expect(find.byKey(const Key('recentErrorCodeBadge')), findsOneWidget);
+      expect(find.text('ERR_MEDIA_INTEGRITY'), findsOneWidget);
+      expect(find.text('ACTIVE FIX AVAILABLE'), findsOneWidget);
+      expect(find.text('ACTIVE FIX'), findsOneWidget);
+      expect(find.byKey(const Key('dismissRecentErrorButton')), findsOneWidget);
+
+      // Tap dismiss button
+      await tester.tap(find.byKey(const Key('dismissRecentErrorButton')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('RECENT ERROR DETECTED'), findsNothing);
+      expect(find.byKey(const Key('recentErrorBanner')), findsNothing);
+      expect(find.text('8 CODES'), findsOneWidget);
+      expect(controller.lastErrorCode, isNull);
+    },
+  );
+
+  testWidgets(
+    'View Recent Error Fix button opens Error Guide with promoted and auto-expanded card',
+    (tester) async {
+      controller.recordError('Latitude must be between -90 and 90');
+      await pumpSettings(tester);
+
+      expect(find.text('ERR_GPS_BOUNDS'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('viewRecentErrorFixButton')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Error Reference Guide'), findsOneWidget);
+      expect(
+        find.byKey(const Key('justEncounteredBadge_ERR_GPS_BOUNDS')),
+        findsOneWidget,
+      );
+      expect(find.text('JUST ENCOUNTERED'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'Geographic coordinates must fall within standard physical boundaries',
+        ),
+        findsOneWidget,
+      );
+
+      // Close sheet
+      await tester.tap(find.byKey(const Key('closeErrorGuideButton')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Error Reference Guide'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'System Health card displays Photos Access, Swift Media Engine, and Storage Sandbox live status',
+    (tester) async {
+      await pumpSettings(tester);
+
+      expect(find.text('SYSTEM HEALTH & DIAGNOSTICS'), findsOneWidget);
+      expect(find.text('Photos Access'), findsOneWidget);
+      expect(find.text('GRANTED'), findsOneWidget);
+      expect(find.text('Swift Media Engine'), findsOneWidget);
+      expect(find.text('Storage Sandbox'), findsOneWidget);
+      expect(find.text('FILE-BACKED'), findsOneWidget);
+      expect(find.text('Privacy Guarantee'), findsOneWidget);
+    },
+  );
 }
