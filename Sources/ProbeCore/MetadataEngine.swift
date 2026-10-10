@@ -115,9 +115,21 @@ public enum MetadataEngine {
 
     private static func writeImage(source: URL, output: URL, patch: CameraPatch) throws {
         if let inspection = CGImageSourceCreateWithURL(source as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
-           CGImageSourceGetType(inspection) as String? == UTType.heic.identifier {
-            try HEICMetadataWriter.write(source: source, output: output, patch: patch)
-            return
+           let type = CGImageSourceGetType(inspection) as String? {
+            if type == UTType.heic.identifier {
+                try HEICMetadataWriter.write(source: source, output: output, patch: patch)
+                return
+            } else if type == UTType.png.identifier {
+                var values: [String: MetadataValue] = [
+                    "make": .string(patch.make),
+                    "model": .string(patch.model)
+                ]
+                if let lens = patch.lens {
+                    values["lensModel"] = .string(lens)
+                }
+                try StillContainerMetadata.write(source: source, output: output, kind: .png, patch: MetadataPatch(values: values, removals: []))
+                return
+            }
         }
         guard let image = CGImageSourceCreateWithURL(source as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
               let type = CGImageSourceGetType(image),

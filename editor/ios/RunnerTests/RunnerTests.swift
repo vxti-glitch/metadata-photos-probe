@@ -537,6 +537,7 @@ class RunnerTests: XCTestCase {
     let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     let autoFolder = documents.appendingPathComponent("Processed Media", isDirectory: true)
     let autoFile = autoFolder.appendingPathComponent(displayName)
+    addTeardownBlock { try? FileManager.default.removeItem(at: autoFile) }
 
     XCTAssertTrue(FileManager.default.fileExists(atPath: autoFile.path), "Output was not saved to Processed Media folder")
     XCTAssertEqual(try WholeFileDigest.sha256(autoFile), output.outputSHA256)
@@ -549,6 +550,7 @@ class RunnerTests: XCTestCase {
 
     XCTAssertNotEqual(displayName, displayName2)
     let autoFile2 = autoFolder.appendingPathComponent(displayName2)
+    addTeardownBlock { try? FileManager.default.removeItem(at: autoFile2) }
     XCTAssertTrue(FileManager.default.fileExists(atPath: autoFile2.path))
     XCTAssertTrue(FileManager.default.fileExists(atPath: autoFile.path), "Previous processed file in Processed Media was overwritten")
 
@@ -556,10 +558,6 @@ class RunnerTests: XCTestCase {
     try await store.clear()
     XCTAssertTrue(FileManager.default.fileExists(atPath: autoFile.path), "User media in Processed Media must not be deleted on session clear")
     XCTAssertTrue(FileManager.default.fileExists(atPath: autoFile2.path), "User media in Processed Media must not be deleted on session clear")
-
-    // Cleanup test artifacts from Documents
-    try? FileManager.default.removeItem(at: autoFile)
-    try? FileManager.default.removeItem(at: autoFile2)
   }
 
   func testNativeBatchItemsValidation() throws {
@@ -604,32 +602,30 @@ class RunnerTests: XCTestCase {
     XCTAssertEqual(s2.inspection.kind, .jpeg)
     XCTAssertEqual(s3.inspection.kind, .png)
 
+    let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    let autoFolder = documents.appendingPathComponent("Processed Media", isDirectory: true)
+
     let p1 = try await store.process(sessionID: s1.id, patch: CameraPatch(make: "Batch Make 1", model: "Batch Model 1"))
-    let p2 = try await store.process(sessionID: s2.id, patch: CameraPatch(make: "Batch Make 2", model: "Batch Model 2"))
-    let p3 = try await store.process(sessionID: s3.id, patch: CameraPatch(make: "Batch Make 3", model: "Batch Model 3"))
-
     let out1 = try XCTUnwrap(p1.processing)
-    let out2 = try XCTUnwrap(p2.processing)
-    let out3 = try XCTUnwrap(p3.processing)
-
     let name1 = try XCTUnwrap(out1.outputDisplayName)
+    let auto1 = autoFolder.appendingPathComponent(name1)
+    addTeardownBlock { try? FileManager.default.removeItem(at: auto1) }
+
+    let p2 = try await store.process(sessionID: s2.id, patch: CameraPatch(make: "Batch Make 2", model: "Batch Model 2"))
+    let out2 = try XCTUnwrap(p2.processing)
     let name2 = try XCTUnwrap(out2.outputDisplayName)
+    let auto2 = autoFolder.appendingPathComponent(name2)
+    addTeardownBlock { try? FileManager.default.removeItem(at: auto2) }
+
+    let p3 = try await store.process(sessionID: s3.id, patch: CameraPatch(make: "Batch Make 3", model: "Batch Model 3"))
+    let out3 = try XCTUnwrap(p3.processing)
     let name3 = try XCTUnwrap(out3.outputDisplayName)
+    let auto3 = autoFolder.appendingPathComponent(name3)
+    addTeardownBlock { try? FileManager.default.removeItem(at: auto3) }
 
     XCTAssertNotEqual(name1, name2)
     XCTAssertNotEqual(name1, name3)
     XCTAssertNotEqual(name2, name3)
-
-    let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-    let autoFolder = documents.appendingPathComponent("Processed Media", isDirectory: true)
-    let auto1 = autoFolder.appendingPathComponent(name1)
-    let auto2 = autoFolder.appendingPathComponent(name2)
-    let auto3 = autoFolder.appendingPathComponent(name3)
-    addTeardownBlock {
-      try? FileManager.default.removeItem(at: auto1)
-      try? FileManager.default.removeItem(at: auto2)
-      try? FileManager.default.removeItem(at: auto3)
-    }
 
     XCTAssertTrue(FileManager.default.fileExists(atPath: auto1.path))
     XCTAssertTrue(FileManager.default.fileExists(atPath: auto2.path))
