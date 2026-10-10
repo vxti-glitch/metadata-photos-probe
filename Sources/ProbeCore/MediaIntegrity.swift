@@ -158,7 +158,11 @@ public enum MediaIntegrity {
                         if let n = target.number {
                             let scalar = Double(value.hasPrefix("F") ? String(value.dropFirst()) : value)
                             if scalar == nil || abs(scalar! - n) > MetadataPatch.numericTolerance(for: key, value: n) { matches = false }
-                        } else if value != target.text { matches = false }
+                        } else {
+                            let sanitized = MetadataPatch.sanitizeText(target.text)
+                            let trimmed = value.trimmingCharacters(in: CharacterSet(charactersIn: "\0"))
+                            if value != target.text && value != sanitized && trimmed != target.text && trimmed != sanitized { matches = false }
+                        }
                     }
                 } else if !found.isEmpty { matches = false }
             }
@@ -194,7 +198,9 @@ public enum MediaIntegrity {
                     if let array = actual as? [NSNumber] { actual = array.first }
                     if let actual = actual as? NSNumber { matches = abs(actual.doubleValue - number) <= MetadataPatch.numericTolerance(for: key, value: number) }
                 } else if let actual = actual as? String {
-                    matches = key.lowercased().contains("date") ? actual == (try MetadataPatch.exifDate(target.text)) : actual == target.text
+                    let sanitized = MetadataPatch.sanitizeText(target.text)
+                    let trimmed = actual.trimmingCharacters(in: CharacterSet(charactersIn: "\0"))
+                    matches = key.lowercased().contains("date") ? actual == (try MetadataPatch.exifDate(target.text)) : (actual == target.text || actual == sanitized || trimmed == target.text || trimmed == sanitized)
                 }
             } else { matches = actual == nil }
             checks.append(IntegrityCheck(name: "ImageIO target \(key)", status: matches ? .passed : .failed, detail: "Read the selected field through Apple's independent image metadata reader."))

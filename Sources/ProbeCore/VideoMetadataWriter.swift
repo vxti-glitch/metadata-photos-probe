@@ -37,8 +37,7 @@ public enum VideoMetadataWriter {
         let input = try FileHandle(forReadingFrom: source)
         defer { try? input.close() }
         let top = try VideoBMFF.fileAtoms(input, length: UInt64(count))
-        let allowedTop = Set(["ftyp", "moov", "mdat", "free", "skip", "wide", "uuid", "pnot", "meta", "prfl"].map(VideoBMFF.code))
-        guard top.allSatisfy({ allowedTop.contains($0.type) }), top.first?.type == VideoBMFF.code("ftyp"),
+        guard top.allSatisfy({ VideoBMFF.allowedTopAtoms.contains($0.type) }), top.first?.type == VideoBMFF.code("ftyp"),
               top.filter({ $0.type == VideoBMFF.code("ftyp") }).count == 1,
               top.filter({ $0.type == VideoBMFF.code("moov") }).count == 1 else {
             throw ProbeError.unsupported("Only self-contained nonfragmented MP4/MOV with one moov and known top-level atoms is qualified")
@@ -167,6 +166,7 @@ public enum VideoMetadataWriter {
 private enum VideoBMFF {
     static let maxMovieBytes: UInt64 = 16 * 1024 * 1024
     static let maxEntries = 1_000_000
+    static let allowedTopAtoms = Set(["ftyp", "moov", "mdat", "free", "skip", "wide"].map(code))
     struct FileAtom { let type: UInt32; let offset: UInt64; let size: UInt64; let header: Int }
     struct Atom { let type: UInt32; let raw: Data; let header: Int; var payload: Data { raw.subdata(in: header..<raw.count) } }
     static func code(_ value: String) -> UInt32 { value.utf8.reduce(UInt32(0)) { ($0 << 8) | UInt32($1) } }
@@ -289,7 +289,7 @@ private enum VideoBMFF {
             // Accept version 0 / flag 1 only, with no external alias/URL payload.
             // https://developer.apple.com/documentation/quicktime-file-format/media_data_reference_atom/data_references
             guard references.allSatisfy({
-                ($0.type == code("url ") || $0.type == code("alis")) && ($0.payload == number(1) || ($0.payload.count >= 4 && (try? u32($0.payload, 0)) == 1))
+                ($0.type == code("url ") || $0.type == code("alis")) && $0.payload == number(1)
             }) else {
                 throw ProbeError.unsupported("External or unqualified data references")
             }
@@ -429,6 +429,9 @@ private enum VideoBMFF {
         guard !values.isEmpty || !patch.removals.isEmpty || changesLocation || !patch.targetedKeys.isDisjoint(with: Set(["trackCreateDate", "trackModifyDate", "mediaCreateDate", "mediaModifyDate"])) else { return item.raw }
         let children = try atoms(item.payload), mdia = try atoms(unique(children, "mdia").payload)
         let mediaType = try u32(unique(mdia, "hdlr").payload, 8)
+        if changesLocation, [code("meta"), code("mdta")].contains(mediaType) {
+            throw ProbeError.unsupported("Location editing is refused for a movie containing timed metadata tracks")
+        }
         let video = mediaType == code("vide")
         let scopedValues = video ? values.merging(locationValues, uniquingKeysWith: { _, new in new }) : [:]
         var body = Data(), count = 0
@@ -486,8 +489,9 @@ private enum VideoBMFF {
             let values = try atoms(item.payload).filter { $0.type == code("data") }
             guard values.count <= 1 else { throw ProbeError.unsupported("Multiple metadata values cannot be represented as a scalar") }
             if let value = values.first, value.payload.count >= 8, try u32(value.payload, 0) == 1 {
-                guard result[key] == nil else { throw ProbeError.unsupported("Duplicate movie metadata key") }
-                result[key] = String(data: value.payload.dropFirst(8), encoding: .utf8)?.trimmingCharacters(in: CharacterSet(charactersIn: "\0"))
+                if result[key] == nil {
+                    result[key] = String(data: value.payload.dropFirst(8), encoding: .utf8)?.trimmingCharacters(in: CharacterSet(charactersIn: "\0"))
+                }
             }
         }
         return result
@@ -563,12 +567,10 @@ private enum VideoBMFF {
         for key in values.keys.sorted() {
             let value = values[key]!
             let matches = definitions.indices.filter { definitions[$0].namespace == code("mdta") && definitions[$0].value == Data(key.utf8) }
-            guard matches.count <= 1 else { throw ProbeError.unsupported("Duplicate camera metadata key") }
             let keyIndex: UInt32
             if let existing = matches.first { keyIndex = UInt32(existing + 1) }
             else { definitions.append((code("mdta"), Data(key.utf8))); keyIndex = UInt32(definitions.count) }
             let matchesItems = items.indices.filter { items[$0].type == keyIndex }
-            guard matchesItems.count <= 1 else { throw ProbeError.unsupported("Duplicate camera metadata item") }
             guard let value else { items.removeAll { $0.type == keyIndex }; continue }
             let valueAtom = try atom("data", number(1) + number(0) + Data(value.utf8))
             var payload = Data()
@@ -579,6 +581,11 @@ private enum VideoBMFF {
                 }
                 payload.append(valueAtom)
                 items[item] = try atoms(atom(keyIndex, payload))[0]
+                if matchesItems.count > 1 {
+                    for extra in matchesItems.dropFirst().reversed() {
+                        items.remove(at: extra)
+                    }
+                }
             } else { items.append(try atoms(atom(keyIndex, valueAtom))[0]) }
         }
         var keyBody = number(0) + number(UInt32(definitions.count))

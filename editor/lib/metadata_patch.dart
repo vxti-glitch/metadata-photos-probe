@@ -168,7 +168,9 @@ class MetadataPatch {
               (entry.value as String).trim().isEmpty ||
               utf8.encode(entry.value as String).length > 1024 ||
               (entry.value as String).runes.any(
-                (rune) => rune < 32 || (rune >= 127 && rune <= 159),
+                (rune) =>
+                    (rune < 32 && rune != 10 && rune != 13 && rune != 9) ||
+                    (rune >= 127 && rune <= 159),
               ))) {
         return '${field.label} needs readable text (up to 1024 bytes).';
       }
@@ -277,7 +279,14 @@ class MetadataPatch {
 
   bool equivalent(MetadataPatch other) =>
       values.length == other.values.length &&
-      values.entries.every((e) => other.values[e.key] == e.value) &&
+      values.entries.every((e) {
+        final otherVal = other.values[e.key];
+        if (otherVal == e.value) return true;
+        if (otherVal is num && e.value is num) {
+          return (otherVal - (e.value as num)).abs() <= 1e-7;
+        }
+        return false;
+      }) &&
       removals.length == other.removals.length &&
       removals.every(other.removals.contains);
   static Object parseField(MetadataField field, String text) {

@@ -584,7 +584,7 @@ final class NativeMediaBridge: NSObject {
         case NativeMediaError.notFound: code = "not_found"; message = "The selected session or current processed output is unavailable."
         case NativeMediaError.storage: code = "storage"; message = "The local media copy or session journal could not be accessed safely."
         case NativeMediaError.unsupported(let detail), ProbeError.unsupported(let detail): code = "unsupported"; message = detail
-        case ProbeError.malformed: code = "unsupported"; message = "The selected file has an invalid or unqualified media structure."
+        case ProbeError.malformed(let detail): code = "unsupported"; message = "The selected file has an invalid or unqualified media structure: \(detail)"
         case ProbeError.outputExists: code = "storage"; message = "The output copy already exists. Choose a new output path."
         case ProbeError.sameFile: code = "invalid_argument"; message = "Source and output must be different files."
         case ProbeError.writeFailed(let detail): code = "processing"; message = detail

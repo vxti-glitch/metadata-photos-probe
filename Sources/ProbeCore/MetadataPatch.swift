@@ -36,7 +36,7 @@ public struct MetadataPatch: Codable, Sendable, Equatable {
         for (key, value) in values {
             if Self.stringKeys.contains(key) {
                 guard case .string(let text) = value, !text.isEmpty, text.utf8.count <= 1024,
-                      !text.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw ProbeError.invalidPatch }
+                      !text.unicodeScalars.contains(where: { !"\r\n\t".unicodeScalars.contains($0) && CharacterSet.controlCharacters.contains($0) }) else { throw ProbeError.invalidPatch }
                 if key.hasPrefix("offsetTime") { guard text.range(of: "^[+-](?:(?:0[0-9]|1[0-3]):[0-5][0-9]|14:00)$", options: .regularExpression) != nil else { throw ProbeError.invalidPatch } }
                 if key.lowercased().contains("date") { _ = try Self.date(text) }
             } else {
@@ -44,6 +44,28 @@ public struct MetadataPatch: Codable, Sendable, Equatable {
                 if ["iso", "flash", "meteringMode", "focalLength35mm"].contains(key), n.rounded() != n { throw ProbeError.invalidPatch }
             }
         }
+    }
+    public static func sanitizeText(_ text: String) -> String {
+        guard !text.utf8.allSatisfy({ $0 < 128 }) else { return text }
+        return text
+            .replacingOccurrences(of: "\u{00A9}", with: "(c)")
+            .replacingOccurrences(of: "\u{00AE}", with: "(r)")
+            .replacingOccurrences(of: "\u{2122}", with: "(tm)")
+            .replacingOccurrences(of: "\u{2022}", with: "*")
+            .replacingOccurrences(of: "\u{2026}", with: "...")
+            .replacingOccurrences(of: "\u{2018}", with: "'")
+            .replacingOccurrences(of: "\u{2019}", with: "'")
+            .replacingOccurrences(of: "\u{201A}", with: "'")
+            .replacingOccurrences(of: "\u{201B}", with: "'")
+            .replacingOccurrences(of: "\u{201C}", with: "\"")
+            .replacingOccurrences(of: "\u{201D}", with: "\"")
+            .replacingOccurrences(of: "\u{201E}", with: "\"")
+            .replacingOccurrences(of: "\u{201F}", with: "\"")
+            .replacingOccurrences(of: "\u{2013}", with: "-")
+            .replacingOccurrences(of: "\u{2014}", with: "-")
+            .replacingOccurrences(of: "\u{2015}", with: "-")
+            .replacingOccurrences(of: "\u{00A0}", with: " ")
+            .folding(options: .diacriticInsensitive, locale: Locale(identifier: "en_US_POSIX"))
     }
     public static func date(_ text: String) throws -> Date {
         let iso = ISO8601DateFormatter()
@@ -72,7 +94,13 @@ public struct MetadataPatch: Codable, Sendable, Equatable {
                 guard let result = Double(actual), abs(result - n) <= Self.numericTolerance(for: key, value: n) else { throw ProbeError.readbackFailed("\(key) differs from requested numeric value") }
             } else if key.lowercased().contains("date") {
                 guard abs((try Self.date(actual)).timeIntervalSince(try Self.date(value.text))) < 1 else { throw ProbeError.readbackFailed("\(key) date differs") }
-            } else if actual != value.text { throw ProbeError.readbackFailed("\(key) differs from requested value") }
+            } else {
+                let trimmed = actual.trimmingCharacters(in: CharacterSet(charactersIn: "\0"))
+                let sanitized = Self.sanitizeText(value.text)
+                guard actual == value.text || actual == sanitized || trimmed == value.text || trimmed == sanitized else {
+                    throw ProbeError.readbackFailed("\(key) differs from requested value")
+                }
+            }
         }
         for key in removals { guard inspection.metadata[key] == nil else { throw ProbeError.readbackFailed("Removed \(key) remains present") } }
     }

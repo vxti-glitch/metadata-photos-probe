@@ -484,17 +484,7 @@ private enum HEICTIFFEditor {
         if directory.next != 0 { try validateIFD(data, at: Int(directory.next), little: little, visited: &visited) }
     }
     private static func replaceASCII(tag: UInt64, value: String, entries: inout [Data], tiff: inout Data, little: Bool) throws {
-        var sanitized = value
-        if !sanitized.utf8.allSatisfy({ $0 < 128 }) {
-            sanitized = sanitized
-                .replacingOccurrences(of: "\u{2018}", with: "'")
-                .replacingOccurrences(of: "\u{2019}", with: "'")
-                .replacingOccurrences(of: "\u{201C}", with: "\"")
-                .replacingOccurrences(of: "\u{201D}", with: "\"")
-                .replacingOccurrences(of: "\u{2013}", with: "-")
-                .replacingOccurrences(of: "\u{2014}", with: "-")
-                .folding(options: .diacriticInsensitive, locale: Locale(identifier: "en_US_POSIX"))
-        }
+        let sanitized = MetadataPatch.sanitizeText(value)
         guard sanitized.utf8.allSatisfy({ $0 < 128 }) else { throw ProbeError.unsupported("HEIC TIFF camera tags require ASCII in this probe") }
         let bytes = Data(sanitized.utf8) + Data([0])
         var entry = Data(repeating: 0, count: 12)
