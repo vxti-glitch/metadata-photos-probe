@@ -3,7 +3,19 @@ name: iOS feasibility probe
 on:
   push:
     branches: ["**"]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'evidence/**'
+      - 'branding/**'
+      - 'LICENSE'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'evidence/**'
+      - 'branding/**'
+      - 'LICENSE'
   workflow_dispatch:
     inputs:
       signed_export:

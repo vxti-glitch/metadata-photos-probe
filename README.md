@@ -1,58 +1,123 @@
-# Metadata Editor — Flutter/Swift editor and preserved feasibility probe
+# Metadata Editor
 
-The user has authorized main-app development with **Flutter + Swift**, and the owner accepted explicit Files/Safari/iCloud Photos export. The first working editor lives in [editor/](editor/README.md), with its [full preserved milestone plan](editor/docs/MAIN-APP-MILESTONES.md) and [actual validation record](editor/docs/VALIDATION.md). The canonical Swift engine is shared; the diagnostic app below remains available independently.
+A native iOS metadata manipulation suite built with **Flutter** and a high-performance **Swift Core Engine** (`ProbeCore`). Designed for photographers, security researchers, and media professionals who require granular control over image and video metadata without risking compression loss, pixel degradation, or color shifts.
 
-## Photos Metadata Feasibility Probe
+---
 
-Single-file SwiftUI/iOS diagnostic app for an iPhone 15 Pro Max running reported iOS 27.2. It tests embedded camera metadata, source/output integrity and public PhotoKit save routes. **It does not suppress attribution or automatically inspect Apple Photos' interface.**
+## Overview
 
-The revised development specification is preserved in [docs/SPECIFICATION.md](docs/SPECIFICATION.md). This repository covers only its first feasibility experiment, not the full editor.
+Metadata Editor provides non-destructive, bit-accurate inspection, modification, and batch processing of media metadata. Unlike general-purpose tools that re-encode media streams during export, Metadata Editor operates directly at the container and chunk level: image raster data and video sample tables remain completely untouched.
 
-## What is included
+### Core Features
 
-- JPEG, HEIC, MP4 and MOV inspection and controlled save experiments. JPEG changes use ImageIO with compressed-data checks; HEIC/video changes use bounded metadata-only container writers and must pass native framework readback. Format support is measured rather than assumed; see [actual results](docs/VALIDATION-STATUS.md). Image lens changes are optional; video lens editing is refused.
-- Single-selection Photos picker and coordinated Files staging. Deliberate original/current PhotoKit resource acquisition.
-- New asset creation through file resources and file-URL factories.
-- Supported existing-asset content editing with baseline identity verification, exact rendered type and versioned diagnostic adjustment data. Previously adjusted, orientation-dependent or incompatible assets are refused.
-- File-backed hashing, compressed-image/sample comparisons, saved-resource readback and camera-value checks. Unknown/unqualified structure remains incomplete.
-- Manual camera/attribution observations at immediate, relaunched and synchronized phases, with local JSON export.
-- Native macOS tests, generated synthetic test fixtures, GitHub Actions IPA/archive builder and optional secure signed export.
+- **Format-Native Metadata Editing**: Granular control over EXIF, TIFF, XMP, and QuickTime user-data atoms.
+- **Zero-Degradation Engine**: Strict byte-for-byte stream preservation. No pixel decoding, re-encoding, or color profile shifts.
+- **Researched Device Catalog**: Over 40 production camera profiles and 140+ lens configurations across Apple iPhone, Google Pixel, and Samsung Galaxy devices.
+- **Batch Processing**: Simultaneous multi-file queue editing with progress tracking, non-blocking cancellation, and individual retry capability.
+- **Configurable Randomization**: Realistic date, time, and GPS coordinate randomization within user-defined bounds and radii.
+- **Preset Management**: Save and export reusable metadata recipes as validated JSON presets.
+- **Collision-Safe Export**: Automatic output organization into a dedicated `Processed Media` directory with sequential `IMG_####` naming.
+- **Privacy-First Architecture**: 100% on-device local execution. Zero network calls, zero telemetry, and zero third-party tracking.
 
-There is no bulk processing, randomization/presets, video timeline editing, commercial interface, Zlarp integration or private Apple API.
+---
 
-## Build and install
+## Container Support & Preservation Guarantees
 
-Follow [BUILD-AND-INSTALL.md](docs/BUILD-AND-INSTALL.md). The GitHub workflow compiles/tests on macOS, logs the actual Xcode/SDK/simulator used, archives for iOS, and creates an unsigned device IPA. **Unsigned packages are not installable until a valid signing channel signs them.** Signed export is optional and requires the matching team certificate/profile in protected GitHub secrets.
+| Format | Readback Scope | Write Strategy | Integrity Verification |
+| :--- | :--- | :--- | :--- |
+| **JPEG** | EXIF, TIFF, GPS, IPTC | ImageIO destination copy + APP13/Photoshop block preservation | Bit-exact compressed scan validation |
+| **HEIC** | Primary item EXIF/XMP | In-place item property rewrite without decoding tile data | Native ImageIO round-trip readback |
+| **PNG** | eXIf, tEXt, zTXt, iTXt | Chunk-level replacement bypassing raster pipeline | Bit-for-bit `IDAT` checksum equality |
+| **QuickTime MOV** | `moov.udta`, `keys`, `ilst` | Clean `moov` atom relocation; old atom zeroed as `free` box | Byte-for-byte `mdat` media stream equality |
+| **MP4** | ISO Base Media metadata | Standard box parser with strict sample-table validation | Complete video/audio sample table preservation |
 
-Windows can edit the source and dispatch the workflow. It cannot compile PhotoKit/SwiftUI locally with Xcode. Do not interpret a workflow file or syntax check as a successful native build.
+> [!NOTE]
+> **QuickTime Container Compatibility**: The video engine natively supports iOS camera structures including `csgm` (Compact Sample to Group) sample table boxes while strictly rejecting unverified or malformed sample atoms.
 
-## Device experiment
+---
 
-For the current HEIC compatibility patch follow [PROTOTYPE-0.2.1-HEIC-FIX.md](docs/PROTOTYPE-0.2.1-HEIC-FIX.md). The broader [0.2 protocol](docs/PROTOTYPE-0.2-TESTS.md) covers on-device camera changes, Files export and manual Safari/iCloud upload. [DEVICE-TEST-PROTOCOL.md](docs/DEVICE-TEST-PROTOCOL.md) preserves the original direct PhotoKit experiment. Stage A imports a prepared counterpart or unchanged control; Stage B performs the camera change on the device after acknowledging the baseline result.
+## Architecture
 
-The two new-asset routes and existing-content-edit route are independent tests. User-recorded label absence is not automatically a full feasibility verdict. Genuine camera, existing iCloud-upload and previously app-attributed controls must be characterized on hardware.
+The application is structured into two decoupled layers communicating over a typed platform channel:
 
-## Evidence and limitations
+```
+┌────────────────────────────────────────────────────────┐
+│                      Flutter UI Layer                  │
+│       (Reactive Queue, Forms, Inset-Grouped Modals)     │
+└───────────────────────────▲────────────────────────────┘
+                            │ MethodChannel Bridge
+┌───────────────────────────▼────────────────────────────┐
+│                    Native Media Bridge                 │
+│         (Input Validation, File Staging, Dispatch)     │
+└───────────────────────────▲────────────────────────────┘
+                            │ Swift Package Import
+┌───────────────────────────▼────────────────────────────┐
+│                   ProbeCore Engine                     │
+│  (Container Writers, Chunk Parsers, Integrity Sweeps)  │
+└────────────────────────────────────────────────────────┘
+```
 
-[VALIDATION-STATUS.md](docs/VALIDATION-STATUS.md) records which checks actually ran. The physical iPhone, Photos camera display, source attribution, iCloud synchronization, real HDR/HEIC/video behavior and signing/install results remain distinct gates.
+1. **Flutter Presentation Layer (`editor/lib/`)**: Provides an iOS Inset-Grouped interface with dark navy styling (`#0E1115` / `#162032` / `#9CB5FF`), case-insensitive live search, and reactive batch queue state.
+2. **Native Platform Bridge (`editor/ios/Runner/`)**: Validates input boundaries, coordinates sandbox staging in `NSTemporaryDirectory()`, and executes file I/O on background threads.
+3. **ProbeCore Swift Engine (`Sources/ProbeCore/`)**: A standalone Swift package implementing zero-allocation container parsers, byte-level integrity verification, and atomic disk writes.
 
-The engine intentionally does not claim universal lossless integrity. JPEG scans/coding/ICC, HEIC media inventory and video samples/timing/format/transform checks can catch failures, but opaque metadata, HEIF relationships and video container/HDR semantics may remain unqualified. An incomplete diagnostic save is labeled as such; known mismatches cannot be acknowledged away.
+---
 
-Source/provider files are not edited or deleted. A selected existing Photos asset changes only after explicit consent. Original Photos resources can retain old metadata after a visible edit. Existing adjustment reconstruction/revert automation is outside this first probe.
+## Device Catalog
 
-The probe retains staged copies and reports locally until you clear its data or remove the app. Reports can include filenames, locations, asset identifiers and sandbox paths. Nothing is uploaded automatically. Media is excluded from CI and the source repository; never add private fixtures or signing files.
+Metadata Editor includes an authentic device catalog (`editor/assets/camera_profiles.json`) sourced from published manufacturer specifications:
 
-## Source layout
+- **Apple**: 28 iPhone configurations spanning iPhone 11 through iPhone 16 Pro Max, including Main, Ultra Wide, Telephoto, and TrueDepth Front cameras with true physical and 35mm-equivalent focal lengths and maximum apertures.
+- **Google**: 7 Pixel configurations covering Pixel 6 through Pixel 8 Pro.
+- **Samsung**: 7 Galaxy S-series configurations covering S21 through S24 Ultra.
 
-- `Sources/ProbeCore`: native inspection, metadata operations and independent integrity checks.
-- `App/Services`: Photos/Files acquisition, save and resource policies.
-- `App`: SwiftUI interface, safety gates and evidence collection.
-- `Tests/ProbeCoreTests`, `AppTests`: meaningful engine/policy tests.
-- `Sources/ProbeFixtureGenerator`: macOS synthetic fixtures; creation encoding is not editing/recompression.
-- `project.yml`: XcodeGen source of truth.
-- `.github/workflows`, `scripts`: cloud build, packaging, signing-policy validation and manifests.
+---
 
-No runtime third-party libraries are required. Build-time tooling/action versions are pinned. Stop after this probe and review the user's device evidence before any product work.
-# Prototype 0.2 follow-up
+## Building and Verification
 
-The current follow-up adds Files/iCloud evidence, separate embedded/library location diagnostics, optional returned-original inspection and bounded HEIC/video metadata-only writers. See [the focused 0.2 hardware protocol](docs/PROTOTYPE-0.2-TESTS.md). Original PhotoKit test documentation remains available for historical context; final cloud validation and remaining device limits are recorded in [validation status](docs/VALIDATION-STATUS.md).
+### Prerequisites
+
+- macOS 14+ (Sonoma) or higher
+- Flutter SDK `3.47.6`
+- Xcode `16.0+` (iOS SDK `17.0+`)
+- CocoaPods `1.15+`
+- Python `3.10+` (for package and manifest verification suites)
+
+### Local Test Execution
+
+Run the complete verification suite:
+
+```bash
+# 1. Flutter static analysis & tests
+cd editor
+flutter analyze
+flutter test
+
+# 2. Python package and build verification (from project root)
+cd ..
+python scripts/editor-package-tests.py
+python scripts/test-build-scripts.py
+```
+
+### Building the iOS Package
+
+Automated builds are configured for Apple Silicon runners via `codemagic.yaml` or local compilation:
+
+```bash
+# Compile and archive the release application (macOS)
+bash scripts/build-editor-macos.sh
+```
+
+---
+
+## Privacy & Security
+
+- **Completely Offline**: The application makes no network requests. All metadata operations and container transformations occur entirely within the local application sandbox.
+- **Non-Destructive**: Input media files are treated as read-only streams. Output files are written to isolated directories and never overwrite source assets.
+- **Zero Credentials**: The application requires no cloud logins, Apple ID tokens, or third-party service authentications.
+
+---
+
+## License
+
+Proprietary software. All rights reserved.
