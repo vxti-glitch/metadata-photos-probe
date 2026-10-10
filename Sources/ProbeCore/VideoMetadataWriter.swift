@@ -37,7 +37,7 @@ public enum VideoMetadataWriter {
         let input = try FileHandle(forReadingFrom: source)
         defer { try? input.close() }
         let top = try VideoBMFF.fileAtoms(input, length: UInt64(count))
-        let allowedTop = Set(["ftyp", "moov", "mdat", "free", "skip", "wide"].map(VideoBMFF.code))
+        let allowedTop = Set(["ftyp", "moov", "mdat", "free", "skip", "wide", "uuid", "pnot", "meta", "prfl"].map(VideoBMFF.code))
         guard top.allSatisfy({ allowedTop.contains($0.type) }), top.first?.type == VideoBMFF.code("ftyp"),
               top.filter({ $0.type == VideoBMFF.code("ftyp") }).count == 1,
               top.filter({ $0.type == VideoBMFF.code("moov") }).count == 1 else {
@@ -49,10 +49,25 @@ public enum VideoMetadataWriter {
         guard !dataAtoms.isEmpty else { throw ProbeError.malformed("Movie has no mdat") }
         let ftyp = top[0]
         guard ftyp.size >= UInt64(ftyp.header + 8) else { throw ProbeError.malformed("Truncated ftyp") }
-        let brandData = try VideoBMFF.read(input, at: ftyp.offset + UInt64(ftyp.header), count: 4)
-        let brand = String(decoding: brandData, as: UTF8.self)
-        let isMOV = brand == "qt  "
-        guard isMOV || ["isom", "iso2", "mp41", "mp42", "avc1", "M4V ", "MSNV"].contains(brand) else {
+        let brandData = try VideoBMFF.read(input, at: ftyp.offset + UInt64(ftyp.header), count: Int(ftyp.size) - ftyp.header)
+        let brand = brandData.count >= 4 ? String(decoding: brandData[0..<4], as: UTF8.self) : ""
+        var brands = [brand]
+        if brandData.count >= 8 {
+            var offset = 8
+            while offset + 4 <= brandData.count {
+                brands.append(String(decoding: brandData[offset..<offset + 4], as: UTF8.self))
+                offset += 4
+            }
+        }
+        let isMOV = brands.contains("qt  ")
+        let mp4Brands: Set<String> = [
+            "isom", "iso2", "iso3", "iso4", "iso5", "iso6", "iso7", "iso8", "iso9",
+            "mp41", "mp42", "avc1", "avc3", "M4V ", "M4A ", "M4P ", "M4B ",
+            "MSNV", "dash", "isml", "dby1", "NDAS", "XAVC", "hevc", "hvc1",
+            "3gp4", "3gp5", "3gp6", "3gp7", "3g2a", "CAEP", "CDes", "f4v ", "kddi"
+        ]
+        let isMP4 = !Set(brands).isDisjoint(with: mp4Brands) || brands.contains(where: { $0.hasPrefix("mp4") || $0.hasPrefix("iso") || $0.hasPrefix("3gp") })
+        guard isMOV || isMP4 else {
             throw ProbeError.unsupported("Unqualified movie brand \(brand)")
         }
         let originalMovie = try VideoBMFF.read(input, at: movie.offset, count: Int(movie.size))
@@ -63,11 +78,12 @@ public enum VideoMetadataWriter {
         var rebuilt = Data()
         for child in children {
             if child.type == VideoBMFF.code("meta") {
-                guard try VideoBMFF.handler(child) == VideoBMFF.code("mdta") else {
-                    throw ProbeError.unsupported("Non-mdta movie-level meta cannot be combined with another movie meta")
+                if let h = try? VideoBMFF.handler(child), h == VideoBMFF.code("mdta") {
+                    metadataCount += 1
+                    rebuilt.append(try VideoBMFF.editMetadata(child, values: movieValues))
+                } else {
+                    rebuilt.append(child.raw)
                 }
-                metadataCount += 1
-                rebuilt.append(try VideoBMFF.editMetadata(child, values: movieValues))
             } else if child.type == VideoBMFF.code("udta") {
                 var userData = Data()
                 for entry in try VideoBMFF.atoms(child.payload) {
@@ -242,12 +258,12 @@ private enum VideoBMFF {
             guard child.type == code("trak") else { continue }
             trackCount += 1
             let track = try atoms(child.payload)
-            try only(track, ["tkhd", "mdia", "edts", "tref", "tapt", "udta", "meta", "free"])
+            try only(track, ["tkhd", "mdia", "edts", "tref", "tapt", "udta", "meta", "free", "clip", "matt", "load"])
             _ = try unique(track, "tkhd")
             for item in track {
                 if item.type == code("udta") { try validateUserData(item.payload) }
                 if item.type == code("meta") { _ = try metadataChildren(item) }
-                if item.type == code("edts") { try only(atoms(item.payload), ["elst"]) }
+                if item.type == code("edts") { try only(atoms(item.payload), ["elst", "free", "skip"]) }
                 if item.type == code("tapt") {
                     let apertures = try atoms(item.payload)
                     try only(apertures, ["clef", "prof", "enof"])
@@ -260,9 +276,9 @@ private enum VideoBMFF {
             let mdia = try atoms(unique(track, "mdia").payload)
             try only(mdia, ["mdhd", "hdlr", "minf", "elng", "udta", "meta", "free"])
             let minf = try atoms(unique(mdia, "minf").payload)
-            try only(minf, ["vmhd", "smhd", "nmhd", "gmhd", "hdlr", "dinf", "stbl", "free"])
+            try only(minf, ["vmhd", "smhd", "nmhd", "gmhd", "sthd", "hmhd", "gmin", "hdlr", "dinf", "stbl", "free"])
             let dinf = try atoms(unique(minf, "dinf").payload)
-            try only(dinf, ["dref", "free"])
+            try only(dinf, ["dref", "free", "skip"])
             let dref = try unique(dinf, "dref").payload
             guard try u32(dref, 0) == 0, dref.count >= 8 else { throw ProbeError.malformed("Invalid dref") }
             let references = try atoms(dref.subdata(in: 8..<dref.count))
@@ -272,7 +288,7 @@ private enum VideoBMFF {
             // Accept version 0 / flag 1 only, with no external alias/URL payload.
             // https://developer.apple.com/documentation/quicktime-file-format/media_data_reference_atom/data_references
             guard references.allSatisfy({
-                ($0.type == code("url ") || $0.type == code("alis")) && $0.payload == number(1)
+                ($0.type == code("url ") || $0.type == code("alis")) && ($0.payload == number(1) || ($0.payload.count >= 4 && (try? u32($0.payload, 0)) == 1))
             }) else {
                 throw ProbeError.unsupported("External or unqualified data references")
             }
@@ -287,7 +303,14 @@ private enum VideoBMFF {
         guard try u32(description, 0) == 0, description.count >= 8 else { throw ProbeError.malformed("Invalid stsd") }
         let entries = try atoms(description.subdata(in: 8..<description.count))
         guard entries.count == Int(try u32(description, 4)), !entries.isEmpty else { throw ProbeError.malformed("Sample-description count mismatch") }
-        let codecs = Set(["avc1", "avc3", "hvc1", "hev1", "mp4v", "mp4a", "lpcm", "sowt", "twos", "in24", "in32", "fl32", "fl64", "alac", "ac-3", "ec-3", "Opus", "metx", "mett", "mebx", "tmcd", "text", "tx3g"].map(code))
+        let codecs = Set([
+            "avc1", "avc3", "hvc1", "hev1", "mp4v", "mp4a", "lpcm", "sowt", "twos",
+            "in24", "in32", "fl32", "fl64", "alac", "ac-3", "ec-3", "Opus", "opus",
+            "metx", "mett", "mebx", "tmcd", "text", "tx3g", "av01", "vp09", "vp08",
+            "dvh1", "dvhe", "dva1", "dvav", "apcn", "apch", "apcs", "apco", "ap4h",
+            "ap4x", "flac", "fLaC", "mlpa", "raw ", "samr", "sawb", "dtsc", "dtsh",
+            "dtsl", "dtse", "wvtt", "c608", "c708", "subt"
+        ].map(code))
         for entry in entries {
             guard codecs.contains(entry.type), entry.payload.count >= 8 else { throw ProbeError.unsupported("Unqualified/protected sample description") }
             let p = entry.payload

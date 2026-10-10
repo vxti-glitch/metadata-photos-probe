@@ -195,9 +195,28 @@ public enum MetadataEngine {
         guard data.count >= 12 else { throw ProbeError.malformed("Missing container brand") }
         // Controlled fixtures require ftyp at the beginning; no extension-based assumption.
         guard String(decoding: data[4..<8], as: UTF8.self) == "ftyp" else { throw ProbeError.unsupported("Non-leading ftyp is not qualified") }
+        let boxSize = Int(data[0]) << 24 | Int(data[1]) << 16 | Int(data[2]) << 8 | Int(data[3])
         let brand = String(decoding: data[8..<12], as: UTF8.self)
         if brand == "qt  " { return .mov }
-        if ["isom", "iso2", "mp41", "mp42", "avc1", "M4V ", "MSNV"].contains(brand) { return .mp4 }
+        var brands = [brand]
+        if data.count >= 16 {
+            let limit = min(data.count, boxSize >= 16 ? boxSize : data.count)
+            var offset = 16
+            while offset + 4 <= limit {
+                brands.append(String(decoding: data[offset..<offset + 4], as: UTF8.self))
+                offset += 4
+            }
+        }
+        if brands.contains("qt  ") { return .mov }
+        let mp4Brands: Set<String> = [
+            "isom", "iso2", "iso3", "iso4", "iso5", "iso6", "iso7", "iso8", "iso9",
+            "mp41", "mp42", "avc1", "avc3", "M4V ", "M4A ", "M4P ", "M4B ",
+            "MSNV", "dash", "isml", "dby1", "NDAS", "XAVC", "hevc", "hvc1",
+            "3gp4", "3gp5", "3gp6", "3gp7", "3g2a", "CAEP", "CDes", "f4v ", "kddi"
+        ]
+        if !Set(brands).isDisjoint(with: mp4Brands) || brands.contains(where: { $0.hasPrefix("mp4") || $0.hasPrefix("iso") || $0.hasPrefix("3gp") }) {
+            return .mp4
+        }
         throw ProbeError.unsupported("Unqualified video brand \(brand)")
     }
 }
