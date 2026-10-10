@@ -379,11 +379,11 @@ class _MetadataFormState extends State<MetadataForm>
     final initial = parsed?.toLocal() ?? DateTime.now();
     final date = await showDatePicker(
       context: context,
-      initialDate: initial.year >= 1900 && initial.year <= 2100
+      initialDate: initial.year >= 1900 && initial.year <= 2037
           ? initial
           : DateTime.now(),
       firstDate: DateTime(1900),
-      lastDate: DateTime(2100, 12, 31),
+      lastDate: DateTime(2038, 1, 1),
     );
     if (date == null || !mounted) return;
     final time = await showTimePicker(
@@ -451,7 +451,13 @@ class _MetadataFormState extends State<MetadataForm>
               values[key] =
                   '${shifted.year.toString().padLeft(4, '0')}-${two(shifted.month)}-${two(shifted.day)}T${two(shifted.hour)}:${two(shifted.minute)}:${two(shifted.second)}${tzMatch.group(1)}';
             } else {
-              values[key] = shifted.toIso8601String();
+              String two(int n) => n.toString().padLeft(2, '0');
+              final tz = shifted.timeZoneOffset;
+              final minutes = tz.inMinutes.abs();
+              final tzText =
+                  '${tz.isNegative ? '-' : '+'}${two(minutes ~/ 60)}:${two(minutes % 60)}';
+              values[key] =
+                  '${shifted.year.toString().padLeft(4, '0')}-${two(shifted.month)}-${two(shifted.day)}T${two(shifted.hour)}:${two(shifted.minute)}:${two(shifted.second)}$tzText';
             }
           } catch (_) {}
         }

@@ -175,6 +175,14 @@ class MetadataPatch {
         return '${field.label} needs readable text (up to 1024 bytes).';
       }
     }
+    final lat = values['latitude'];
+    final lon = values['longitude'];
+    if ((lat != null && lon == null) || (lat == null && lon != null)) {
+      return 'Latitude and Longitude must both be provided together.';
+    }
+    if (removals.contains('latitude') != removals.contains('longitude')) {
+      return 'Latitude and Longitude must both be removed together.';
+    }
     final bounds = <String, (double, double)>{
       'latitude': (-90, 90),
       'longitude': (-180, 180),

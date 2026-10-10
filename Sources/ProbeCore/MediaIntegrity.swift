@@ -90,7 +90,25 @@ public enum MediaIntegrity {
         catch { checks.append(IntegrityCheck(name: "requested metadata", status: .failed, detail: error.localizedDescription)) }
         var keys = patch.targetedKeys
         if keys.contains("lensModel") { keys.insert("lens") }
-        for (key, raw) in VideoMetadataFields.keys.merging(VideoMetadataFields.trackKeys, uniquingKeysWith: { a, _ in a }) where keys.contains(key) { keys.insert(raw); keys.insert("mdta/" + raw) }
+        for (key, raw) in VideoMetadataFields.keys.merging(VideoMetadataFields.trackKeys, uniquingKeysWith: { a, _ in a }) where keys.contains(key) {
+            keys.insert(raw)
+            keys.insert("mdta/" + raw)
+            keys.insert("quickTimeMetadata/" + raw)
+            keys.insert("quickTimeUserData/" + raw)
+        }
+        let legacyUserDataMap: [String: [String]] = [
+            "make": ["©mak", "udta/©mak", "quickTimeUserData/©mak", "commonIdentifier/make", "common/make"],
+            "model": ["©mod", "udta/©mod", "quickTimeUserData/©mod", "commonIdentifier/model", "common/model"],
+            "software": ["©swr", "udta/©swr", "quickTimeUserData/©swr", "commonIdentifier/software", "common/software"],
+            "title": ["©nam", "udta/©nam", "quickTimeUserData/©nam", "titl", "udta/titl", "quickTimeUserData/titl", "commonIdentifier/title", "common/title"],
+            "copyright": ["©cpr", "udta/©cpr", "quickTimeUserData/©cpr", "cprt", "udta/cprt", "quickTimeUserData/cprt", "commonIdentifier/copyrights", "common/copyright"],
+            "artist": ["©ART", "udta/©ART", "quickTimeUserData/©ART", "auth", "udta/auth", "quickTimeUserData/auth", "perf", "udta/perf", "quickTimeUserData/perf", "commonIdentifier/author", "common/artist"],
+            "description": ["©des", "udta/©des", "quickTimeUserData/©des", "dscp", "udta/dscp", "quickTimeUserData/dscp", "commonIdentifier/description", "common/description"],
+            "dateTimeOriginal": ["commonIdentifier/creationDate", "common/creationDate"]
+        ]
+        for (target, aliases) in legacyUserDataMap where keys.contains(target) {
+            keys.formUnion(aliases)
+        }
         if !keys.isDisjoint(with: VideoMetadataFields.gpsKeys) {
             keys.formUnion(VideoMetadataFields.gpsKeys); keys.insert(VideoMetadataFields.locationKey); keys.insert("mdta/" + VideoMetadataFields.locationKey)
             // The writer normalizes or retires ISO `loci`, QuickTime legacy `©xyz`, and
@@ -150,7 +168,13 @@ public enum MediaIntegrity {
             guard !collections.isEmpty else { checks.append(IntegrityCheck(name: "AVFoundation target \(key)", status: .failed, detail: "No video track is available for target readback.")); continue }
             var matches = true
             for collection in collections {
-                let found = collection.filter { $0.identifier?.rawValue == "mdta/" + atom || $0.identifier?.rawValue == atom || ($0.key as? String) == atom }
+                let found = collection.filter {
+                    $0.identifier?.rawValue == "mdta/" + atom ||
+                    $0.identifier?.rawValue == "quickTimeMetadata/" + atom ||
+                    $0.identifier?.rawValue == atom ||
+                    $0.identifier?.rawValue?.hasSuffix("/" + atom) == true ||
+                    ($0.key as? String) == atom
+                }
                 if let target = patch.values[key] {
                     guard !found.isEmpty else { matches = false; continue }
                     for item in found {
@@ -158,6 +182,16 @@ public enum MediaIntegrity {
                         if let n = target.number {
                             let scalar = Double(value.hasPrefix("F") ? String(value.dropFirst()) : value)
                             if scalar == nil || abs(scalar! - n) > MetadataPatch.numericTolerance(for: key, value: n) { matches = false }
+                        } else if key.lowercased().contains("date") {
+                            let actualDate = try? MetadataPatch.date(value)
+                            let targetDate = try? MetadataPatch.date(target.text)
+                            if let actualDate, let targetDate {
+                                if abs(actualDate.timeIntervalSince(targetDate)) >= 1 { matches = false }
+                            } else {
+                                let sanitized = MetadataPatch.sanitizeText(target.text)
+                                let trimmed = value.trimmingCharacters(in: CharacterSet(charactersIn: "\0"))
+                                if value != target.text && value != sanitized && trimmed != target.text && trimmed != sanitized { matches = false }
+                            }
                         } else {
                             let sanitized = MetadataPatch.sanitizeText(target.text)
                             let trimmed = value.trimmingCharacters(in: CharacterSet(charactersIn: "\0"))

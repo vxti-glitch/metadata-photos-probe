@@ -242,10 +242,11 @@ String readableError(Object error) {
   }
   if (error is FormatException) {
     if (error.message.isNotEmpty &&
-        (error.message.contains('unprocessed') ||
-            error.message.contains('ready') ||
-            error.message.contains('unqualified') ||
-            error.message.contains('Select and process'))) {
+        !error.message.contains('Camera readback') &&
+        !error.message.contains('Invalid processed session') &&
+        !error.message.contains('Incompatible editor state') &&
+        !error.message.startsWith('Unexpected character') &&
+        !error.message.startsWith('Invalid JSON')) {
       return error.message;
     }
     return 'The media engine returned an invalid response. Restart the app before retrying.';
@@ -276,18 +277,25 @@ String simplifyUserError(String message) {
     return 'Altitude value is out of range. Check that altitude is between -10,000m and 100,000m, or leave it blank.';
   }
 
-  // Date format
+  // Date format & explicit timezone
   if (trimmed.contains('Dates use') ||
       trimmed.contains('Invalid date') ||
       trimmed.contains('dateTimeOriginal') ||
-      trimmed.contains('ISO 8601')) {
-    return 'Invalid date format. Use YYYY:MM:DD HH:mm:ss for photos (e.g. 2026:05:14 14:30:00) or tap the calendar icon to set dates automatically.';
+      trimmed.contains('ISO 8601') ||
+      trimmed.contains('explicit time zone')) {
+    return 'Invalid date format. Use YYYY:MM:DD HH:mm:ss for photos or ISO 8601 with time zone (±HH:MM) for videos, or tap the calendar icon to set dates automatically.';
   }
 
   // Time zone offset
   if (trimmed.contains('Time zones use') ||
       (trimmed.contains('offset') && trimmed.contains('14-hour'))) {
     return 'Invalid time zone offset. Enter ±HH:MM (e.g. -04:00 or +01:00).';
+  }
+
+  // ASCII / character set restrictions in EXIF
+  if (trimmed.toLowerCase().contains('ascii') ||
+      trimmed.toLowerCase().contains('non-ascii')) {
+    return 'Camera tags (make, model, software) only support standard ASCII characters. Please remove emojis, symbols, or special characters.';
   }
 
   // Field conflict

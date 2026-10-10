@@ -147,6 +147,16 @@ void main() {
         contains('between 1 and 65535'),
       );
       expect(
+        simplifyUserError('EXIF ASCII field make cannot store non-ASCII text'),
+        contains('only support standard ASCII characters'),
+      );
+      expect(
+        simplifyUserError(
+          'Video dates require ISO 8601 with an explicit time zone',
+        ),
+        contains('ISO 8601 with time zone'),
+      );
+      expect(
         simplifyUserError(
           'Native metadata processing or independent integrity verification failed.',
         ),

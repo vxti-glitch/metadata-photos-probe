@@ -132,12 +132,15 @@ class EditorController extends ChangeNotifier {
         text.contains('datetimeoriginal') ||
         text.contains('iso 8601') ||
         text.contains('timestamp') ||
+        text.contains('time zone') ||
+        text.contains('offsettime') ||
         text.contains('err_date_fmt')) {
       return 'ERR_DATE_FMT';
     }
     if (text.contains('latitude') ||
         text.contains('longitude') ||
         text.contains('altitude') ||
+        text.contains('direction') ||
         text.contains('coordinate') ||
         text.contains('err_gps_bounds')) {
       return 'ERR_GPS_BOUNDS';
@@ -150,6 +153,8 @@ class EditorController extends ChangeNotifier {
     }
     if (text.contains('cannot be changed and removed together') ||
         text.contains('conflict') ||
+        text.contains('ascii') ||
+        text.contains('non-ascii') ||
         text.contains('err_field_conflict')) {
       return 'ERR_FIELD_CONFLICT';
     }
