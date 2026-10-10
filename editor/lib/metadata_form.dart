@@ -2202,16 +2202,12 @@ class _CameraPickerSheet extends StatelessWidget {
   String? _cameraSubtitle(ProfileCamera c) {
     final parts = <String>[];
     if (c.fields.containsKey('focalLength35mm')) {
-      parts.add('${c.fields['focalLength35mm']}mm equivalent');
+      parts.add('${c.fields['focalLength35mm']}mm');
     } else if (c.fields.containsKey('focalLength')) {
       parts.add('${c.fields['focalLength']}mm');
     }
     if (c.fields.containsKey('fNumber')) {
       parts.add('f/${c.fields['fNumber']}');
-    }
-    if (c.fields.containsKey('focalLength') &&
-        c.fields.containsKey('focalLength35mm')) {
-      parts.add('${c.fields['focalLength']}mm physical');
     }
     if (parts.isNotEmpty) {
       return parts.join(' · ');
