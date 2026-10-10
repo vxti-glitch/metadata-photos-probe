@@ -224,7 +224,7 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.text('Metadata Editor 1.0 (Build 6) · © 2026 Zlarp'),
+      find.text('Metadata Editor 1.0 (Build 6) · © 2026 vxti'),
       findsOneWidget,
     );
   });

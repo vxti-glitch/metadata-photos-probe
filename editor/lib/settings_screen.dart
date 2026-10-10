@@ -369,7 +369,7 @@ class SettingsScreen extends StatelessWidget {
 
   Widget _buildFooter() => Center(
     child: Text(
-      'Metadata Editor ${AppBrand.version} (Build ${AppBrand.buildNumber}) · © 2026 Zlarp',
+      '${AppBrand.name} ${AppBrand.version} (Build ${AppBrand.buildNumber}) · © 2026 ${AppBrand.developer}',
       style: const TextStyle(
         fontSize: 12,
         fontWeight: FontWeight.w500,
