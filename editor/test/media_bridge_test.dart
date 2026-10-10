@@ -120,4 +120,38 @@ void main() {
       'Photos permission is required.',
     );
   });
+
+  test(
+    'simplifyUserError translates technical errors into actionable guidance',
+    () {
+      expect(
+        simplifyUserError(
+          'Dates use YYYY:MM:DD HH:mm:ss for photos or ISO 8601 for videos.',
+        ),
+        contains('calendar icon'),
+      );
+      expect(
+        simplifyUserError('latitude is out of range.'),
+        contains('between -90 and 90'),
+      );
+      expect(
+        simplifyUserError('A field cannot be changed and removed together.'),
+        contains('Switch the dropdown to either "Set" or "Remove"'),
+      );
+      expect(
+        simplifyUserError('Choose at least one metadata change.'),
+        contains('Pick a camera profile'),
+      );
+      expect(
+        simplifyUserError('iso is out of range.'),
+        contains('between 1 and 65535'),
+      );
+      expect(
+        simplifyUserError(
+          'Native metadata processing or independent integrity verification failed.',
+        ),
+        contains('select a clean Camera Profile'),
+      );
+    },
+  );
 }

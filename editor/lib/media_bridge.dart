@@ -40,6 +40,7 @@ abstract interface class MediaBridge {
     double? latitude,
     double? longitude,
   });
+  Future<Map<String, String>?> getHostDevice();
 }
 
 class NativeMediaBridge implements MediaBridge {
@@ -210,6 +211,19 @@ class NativeMediaBridge implements MediaBridge {
     }
     return null;
   }
+
+  @override
+  Future<Map<String, String>?> getHostDevice() async {
+    try {
+      final result = await _channel.invokeMethod<Object?>('getHostDevice');
+      if (result is! Map) return null;
+      return result.map(
+        (key, value) => MapEntry(key.toString(), value.toString()),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
 }
 
 String readableError(Object error) {
@@ -240,6 +254,120 @@ String readableError(Object error) {
     return 'The native media engine is unavailable in this build.';
   }
   return 'This operation could not complete. Your original is unchanged. Please retry.';
+}
+
+/// Simplifies raw engine or validation errors into plain-English, actionable
+/// guidance that tells users what went wrong and how to fix it immediately.
+String simplifyUserError(String message) {
+  final trimmed = message.trim();
+  if (trimmed.isEmpty) {
+    return 'An unexpected issue occurred. Please check your inputs and try again.';
+  }
+
+  // Location / coordinates
+  if (trimmed.toLowerCase().contains('latitude') ||
+      trimmed.toLowerCase().contains('longitude') ||
+      trimmed.toLowerCase().contains('coordinate')) {
+    return 'Location coordinates out of range. Latitude must be between -90 and 90, and Longitude between -180 and 180. Tip: tap the map pin to select a location visually.';
+  }
+
+  // Altitude
+  if (trimmed.toLowerCase().contains('altitude')) {
+    return 'Altitude value is out of range. Check that altitude is between -10,000m and 100,000m, or leave it blank.';
+  }
+
+  // Date format
+  if (trimmed.contains('Dates use') ||
+      trimmed.contains('Invalid date') ||
+      trimmed.contains('dateTimeOriginal') ||
+      trimmed.contains('ISO 8601')) {
+    return 'Invalid date format. Use YYYY:MM:DD HH:mm:ss for photos (e.g. 2026:05:14 14:30:00) or tap the calendar icon to set dates automatically.';
+  }
+
+  // Time zone offset
+  if (trimmed.contains('Time zones use') ||
+      (trimmed.contains('offset') && trimmed.contains('14-hour'))) {
+    return 'Invalid time zone offset. Enter ±HH:MM (e.g. -04:00 or +01:00).';
+  }
+
+  // Field conflict
+  if (trimmed.contains('cannot be changed and removed together')) {
+    return 'Conflicting field settings: a field cannot be set and removed at the same time. Switch the dropdown to either "Set" or "Remove".';
+  }
+
+  // Empty changes
+  if (trimmed.contains('Choose at least one metadata change')) {
+    return 'No changes selected. Pick a camera profile or edit at least one field before processing.';
+  }
+
+  // ISO / exposure numeric bounds
+  if (trimmed.toLowerCase().contains('iso') &&
+      (trimmed.contains('range') || trimmed.contains('number'))) {
+    return 'Invalid ISO value. Enter a whole number between 1 and 65535, or leave it on Auto.';
+  }
+
+  // Direction / compass
+  if (trimmed.toLowerCase().contains('direction')) {
+    return 'Compass direction must be a number between 0 and 359.9 degrees.';
+  }
+
+  // Shutter / exposure time
+  if (trimmed.toLowerCase().contains('exposure time') ||
+      trimmed.toLowerCase().contains('shutter')) {
+    return 'Invalid shutter speed. Enter standard fractions like 1/60, 1/125, or decimal seconds.';
+  }
+
+  // Aperture / fNumber
+  if (trimmed.toLowerCase().contains('fnumber') ||
+      trimmed.toLowerCase().contains('aperture')) {
+    return 'Invalid aperture value. Enter a valid f-stop number like 1.8, 2.8, or 4.0.';
+  }
+
+  // Numeric fields
+  if (trimmed.contains('must be a finite number') ||
+      trimmed.contains('needs a whole number')) {
+    return '$trimmed Make sure the field contains only numbers without symbols or units.';
+  }
+
+  // No ready copy
+  if (trimmed.contains('unprocessed') ||
+      trimmed.contains('ready') ||
+      trimmed.contains('Select and process')) {
+    return 'No processed copy ready. Tap "Process file" below to generate your clean copy first, then export or share.';
+  }
+
+  // Retained / competing metadata integrity conflict
+  if (trimmed.contains('integrity verification failed') ||
+      trimmed.contains('retained embedded metadata') ||
+      trimmed.contains('unqualified media structure')) {
+    return 'Conflicting metadata tags detected in this media file. Fix: select a clean Camera Profile (e.g. iPhone 15 Pro Max) to replace legacy tags, then tap "Process".';
+  }
+
+  // Storage / quota
+  if (trimmed.contains('local media copy') ||
+      trimmed.contains('storage') ||
+      trimmed.contains('already exists')) {
+    return 'Storage error: please ensure your device has sufficient free space, then retry.';
+  }
+
+  // Permissions
+  if (trimmed.contains('Allow Photos access') ||
+      trimmed.contains('Photos permission') ||
+      trimmed.contains('permission')) {
+    return 'Photos access required. Open iOS Settings > Privacy & Security > Photos and grant Full Access to Metadata Editor.';
+  }
+
+  // Busy
+  if (trimmed.contains('finishing') || trimmed.contains('Wait for')) {
+    return 'The media engine is finishing another operation. Please wait a moment.';
+  }
+
+  // Unsupported format
+  if (trimmed.contains('unsupported') || trimmed.contains('malformed')) {
+    return 'This file format or codec is not supported. Please use standard JPEG, PNG, HEIC, MP4, or QuickTime MOV files.';
+  }
+
+  return trimmed;
 }
 
 class BatchImport {

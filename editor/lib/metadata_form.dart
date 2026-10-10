@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'camera_profiles.dart';
 import 'editor_controller.dart';
+import 'media_bridge.dart' show simplifyUserError;
 import 'media_models.dart';
 import 'metadata_patch.dart';
 import 'metadata_dates.dart';
@@ -90,39 +91,62 @@ class _MetadataFormState extends State<MetadataForm>
     });
   }
 
-  void _restoreSavedProfile(List<CameraProfile> profiles) {
+  Future<void> _restoreSavedProfile(List<CameraProfile> profiles) async {
     if (profile != null) return;
     final savedBrand = widget.controller.selectedBrand;
     final savedProfileId = widget.controller.selectedProfileId;
     final savedCameraId = widget.controller.selectedCameraId;
-    if (savedBrand == null && savedProfileId == null) return;
 
-    CameraProfile? matchedProfile;
-    if (savedProfileId != null) {
-      matchedProfile = profiles
-          .where((p) => p.id == savedProfileId)
-          .firstOrNull;
-    }
-    ProfileCamera? matchedCamera;
-    if (matchedProfile != null) {
-      if (savedCameraId != null) {
-        matchedCamera = matchedProfile.cameras
-            .where((c) => c.id == savedCameraId)
+    if (savedBrand != null || savedProfileId != null) {
+      CameraProfile? matchedProfile;
+      if (savedProfileId != null) {
+        matchedProfile = profiles
+            .where((p) => p.id == savedProfileId)
             .firstOrNull;
       }
-      matchedCamera ??= matchedProfile.cameras.firstOrNull;
+      ProfileCamera? matchedCamera;
+      if (matchedProfile != null) {
+        if (savedCameraId != null) {
+          matchedCamera = matchedProfile.cameras
+              .where((c) => c.id == savedCameraId)
+              .firstOrNull;
+        }
+        matchedCamera ??= matchedProfile.cameras.firstOrNull;
+      }
+
+      if (mounted) {
+        setState(() {
+          brand = matchedProfile?.brand ?? savedBrand;
+          profile = matchedProfile;
+          camera = matchedCamera;
+          if (widget.session.processing?.metadataPatch == null &&
+              profile != null &&
+              camera != null) {
+            _apply(
+              _profilePatch(widget.session),
+              notify: false,
+              fromProfile: true,
+            );
+          }
+        });
+      }
+      return;
     }
 
-    setState(() {
-      brand = matchedProfile?.brand ?? savedBrand;
-      profile = matchedProfile;
-      camera = matchedCamera;
-      if (widget.session.processing?.metadataPatch == null &&
-          profile != null &&
-          camera != null) {
-        _apply(_profilePatch(widget.session), notify: false, fromProfile: true);
+    final host = await widget.controller.getHostDevice();
+    if (!mounted || profile != null) return;
+    if (host != null && host['profileId'] != null) {
+      final hostProfile = profiles
+          .where((p) => p.id == host['profileId'])
+          .firstOrNull;
+      if (hostProfile != null) {
+        setState(() {
+          brand = hostProfile.brand;
+          profile = hostProfile;
+          camera = hostProfile.cameras.firstOrNull;
+        });
       }
-    });
+    }
   }
 
   void _refresh() {
@@ -417,9 +441,17 @@ class _MetadataFormState extends State<MetadataForm>
           try {
             final dt = DateTime.parse(val);
             final shifted = dt.add(offset);
-            values[key] = val.endsWith('Z')
-                ? '${shifted.toUtc().toIso8601String().substring(0, 19)}Z'
-                : shifted.toIso8601String();
+            final tzMatch = RegExp(r'([+-]\d{2}:\d{2})$').firstMatch(val);
+            if (val.endsWith('Z')) {
+              values[key] =
+                  '${shifted.toUtc().toIso8601String().substring(0, 19)}Z';
+            } else if (tzMatch != null) {
+              String two(int n) => n.toString().padLeft(2, '0');
+              values[key] =
+                  '${shifted.year.toString().padLeft(4, '0')}-${two(shifted.month)}-${two(shifted.day)}T${two(shifted.hour)}:${two(shifted.minute)}:${two(shifted.second)}${tzMatch.group(1)}';
+            } else {
+              values[key] = shifted.toIso8601String();
+            }
           } catch (_) {}
         }
       }
@@ -652,7 +684,7 @@ class _MetadataFormState extends State<MetadataForm>
         profiles: profiles,
       ),
     );
-    if (selected != null && mounted && selected != brand) {
+    if (selected != null && mounted) {
       setState(() {
         brand = selected;
         profile = null;
@@ -925,7 +957,7 @@ class _MetadataFormState extends State<MetadataForm>
                       ? controller.shareFiles
                       : null,
                   icon: const Icon(Icons.ios_share_rounded, size: 18),
-                  label: const Text('Share'),
+                  label: const Text('Share / Save to Photos'),
                 ),
               ),
             ],
@@ -1088,14 +1120,42 @@ class _MetadataFormState extends State<MetadataForm>
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text(
-                    formError!,
-                    style: const TextStyle(
-                      color: Color(0xFFFFB4AB),
-                      fontSize: 13,
-                      height: 1.35,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Attention Needed',
+                        style: TextStyle(
+                          color: Color(0xFFFF453A),
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        simplifyUserError(formError!),
+                        style: const TextStyle(
+                          color: Color(0xFFFFB4AB),
+                          fontSize: 12.5,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
                   ),
+                ),
+                IconButton(
+                  icon: const Icon(
+                    Icons.close_rounded,
+                    size: 16,
+                    color: Color(0xFFFFB4AB),
+                  ),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 24,
+                    minHeight: 24,
+                  ),
+                  tooltip: 'Dismiss',
+                  onPressed: () => setState(() => formError = null),
                 ),
               ],
             ),
@@ -1233,6 +1293,74 @@ class _MetadataFormState extends State<MetadataForm>
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Device Profile',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF8E8E93),
+                      ),
+                    ),
+                  ),
+                  TextButton.icon(
+                    key: const Key('matchDeviceButton'),
+                    style: TextButton.styleFrom(
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      foregroundColor: const Color(0xFF0A84FF),
+                    ),
+                    onPressed: widget.controller.busy
+                        ? null
+                        : () async {
+                            final host = await widget.controller
+                                .getHostDevice();
+                            if (!mounted) return;
+                            if (host != null && host['profileId'] != null) {
+                              final matched = profiles
+                                  .where((p) => p.id == host['profileId'])
+                                  .firstOrNull;
+                              if (matched != null) {
+                                setState(() {
+                                  brand = matched.brand;
+                                  profile = matched;
+                                  camera = matched.cameras.firstOrNull;
+                                  profileBaseline = null;
+                                  _appliedFeedback = false;
+                                  if (camera != null) {
+                                    _apply(
+                                      _profilePatch(widget.session),
+                                      fromProfile: true,
+                                    );
+                                  }
+                                });
+                                widget.controller.rememberSelectedProfile(
+                                  brand: matched.brand,
+                                  profileId: matched.id,
+                                  cameraId: camera?.id,
+                                );
+                              }
+                            }
+                          },
+                    icon: const Icon(Icons.phone_iphone_rounded, size: 15),
+                    label: const Text(
+                      'Match iPhone',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
               _buildSelectorField(
                 key: const Key('profileBrand'),
                 label: 'Brand',
@@ -1243,9 +1371,7 @@ class _MetadataFormState extends State<MetadataForm>
               ),
               const SizedBox(height: 8),
               _buildSelectorField(
-                key: ValueKey(
-                  'model-${brand ?? "none"}${profile != null ? "-${profile!.id}" : ""}',
-                ),
+                key: ValueKey('model-${brand ?? "none"}'),
                 label: 'Model',
                 value:
                     profile?.model ??

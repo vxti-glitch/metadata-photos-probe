@@ -803,6 +803,22 @@ class EditorController extends ChangeNotifier {
     await _persist();
   }
 
+  Future<Map<String, String>?> getHostDevice() => bridge.getHostDevice();
+
+  Future<void> matchHostDevice() async {
+    try {
+      final host = await getHostDevice();
+      if (host != null && host['profileId'] != null) {
+        await rememberSelectedProfile(
+          brand: host['brand'] ?? 'Apple',
+          profileId: host['profileId'],
+          cameraId: 'main',
+        );
+        notice = 'Matched device: ${host['model'] ?? 'iPhone'}';
+      }
+    } catch (_) {}
+  }
+
   Future<void> resetPresets() async {
     final before = List<SavedPreset>.of(presets);
     final beforeBrand = selectedBrand;

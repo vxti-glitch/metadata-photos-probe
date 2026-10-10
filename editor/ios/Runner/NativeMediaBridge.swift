@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 import ProbeCore
 import CoreFoundation
 import MapKit
+import Darwin
 
 /// A canceled operation retains its lease until the real OS/engine completion.
 /// Token checks also make late picker callbacks harmless after dismissal.
@@ -208,6 +209,8 @@ final class NativeMediaBridge: NSObject {
                 let initialLat = (args["latitude"] as? NSNumber)?.doubleValue
                 let initialLng = (args["longitude"] as? NSNumber)?.doubleValue
                 try presentLocationPicker(initialLat: initialLat, initialLng: initialLng, result: result)
+            case "getHostDevice":
+                result(Self.detectHostDevice())
             default: result(FlutterMethodNotImplemented)
             }
         } catch { result(Self.flutterError(error)) }
@@ -512,6 +515,62 @@ final class NativeMediaBridge: NSObject {
         let patch = CameraPatch(make: make, model: model, lens: lens)
         try patch.validate()
         return patch
+    }
+
+    static func detectHostDevice() -> [String: String] {
+        var systemInfo = utsname()
+        uname(&systemInfo)
+        let machineMirror = Mirror(reflecting: systemInfo.machine)
+        var identifier = machineMirror.children.reduce("") { identifier, element in
+            guard let value = element.value as? Int8, value != 0 else { return identifier }
+            return identifier + String(UnicodeScalar(UInt8(value)))
+        }
+        #if targetEnvironment(simulator)
+        if let simModel = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"], !simModel.isEmpty {
+            identifier = simModel
+        }
+        #endif
+        let mapping: [String: (profileId: String, model: String)] = [
+            "iPhone12,1": ("apple-iphone-11", "iPhone 11"),
+            "iPhone12,3": ("apple-iphone-11-pro", "iPhone 11 Pro"),
+            "iPhone12,5": ("apple-iphone-11-pro-max", "iPhone 11 Pro Max"),
+            "iPhone12,8": ("apple-iphone-se-2nd-generation", "iPhone SE (2nd generation)"),
+            "iPhone13,1": ("apple-iphone-12-mini", "iPhone 12 mini"),
+            "iPhone13,2": ("apple-iphone-12", "iPhone 12"),
+            "iPhone13,3": ("apple-iphone-12-pro", "iPhone 12 Pro"),
+            "iPhone13,4": ("apple-iphone-12-pro-max", "iPhone 12 Pro Max"),
+            "iPhone14,2": ("apple-iphone-13-pro", "iPhone 13 Pro"),
+            "iPhone14,3": ("apple-iphone-13-pro-max", "iPhone 13 Pro Max"),
+            "iPhone14,4": ("apple-iphone-13-mini", "iPhone 13 mini"),
+            "iPhone14,5": ("apple-iphone-13", "iPhone 13"),
+            "iPhone14,6": ("apple-iphone-se-3rd-generation", "iPhone SE (3rd generation)"),
+            "iPhone14,7": ("apple-iphone-14", "iPhone 14"),
+            "iPhone14,8": ("apple-iphone-14-plus", "iPhone 14 Plus"),
+            "iPhone15,2": ("apple-iphone-14-pro", "iPhone 14 Pro"),
+            "iPhone15,3": ("apple-iphone-14-pro-max", "iPhone 14 Pro Max"),
+            "iPhone15,4": ("apple-iphone-15", "iPhone 15"),
+            "iPhone15,5": ("apple-iphone-15-plus", "iPhone 15 Plus"),
+            "iPhone16,1": ("apple-iphone-15-pro", "iPhone 15 Pro"),
+            "iPhone16,2": ("apple-iphone-15-pro-max", "iPhone 15 Pro Max"),
+            "iPhone17,1": ("apple-iphone-16-pro", "iPhone 16 Pro"),
+            "iPhone17,2": ("apple-iphone-16-pro-max", "iPhone 16 Pro Max"),
+            "iPhone17,3": ("apple-iphone-16", "iPhone 16"),
+            "iPhone17,4": ("apple-iphone-16-plus", "iPhone 16 Plus"),
+            "iPhone17,5": ("apple-iphone-16e", "iPhone 16e"),
+            "iPhone18,1": ("apple-iphone-17-pro", "iPhone 17 Pro"),
+            "iPhone18,2": ("apple-iphone-17-pro-max", "iPhone 17 Pro Max"),
+            "iPhone18,3": ("apple-iphone-17", "iPhone 17"),
+            "iPhone18,4": ("apple-iphone-17-plus", "iPhone 17 Plus"),
+            "iPhone18,5": ("apple-iphone-17e", "iPhone 17e"),
+            "iPhone18,6": ("apple-iphone-air", "iPhone Air"),
+        ]
+        let matched = mapping[identifier] ?? ("apple-iphone-15-pro-max", "iPhone 15 Pro Max")
+        return [
+            "brand": "Apple",
+            "profileId": matched.profileId,
+            "model": matched.model,
+            "hardware": identifier
+        ]
     }
 
     static func flutterError(_ error: Error) -> FlutterError {

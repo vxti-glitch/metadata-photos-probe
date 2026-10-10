@@ -509,12 +509,9 @@ class _Projects extends StatelessWidget {
                         onPressed:
                             controller.busy || controller.batchSelection.isEmpty
                             ? null
-                            : () => _exportBatch(context, controller),
-                        icon: const Icon(
-                          Icons.folder_shared_outlined,
-                          size: 16,
-                        ),
-                        label: const Text('Export selected copies'),
+                            : () => _shareBatch(context, controller),
+                        icon: const Icon(Icons.ios_share_rounded, size: 16),
+                        label: const Text('Share selected copies'),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -523,12 +520,23 @@ class _Projects extends StatelessWidget {
                         onPressed:
                             controller.busy || controller.batchSelection.isEmpty
                             ? null
-                            : () => _shareBatch(context, controller),
-                        icon: const Icon(Icons.ios_share_rounded, size: 16),
-                        label: const Text('Share selected copies'),
+                            : () => _exportBatch(context, controller),
+                        icon: const Icon(
+                          Icons.folder_shared_outlined,
+                          size: 16,
+                        ),
+                        label: const Text('Export to folder'),
                       ),
                     ),
                   ],
+                ),
+                const SizedBox(height: 6),
+                const Center(
+                  child: Text(
+                    'Processed media saves automatically to On My iPhone › Metadata Editor',
+                    style: TextStyle(fontSize: 11, color: _muted),
+                    textAlign: TextAlign.center,
+                  ),
                 ),
               ],
             ),

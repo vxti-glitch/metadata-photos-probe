@@ -338,4 +338,15 @@ class FakeMediaBridge implements MediaBridge {
       (latitude != null && longitude != null
           ? {'latitude': latitude, 'longitude': longitude}
           : null);
+
+  Map<String, String>? nextHostDevice;
+  @override
+  Future<Map<String, String>?> getHostDevice() async =>
+      nextHostDevice ??
+      {
+        'brand': 'Apple',
+        'profileId': 'apple-iphone-15-pro-max',
+        'model': 'iPhone 15 Pro Max',
+        'hardware': 'iPhone16,2',
+      };
 }

@@ -265,6 +265,8 @@ class RandomizationSettings {
           'offsetTimeDigitized': offsetText,
         });
       } else {
+        final videoIso =
+            '${date.year}-${two(date.month)}-${two(date.day)}T${two(date.hour)}:${two(date.minute)}:${two(date.second)}$offsetText';
         for (final key in [
           'dateTimeOriginal',
           'createDate',
@@ -276,7 +278,7 @@ class RandomizationSettings {
           'mediaCreateDate',
           'mediaModifyDate',
         ]) {
-          values[key] = date.toUtc().toIso8601String();
+          values[key] = videoIso;
         }
       }
     }
