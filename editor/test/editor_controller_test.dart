@@ -318,51 +318,46 @@ void main() {
     expect(bridge.sharedAcknowledgment, isFalse);
   });
 
-  test(
-    'batch processing across mixed formats PNG, JPEG, HEIC, MP4, MOV isolates format capabilities and handles partial failures',
-    () async {
-      await controller.initialize();
-      final items = [
-        fixture(id: 's-jpeg', kind: MediaKind.jpeg),
-        fixture(id: 's-heic', kind: MediaKind.heic),
-        fixture(id: 's-png', kind: MediaKind.png),
-        fixture(id: 's-mp4', kind: MediaKind.mp4),
-        fixture(id: 's-mov', kind: MediaKind.mov),
-      ];
-      bridge.sessions = items;
-      await controller.initialize();
-      for (final item in items) {
-        controller.toggleBatch(item, true);
-      }
-      expect(controller.batchSelection.length, 5);
+  test('batch processing across mixed formats PNG, JPEG, HEIC, MP4, MOV isolates format capabilities and handles partial failures', () async {
+    await controller.initialize();
+    final items = [
+      fixture(id: 's-jpeg', kind: MediaKind.jpeg),
+      fixture(id: 's-heic', kind: MediaKind.heic),
+      fixture(id: 's-png', kind: MediaKind.png),
+      fixture(id: 's-mp4', kind: MediaKind.mp4),
+      fixture(id: 's-mov', kind: MediaKind.mov),
+    ];
+    bridge.sessions = items;
+    await controller.initialize();
+    for (final item in items) {
+      controller.toggleBatch(item, true);
+    }
+    expect(controller.batchSelection.length, 5);
 
-      final batchMap = {
-        for (final s in items)
-          s.id: MetadataPatch(
-            values: {'make': 'BrandX', 'model': 'ModelY'},
-          ),
-      };
-      bridge.nextStatus = IntegrityStatus.verified;
-      await controller.processBatch(batchMap);
-      expect(controller.queue.length, 5);
-      expect(controller.queueTotal, 5);
-      expect(controller.queueCompletedCount, 5);
-      expect(controller.queueFailedCount, 0);
+    final batchMap = {
+      for (final s in items)
+        s.id: MetadataPatch(values: {'make': 'BrandX', 'model': 'ModelY'}),
+    };
+    bridge.nextStatus = IntegrityStatus.verified;
+    await controller.processBatch(batchMap);
+    expect(controller.queue.length, 5);
+    expect(controller.queueTotal, 5);
+    expect(controller.queueCompletedCount, 5);
+    expect(controller.queueFailedCount, 0);
 
-      controller.queue.first.status = 'failed';
-      controller.queue.first.message = 'Verification mismatch';
-      expect(controller.queueFailedCount, 1);
+    controller.queue.first.status = 'failed';
+    controller.queue.first.message = 'Verification mismatch';
+    expect(controller.queueFailedCount, 1);
 
-      await controller.exportSelectedBatch(onlyReady: true);
-      expect(bridge.exports, 1);
+    await controller.exportSelectedBatch(onlyReady: true);
+    expect(bridge.exports, 1);
 
-      await controller.shareSelectedBatch(onlyReady: true);
-      expect(bridge.shares, 1);
+    await controller.shareSelectedBatch(onlyReady: true);
+    expect(bridge.shares, 1);
 
-      await controller.retryBatch();
-      expect(controller.queue.first.status, 'completed');
-    },
-  );
+    await controller.retryBatch();
+    expect(controller.queue.first.status, 'completed');
+  });
 
   test('batch queue cancellation stops pending items', () async {
     await controller.initialize();

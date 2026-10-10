@@ -186,8 +186,7 @@ class _MetadataFormState extends State<MetadataForm>
                 modes[entry.key] == 'keep'))
           entry.key: entry.value,
       for (final entry in manual.values.entries)
-        if (fields.contains(entry.key))
-          entry.key: entry.value,
+        if (fields.contains(entry.key)) entry.key: entry.value,
     };
     return MetadataPatch(
       values: values,
@@ -533,11 +532,7 @@ class _MetadataFormState extends State<MetadataForm>
         profile = selected;
         camera = profile!.cameras.first;
         _appliedFeedback = false;
-        _apply(
-          _profilePatch(widget.session),
-          notify: false,
-          fromProfile: true,
-        );
+        _apply(_profilePatch(widget.session), notify: false, fromProfile: true);
       });
     }
   }
@@ -577,7 +572,9 @@ class _MetadataFormState extends State<MetadataForm>
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w700,
-                    color: isMismatch ? Colors.redAccent : const Color(0xFFE7EDF4),
+                    color: isMismatch
+                        ? Colors.redAccent
+                        : const Color(0xFFE7EDF4),
                   ),
                 ),
               ),
@@ -602,7 +599,10 @@ class _MetadataFormState extends State<MetadataForm>
                     ),
                     Text(
                       '${output.inspection.kind.label} · ${output.inspection.sizeLabel}',
-                      style: const TextStyle(color: Colors.white60, fontSize: 12),
+                      style: const TextStyle(
+                        color: Colors.white60,
+                        fontSize: 12,
+                      ),
                     ),
                   ],
                 ),
@@ -620,12 +620,19 @@ class _MetadataFormState extends State<MetadataForm>
                 const SizedBox(height: 8),
                 const Row(
                   children: [
-                    Icon(Icons.folder_outlined, size: 16, color: Color(0xFF9CB5FF)),
+                    Icon(
+                      Icons.folder_outlined,
+                      size: 16,
+                      color: Color(0xFF9CB5FF),
+                    ),
                     SizedBox(width: 6),
                     Expanded(
                       child: Text(
                         'Saved to: On My iPhone › Metadata Editor › Processed Media',
-                        style: TextStyle(fontSize: 11, color: Color(0xFF9BA6B4)),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF9BA6B4),
+                        ),
                       ),
                     ),
                   ],
@@ -668,7 +675,9 @@ class _MetadataFormState extends State<MetadataForm>
               Expanded(
                 child: FilledButton.icon(
                   key: const Key('exportFiles'),
-                  onPressed: controller.canExport ? controller.exportFiles : null,
+                  onPressed: controller.canExport
+                      ? controller.exportFiles
+                      : null,
                   icon: const Icon(Icons.folder_shared_outlined, size: 18),
                   label: const Text('Export to Files'),
                 ),
@@ -677,7 +686,9 @@ class _MetadataFormState extends State<MetadataForm>
               Expanded(
                 child: OutlinedButton.icon(
                   key: const Key('shareFiles'),
-                  onPressed: controller.canExport ? controller.shareFiles : null,
+                  onPressed: controller.canExport
+                      ? controller.shareFiles
+                      : null,
                   icon: const Icon(Icons.ios_share_rounded, size: 18),
                   label: const Text('Share'),
                 ),
@@ -726,7 +737,11 @@ class _MetadataFormState extends State<MetadataForm>
           const SizedBox(height: 4),
           Text(
             '${controller.batchSelection.length} files selected · Settings apply across all batch items',
-            style: const TextStyle(color: Color(0xFF9CB5FF), fontSize: 13, fontWeight: FontWeight.w500),
+            style: const TextStyle(
+              color: Color(0xFF9CB5FF),
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+            ),
           ),
           const SizedBox(height: 12),
           Container(
@@ -738,7 +753,11 @@ class _MetadataFormState extends State<MetadataForm>
             ),
             child: Row(
               children: [
-                const Icon(Icons.auto_awesome_motion_outlined, color: Color(0xFF9CB5FF), size: 20),
+                const Icon(
+                  Icons.auto_awesome_motion_outlined,
+                  color: Color(0xFF9CB5FF),
+                  size: 20,
+                ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
@@ -788,17 +807,18 @@ class _MetadataFormState extends State<MetadataForm>
         const SizedBox(height: 16),
         IndexedStack(
           index: _tabIndex,
-          children: [
-            _presets(context),
-            _manual(context),
-          ],
+          children: [_presets(context), _manual(context)],
         ),
         const SizedBox(height: 16),
         FilledButton.icon(
           key: const Key('process'),
           onPressed: controller.busy ? null : _process,
           icon: const Icon(Icons.auto_fix_high_outlined),
-          label: Text(widget.batch ? 'Process ${controller.batchSelection.length} selected files' : 'Process file'),
+          label: Text(
+            widget.batch
+                ? 'Process ${controller.batchSelection.length} selected files'
+                : 'Process file',
+          ),
         ),
         if (!widget.batch && output != null)
           _buildProcessingResults(context, output),
@@ -911,14 +931,21 @@ class _MetadataFormState extends State<MetadataForm>
                 dropdownColor: const Color(0xFF162032),
                 borderRadius: BorderRadius.circular(12),
                 elevation: 4,
-                icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 20, color: Color(0xFF9CB5FF)),
+                icon: const Icon(
+                  Icons.keyboard_arrow_down_rounded,
+                  size: 20,
+                  color: Color(0xFF9CB5FF),
+                ),
                 alignment: AlignmentDirectional.centerStart,
                 key: const Key('profileBrand'),
                 initialValue: brand,
                 decoration: const InputDecoration(
                   labelText: 'Brand',
                   isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
                 ),
                 items: brands.map((b) {
                   final isSelected = brand == b;
@@ -931,13 +958,21 @@ class _MetadataFormState extends State<MetadataForm>
                             b,
                             style: TextStyle(
                               fontSize: 14,
-                              fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                              color: isSelected ? const Color(0xFF9CB5FF) : Colors.white,
+                              fontWeight: isSelected
+                                  ? FontWeight.w600
+                                  : FontWeight.w400,
+                              color: isSelected
+                                  ? const Color(0xFF9CB5FF)
+                                  : Colors.white,
                             ),
                           ),
                         ),
                         if (isSelected)
-                          const Icon(Icons.check, size: 16, color: Color(0xFF9CB5FF)),
+                          const Icon(
+                            Icons.check,
+                            size: 16,
+                            color: Color(0xFF9CB5FF),
+                          ),
                       ],
                     ),
                   );
@@ -959,55 +994,78 @@ class _MetadataFormState extends State<MetadataForm>
                 dropdownColor: const Color(0xFF162032),
                 borderRadius: BorderRadius.circular(12),
                 elevation: 4,
-                icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 20, color: Color(0xFF9CB5FF)),
+                icon: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (brand != null)
+                      IconButton(
+                        key: const Key('searchModels'),
+                        tooltip: 'Search models',
+                        icon: const Icon(
+                          Icons.search_rounded,
+                          size: 20,
+                          color: Color(0xFF9CB5FF),
+                        ),
+                        onPressed: widget.controller.busy
+                            ? null
+                            : () => _openModelSearchSheet(
+                                context,
+                                profiles
+                                    .where((p) => p.brand == brand)
+                                    .toList(),
+                              ),
+                      ),
+                    const Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      size: 20,
+                      color: Color(0xFF9CB5FF),
+                    ),
+                  ],
+                ),
                 alignment: AlignmentDirectional.centerStart,
-                key: ValueKey('model-${brand ?? "none"}${profile != null ? "-${profile!.id}" : ""}'),
+                key: ValueKey(
+                  'model-${brand ?? "none"}${profile != null ? "-${profile!.id}" : ""}',
+                ),
                 initialValue: profile?.id,
-                decoration: InputDecoration(
+                decoration: const InputDecoration(
                   labelText: 'Model',
                   isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  suffixIcon: brand == null
-                      ? null
-                      : IconButton(
-                          tooltip: 'Search models',
-                          icon: const Icon(Icons.search_rounded, size: 20, color: Color(0xFF9CB5FF)),
-                          onPressed: widget.controller.busy
-                              ? null
-                              : () => _openModelSearchSheet(
-                                    context,
-                                    profiles.where((p) => p.brand == brand).toList(),
-                                  ),
-                        ),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
                 ),
-                items: profiles
-                    .where((p) => p.brand == brand)
-                    .map(
-                      (p) {
-                        final isSelected = profile?.id == p.id;
-                        return DropdownMenuItem<String>(
-                          value: p.id,
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  p.model,
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                                    color: isSelected ? const Color(0xFF9CB5FF) : Colors.white,
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              if (isSelected)
-                                const Icon(Icons.check, size: 16, color: Color(0xFF9CB5FF)),
-                            ],
+                items: profiles.where((p) => p.brand == brand).map((p) {
+                  final isSelected = profile?.id == p.id;
+                  return DropdownMenuItem<String>(
+                    value: p.id,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            p.model,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: isSelected
+                                  ? FontWeight.w600
+                                  : FontWeight.w400,
+                              color: isSelected
+                                  ? const Color(0xFF9CB5FF)
+                                  : Colors.white,
+                            ),
+                            overflow: TextOverflow.ellipsis,
                           ),
-                        );
-                      },
-                    )
-                    .toList(),
+                        ),
+                        if (isSelected)
+                          const Icon(
+                            Icons.check,
+                            size: 16,
+                            color: Color(0xFF9CB5FF),
+                          ),
+                      ],
+                    ),
+                  );
+                }).toList(),
                 onChanged: widget.controller.busy
                     ? null
                     : (value) => setState(() {
@@ -1029,42 +1087,55 @@ class _MetadataFormState extends State<MetadataForm>
                 dropdownColor: const Color(0xFF162032),
                 borderRadius: BorderRadius.circular(12),
                 elevation: 4,
-                icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 20, color: Color(0xFF9CB5FF)),
+                icon: const Icon(
+                  Icons.keyboard_arrow_down_rounded,
+                  size: 20,
+                  color: Color(0xFF9CB5FF),
+                ),
                 alignment: AlignmentDirectional.centerStart,
-                key: ValueKey('camera-${profile?.id ?? "none"}${camera != null ? "-${camera!.id}" : ""}'),
+                key: ValueKey(
+                  'camera-${profile?.id ?? "none"}${camera != null ? "-${camera!.id}" : ""}',
+                ),
                 initialValue: camera?.id,
                 decoration: const InputDecoration(
                   labelText: 'Camera',
                   isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
                 ),
-                items: (profile?.cameras ?? <ProfileCamera>[])
-                    .map(
-                      (c) {
-                        final isSelected = camera?.id == c.id;
-                        return DropdownMenuItem<String>(
-                          value: c.id,
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  c.name,
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                                    color: isSelected ? const Color(0xFF9CB5FF) : Colors.white,
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              if (isSelected)
-                                const Icon(Icons.check, size: 16, color: Color(0xFF9CB5FF)),
-                            ],
+                items: (profile?.cameras ?? <ProfileCamera>[]).map((c) {
+                  final isSelected = camera?.id == c.id;
+                  return DropdownMenuItem<String>(
+                    value: c.id,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            c.name,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: isSelected
+                                  ? FontWeight.w600
+                                  : FontWeight.w400,
+                              color: isSelected
+                                  ? const Color(0xFF9CB5FF)
+                                  : Colors.white,
+                            ),
+                            overflow: TextOverflow.ellipsis,
                           ),
-                        );
-                      },
-                    )
-                    .toList(),
+                        ),
+                        if (isSelected)
+                          const Icon(
+                            Icons.check,
+                            size: 16,
+                            color: Color(0xFF9CB5FF),
+                          ),
+                      ],
+                    ),
+                  );
+                }).toList(),
                 onChanged: widget.controller.busy
                     ? null
                     : (value) => setState(() {
@@ -1113,7 +1184,9 @@ class _MetadataFormState extends State<MetadataForm>
                           _appliedTimer?.cancel();
                           setState(() {
                             _appliedFeedback = false;
-                            formError = e is FormatException ? e.message : e.toString();
+                            formError = e is FormatException
+                                ? e.message
+                                : e.toString();
                           });
                         }
                       },
@@ -1124,7 +1197,10 @@ class _MetadataFormState extends State<MetadataForm>
                         children: [
                           Icon(Icons.check_circle_rounded, size: 18),
                           SizedBox(width: 8),
-                          Text('Applied', style: TextStyle(fontWeight: FontWeight.w600)),
+                          Text(
+                            'Applied',
+                            style: TextStyle(fontWeight: FontWeight.w600),
+                          ),
                         ],
                       )
                     : const Text('Apply & randomize'),
@@ -1132,7 +1208,10 @@ class _MetadataFormState extends State<MetadataForm>
               if (_appliedFeedback) ...[
                 const SizedBox(height: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: const Color(0xFF132720),
                     borderRadius: BorderRadius.circular(8),
@@ -1140,12 +1219,20 @@ class _MetadataFormState extends State<MetadataForm>
                   ),
                   child: const Row(
                     children: [
-                      Icon(Icons.check_circle_outline_rounded, size: 16, color: Color(0xFF84E4C7)),
+                      Icon(
+                        Icons.check_circle_outline_rounded,
+                        size: 16,
+                        color: Color(0xFF84E4C7),
+                      ),
                       SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           'Settings applied. Press "Process" below to generate your file.',
-                          style: TextStyle(fontSize: 12, color: Color(0xFF84E4C7), fontWeight: FontWeight.w500),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF84E4C7),
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                       ),
                     ],
@@ -1677,9 +1764,8 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
               children: [
                 Text(
                   'Select Camera Model',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
+                  style: Theme.of(context).textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w700),
                 ),
                 const Spacer(),
                 IconButton(
@@ -1769,4 +1855,3 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
     );
   }
 }
-

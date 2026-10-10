@@ -39,13 +39,23 @@ void main() {
   Future<void> setField(WidgetTester tester, String field, String value) async {
     final mode = find.byKey(Key('${field}Mode'));
     await tester.ensureVisible(mode);
+    await tester.pumpAndSettle();
     await tester.tap(mode);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Set').last);
     await tester.pumpAndSettle();
     final input = find.byKey(Key(field));
     await tester.ensureVisible(input);
+    await tester.pumpAndSettle();
     await tester.enterText(input, value);
+  }
+
+  Future<void> switchToEditTab(WidgetTester tester) async {
+    final tab = find.text('Edit').first;
+    await tester.ensureVisible(tab);
+    await tester.pumpAndSettle();
+    await tester.tap(tab);
+    await tester.pumpAndSettle();
   }
 
   testWidgets('automatic capture dates work without a camera preset', (
@@ -87,8 +97,7 @@ void main() {
       final bridge = FakeMediaBridge();
       await launch(tester, bridge);
       await tap(tester, 'importPhotos');
-      await tester.tap(find.text('Edit').first);
-      await tester.pumpAndSettle();
+      await switchToEditTab(tester);
       await setField(tester, 'make', 'Apple');
       await setField(tester, 'model', 'Controlled Phone');
       await tap(tester, 'process');
@@ -115,8 +124,7 @@ void main() {
         ..nextStatus = IntegrityStatus.mismatch;
       await launch(tester, bridge);
       await tap(tester, 'importFiles');
-      await tester.tap(find.text('Edit').first);
-      await tester.pumpAndSettle();
+      await switchToEditTab(tester);
       await setField(tester, 'make', 'Apple');
       await tap(tester, 'process');
       expect(find.textContaining('Export blocked.'), findsWidgets);
@@ -139,12 +147,14 @@ void main() {
       await tap(tester, 'importFiles');
       final brand = find.byKey(const Key('profileBrand'));
       await tester.ensureVisible(brand);
+      await tester.pumpAndSettle();
       await tester.tap(brand);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Apple').last);
       await tester.pumpAndSettle();
       final model = find.byKey(const ValueKey('model-Apple'));
       await tester.ensureVisible(model);
+      await tester.pumpAndSettle();
       final profile = (await loadCameraProfiles()).firstWhere(
         (p) => p.model == 'iPhone 15 Pro Max',
       );
@@ -166,6 +176,7 @@ void main() {
   Future<void> chooseProfile(WidgetTester tester) async {
     final brand = find.byKey(const Key('profileBrand'));
     await tester.ensureVisible(brand);
+    await tester.pumpAndSettle();
     await tester.tap(brand);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Apple').last);
@@ -189,10 +200,13 @@ void main() {
       for (final source in controller.sessions) {
         controller.toggleBatch(source, true);
       }
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
             body: SingleChildScrollView(
+              controller: scrollController,
               child: MetadataForm(
                 controller: controller,
                 session: controller.sessions.first,
@@ -204,16 +218,19 @@ void main() {
       );
       await tester.pumpAndSettle();
       await chooseProfile(tester);
-      await tester.tap(find.text('Edit').first);
-      await tester.pumpAndSettle();
+      await switchToEditTab(tester);
       await tester.ensureVisible(find.text('Exposure').first);
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Exposure').first);
       await tester.pumpAndSettle();
       final isoInput = find.byKey(const Key('iso'));
       final displayedISO = tester.widget<TextField>(isoInput).controller!.text;
       await tester.ensureVisible(isoInput);
+      await tester.pumpAndSettle();
       await tester.enterText(isoInput, '');
       await tester.enterText(isoInput, displayedISO);
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pumpAndSettle();
       await tap(tester, 'process');
       expect(bridge.processes, 2);
       for (final source in bridge.sessions) {
@@ -270,6 +287,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Mixed recipe'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Mixed recipe'));
     await tester.pumpAndSettle();
     await tap(tester, 'process');
@@ -409,6 +427,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('Keep track date'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Keep track date'));
       await tester.pumpAndSettle();
       await tap(tester, 'process');
@@ -485,6 +504,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('Keep photo zones'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Keep photo zones'));
       await tester.pumpAndSettle();
       await tap(tester, 'process');
@@ -538,6 +558,7 @@ void main() {
         final before = DateTime.now().toUtc();
         final config = find.text('Randomization settings');
         await tester.ensureVisible(config);
+        await tester.pumpAndSettle();
         await tester.tap(config);
         await tester.pumpAndSettle();
         final days = find.byWidgetPredicate(
@@ -546,18 +567,20 @@ void main() {
               w.decoration?.labelText == 'Within the past days',
         );
         await tester.ensureVisible(days);
+        await tester.pumpAndSettle();
         await tester.enterText(days, '0');
         await tester.tap(find.text('Use settings'));
         await tester.pumpAndSettle();
         if (withProfile) await chooseProfile(tester);
-        await tester.tap(find.text('Edit').first);
-        await tester.pumpAndSettle();
+        await switchToEditTab(tester);
         await tester.ensureVisible(find.text('Dates').first);
+        await tester.pumpAndSettle();
         await tester.tap(find.text('Dates').first);
         await tester.pumpAndSettle();
         await setField(tester, 'offsetTimeOriginal', '-05:00');
         final mode = find.byKey(const Key('offsetTimeOriginalMode'));
         await tester.ensureVisible(mode);
+        await tester.pumpAndSettle();
         await tester.tap(mode);
         await tester.pumpAndSettle();
         await tester.tap(find.text('Keep').last);
@@ -592,6 +615,7 @@ void main() {
       await chooseProfile(tester);
       final save = find.text('Save current edits');
       await tester.ensureVisible(save);
+      await tester.pumpAndSettle();
       await tester.tap(save);
       await tester.pumpAndSettle();
       final name = find.byWidgetPredicate(
@@ -663,6 +687,7 @@ void main() {
         );
         await tester.pumpAndSettle();
         await tester.ensureVisible(find.text('Cross format dates'));
+        await tester.pumpAndSettle();
         await tester.tap(find.text('Cross format dates'));
         await tester.pumpAndSettle();
         await tap(tester, 'process');
@@ -706,17 +731,19 @@ void main() {
     await launch(tester, bridge);
     await tap(tester, 'importFiles');
     await chooseProfile(tester);
-    await tester.tap(find.text('Edit').first);
-    await tester.pumpAndSettle();
+    await switchToEditTab(tester);
     final dates = find.text('Dates');
     await tester.ensureVisible(dates);
+    await tester.pumpAndSettle();
     await tester.tap(dates);
     await tester.pumpAndSettle();
     final field = find.byKey(const Key('dateTimeOriginal'));
     await tester.ensureVisible(field);
+    await tester.pumpAndSettle();
     await tester.enterText(field, '2024:03:05 10:15:00');
     final checkbox = find.byKey(const Key('automaticDates')).first;
     await tester.ensureVisible(checkbox);
+    await tester.pumpAndSettle();
     await tester.tap(checkbox);
     await tester.pumpAndSettle();
     await tap(tester, 'process');
@@ -891,6 +918,7 @@ void main() {
 
       final anotherBtn = find.text('Process another file');
       await tester.ensureVisible(anotherBtn);
+      await tester.pumpAndSettle();
       await tester.tap(anotherBtn);
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('exportFiles')), findsNothing);
@@ -933,7 +961,9 @@ void main() {
     },
   );
 
-  testWidgets('THE PHOTOS WORKFLOW card has restored green color scheme', (tester) async {
+  testWidgets('THE PHOTOS WORKFLOW card has restored green color scheme', (
+    tester,
+  ) async {
     final bridge = FakeMediaBridge();
     await launch(tester, bridge);
     final workflowTitle = find.text('THE PHOTOS WORKFLOW');
@@ -942,7 +972,9 @@ void main() {
     expect(textWidget.style?.color, const Color(0xFF84E4C7));
   });
 
-  testWidgets('importing multiple files navigates directly to batch editor', (tester) async {
+  testWidgets('importing multiple files navigates directly to batch editor', (
+    tester,
+  ) async {
     final bridge = FakeMediaBridge()
       ..batchImportResult = [
         fixture(id: 's-1', kind: MediaKind.jpeg),
@@ -964,6 +996,7 @@ void main() {
 
     final editBtn = find.text('Edit selected files');
     await tester.ensureVisible(editBtn);
+    await tester.pumpAndSettle();
     await tester.tap(editBtn);
     await tester.pumpAndSettle();
     expect(controller.isBatchMode, isTrue);

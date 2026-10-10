@@ -160,6 +160,7 @@ class NativeMediaBridge implements MediaBridge {
     );
     return result['completed'] == true;
   }
+
   @override
   Future<bool> shareBatch(List<Map<String, Object?>> items) async =>
       objectMap(

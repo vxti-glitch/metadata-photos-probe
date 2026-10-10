@@ -26,4 +26,5 @@ Fixtures/private/
 Evidence/private/
 .env*
 !.env.example
+graphify-out/
 

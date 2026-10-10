@@ -114,7 +114,8 @@ class _EditorHomeState extends State<EditorHome> {
   @override
   Widget build(BuildContext context) {
     final session = controller.selected;
-    final isBatch = controller.isBatchMode && controller.batchSelection.isNotEmpty;
+    final isBatch =
+        controller.isBatchMode && controller.batchSelection.isNotEmpty;
     return Scaffold(
       appBar: AppBar(
         leading: (session == null && !isBatch)
@@ -124,8 +125,8 @@ class _EditorHomeState extends State<EditorHome> {
                 onPressed: controller.busy
                     ? null
                     : isBatch
-                        ? controller.exitBatchEditing
-                        : () => controller.select(null),
+                    ? controller.exitBatchEditing
+                    : () => controller.select(null),
                 icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
               ),
         title: Row(
@@ -203,6 +204,9 @@ class _EditorHomeState extends State<EditorHome> {
                 ),
                 Expanded(
                   child: ListView(
+                    key: ValueKey(
+                      isBatch ? 'batch' : (session?.id ?? 'projects'),
+                    ),
                     padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
                     children: [
                       if (!controller.ready && !controller.busy) ...[
@@ -428,8 +432,8 @@ class _Projects extends StatelessWidget {
                             },
                       child: Text(
                         controller.sessions.every(
-                          (s) => controller.batchSelection.contains(s.id),
-                        )
+                              (s) => controller.batchSelection.contains(s.id),
+                            )
                             ? 'Deselect all'
                             : 'Select all',
                       ),
@@ -438,7 +442,8 @@ class _Projects extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 FilledButton.icon(
-                  onPressed: controller.busy || controller.batchSelection.isEmpty
+                  onPressed:
+                      controller.busy || controller.batchSelection.isEmpty
                       ? null
                       : controller.startBatchEditing,
                   icon: const Icon(Icons.edit_note_rounded, size: 20),
@@ -449,17 +454,22 @@ class _Projects extends StatelessWidget {
                   children: [
                     Expanded(
                       child: OutlinedButton.icon(
-                        onPressed: controller.busy || controller.batchSelection.isEmpty
+                        onPressed:
+                            controller.busy || controller.batchSelection.isEmpty
                             ? null
                             : () => _exportBatch(context, controller),
-                        icon: const Icon(Icons.folder_shared_outlined, size: 16),
+                        icon: const Icon(
+                          Icons.folder_shared_outlined,
+                          size: 16,
+                        ),
                         label: const Text('Export selected copies'),
                       ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: OutlinedButton.icon(
-                        onPressed: controller.busy || controller.batchSelection.isEmpty
+                        onPressed:
+                            controller.busy || controller.batchSelection.isEmpty
                             ? null
                             : () => _shareBatch(context, controller),
                         icon: const Icon(Icons.ios_share_rounded, size: 16),
@@ -484,11 +494,17 @@ class _Projects extends StatelessWidget {
                   children: [
                     const Text(
                       'Batch Queue',
-                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                      ),
                     ),
                     Text(
                       '${controller.queueCompletedCount}/${controller.queueTotal} ready',
-                      style: const TextStyle(color: Color(0xFF9CB5FF), fontSize: 12),
+                      style: const TextStyle(
+                        color: Color(0xFF9CB5FF),
+                        fontSize: 12,
+                      ),
                     ),
                   ],
                 ),
@@ -496,7 +512,10 @@ class _Projects extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(
                     '${controller.queueFailedCount} failed or interrupted',
-                    style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                    style: const TextStyle(
+                      color: Colors.redAccent,
+                      fontSize: 12,
+                    ),
                   ),
                 ],
                 const SizedBox(height: 10),
@@ -519,7 +538,11 @@ class _Projects extends StatelessWidget {
                         child: FilledButton.tonal(
                           onPressed: controller.busy
                               ? null
-                              : () => _exportBatch(context, controller, onlyReady: true),
+                              : () => _exportBatch(
+                                  context,
+                                  controller,
+                                  onlyReady: true,
+                                ),
                           child: const Text('Export ready'),
                         ),
                       ),
@@ -528,7 +551,11 @@ class _Projects extends StatelessWidget {
                         child: OutlinedButton(
                           onPressed: controller.busy
                               ? null
-                              : () => _shareBatch(context, controller, onlyReady: true),
+                              : () => _shareBatch(
+                                  context,
+                                  controller,
+                                  onlyReady: true,
+                                ),
                           child: const Text('Share ready'),
                         ),
                       ),
@@ -536,7 +563,8 @@ class _Projects extends StatelessWidget {
                   ),
                 ],
                 if (controller.queueFailedCount > 0) ...[
-                  if (controller.queueCompletedCount > 0) const SizedBox(height: 8),
+                  if (controller.queueCompletedCount > 0)
+                    const SizedBox(height: 8),
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
@@ -561,15 +589,17 @@ class _Projects extends StatelessWidget {
                         leading: Icon(
                           item.status == 'completed'
                               ? Icons.check_circle_outline
-                              : item.status == 'failed' || item.status == 'interrupted'
-                                  ? Icons.error_outline
-                                  : Icons.hourglass_top_outlined,
+                              : item.status == 'failed' ||
+                                    item.status == 'interrupted'
+                              ? Icons.error_outline
+                              : Icons.hourglass_top_outlined,
                           size: 18,
                           color: item.status == 'completed'
                               ? const Color(0xFF9CB5FF)
-                              : item.status == 'failed' || item.status == 'interrupted'
-                                  ? Colors.redAccent
-                                  : Colors.white60,
+                              : item.status == 'failed' ||
+                                    item.status == 'interrupted'
+                              ? Colors.redAccent
+                              : Colors.white60,
                         ),
                         title: Text(
                           controller.sessions
@@ -588,7 +618,9 @@ class _Projects extends StatelessWidget {
                       (q) => q.status == 'failed' || q.status == 'interrupted',
                     ))
                       TextButton(
-                        onPressed: controller.busy ? null : controller.retryBatch,
+                        onPressed: controller.busy
+                            ? null
+                            : controller.retryBatch,
                         child: const Text('Retry unfinished files'),
                       ),
                   ],
@@ -849,15 +881,15 @@ Future<void> _exportBatch(
   final chosen = onlyReady
       ? controller.sessions.where((s) => completedIds.contains(s.id)).toList()
       : controller.sessions
-          .where((s) => controller.batchSelection.contains(s.id))
-          .toList();
+            .where((s) => controller.batchSelection.contains(s.id))
+            .toList();
   final targets = onlyReady
       ? chosen
-          .where(
-            (s) =>
-                s.processing != null && !s.processing!.integrity.hasMismatch,
-          )
-          .toList()
+            .where(
+              (s) =>
+                  s.processing != null && !s.processing!.integrity.hasMismatch,
+            )
+            .toList()
       : chosen.toList();
   final needs = targets.any(
     (s) => s.processing?.integrity.needsAcknowledgment ?? false,
@@ -873,8 +905,7 @@ Future<void> _exportBatch(
               child: Text(
                 targets
                     .expand(
-                      (s) =>
-                          s.processing?.integrity.limitations ?? <String>[],
+                      (s) => s.processing?.integrity.limitations ?? <String>[],
                     )
                     .toSet()
                     .join('\n'),
@@ -913,15 +944,15 @@ Future<void> _shareBatch(
   final chosen = onlyReady
       ? controller.sessions.where((s) => completedIds.contains(s.id)).toList()
       : controller.sessions
-          .where((s) => controller.batchSelection.contains(s.id))
-          .toList();
+            .where((s) => controller.batchSelection.contains(s.id))
+            .toList();
   final targets = onlyReady
       ? chosen
-          .where(
-            (s) =>
-                s.processing != null && !s.processing!.integrity.hasMismatch,
-          )
-          .toList()
+            .where(
+              (s) =>
+                  s.processing != null && !s.processing!.integrity.hasMismatch,
+            )
+            .toList()
       : chosen.toList();
   final needs = targets.any(
     (s) => s.processing?.integrity.needsAcknowledgment ?? false,
@@ -937,8 +968,7 @@ Future<void> _shareBatch(
               child: Text(
                 targets
                     .expand(
-                      (s) =>
-                          s.processing?.integrity.limitations ?? <String>[],
+                      (s) => s.processing?.integrity.limitations ?? <String>[],
                     )
                     .toSet()
                     .join('\n'),
