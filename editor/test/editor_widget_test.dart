@@ -155,12 +155,11 @@ void main() {
       final model = find.byKey(const ValueKey('model-Apple'));
       await tester.ensureVisible(model);
       await tester.pumpAndSettle();
-      final profile = (await loadCameraProfiles()).firstWhere(
-        (p) => p.model == 'iPhone 15 Pro Max',
-      );
-      tester.widget<DropdownButtonFormField<String>>(model).onChanged!(
-        profile.id,
-      );
+      await tester.tap(model);
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'iPhone 15 Pro Max');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('iPhone 15 Pro Max').last);
       await tester.pumpAndSettle();
       await tap(tester, 'process');
       final plan = bridge.sessions.single.processing!.metadataPatch!;
@@ -182,12 +181,13 @@ void main() {
     await tester.tap(find.text('Apple').last);
     await tester.pumpAndSettle();
     final model = find.byKey(const ValueKey('model-Apple'));
-    final profile = (await loadCameraProfiles()).firstWhere(
-      (p) => p.model == 'iPhone 15 Pro Max',
-    );
-    tester.widget<DropdownButtonFormField<String>>(model).onChanged!(
-      profile.id,
-    );
+    await tester.ensureVisible(model);
+    await tester.pumpAndSettle();
+    await tester.tap(model);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'iPhone 15 Pro Max');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('iPhone 15 Pro Max').last);
     await tester.pumpAndSettle();
   }
 
@@ -866,6 +866,40 @@ void main() {
 
     expect(find.text('Select Camera Model'), findsNothing);
     expect(find.text('iPhone 15 Pro Max'), findsOneWidget);
+  });
+
+  testWidgets('camera picker bottom sheet opens and updates selected camera', (
+    tester,
+  ) async {
+    final bridge = FakeMediaBridge();
+    await launch(tester, bridge);
+    await tap(tester, 'importFiles');
+    await chooseProfile(tester);
+
+    final cameraSelector = find.byKey(
+      const ValueKey('camera-apple-iphone-15-pro-max-main'),
+    );
+    await tester.ensureVisible(cameraSelector);
+    expect(cameraSelector, findsOneWidget);
+    expect(find.text('Main Camera'), findsOneWidget);
+
+    await tester.tap(cameraSelector);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Select Camera'), findsOneWidget);
+    expect(find.text('iPhone 15 Pro Max'), findsWidgets);
+    expect(find.text('Ultra Wide'), findsOneWidget);
+
+    await tester.tap(find.text('Ultra Wide').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Select Camera'), findsNothing);
+    expect(find.text('Ultra Wide'), findsOneWidget);
+
+    await tap(tester, 'process');
+    final patch = bridge.sessions.single.processing!.metadataPatch!;
+    expect(patch.values['fNumber'], 2.2);
+    expect(patch.values['focalLength35mm'], 13);
   });
 
   testWidgets(

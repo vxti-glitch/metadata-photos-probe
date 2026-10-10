@@ -537,6 +537,106 @@ class _MetadataFormState extends State<MetadataForm>
     }
   }
 
+  Future<void> _openBrandPickerSheet(
+    BuildContext context,
+    List<String> brands,
+  ) async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF191E25),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _BrandPickerSheet(brands: brands, selectedBrand: brand),
+    );
+    if (selected != null && mounted && selected != brand) {
+      setState(() {
+        brand = selected;
+        profile = null;
+        camera = null;
+        _appliedFeedback = false;
+      });
+    }
+  }
+
+  Future<void> _openCameraPickerSheet(
+    BuildContext context,
+    List<ProfileCamera> cameras,
+  ) async {
+    final selected = await showModalBottomSheet<ProfileCamera>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF191E25),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _CameraPickerSheet(
+        cameras: cameras,
+        selectedCameraId: camera?.id,
+        profileModel: profile?.model,
+      ),
+    );
+    if (selected != null && mounted && selected.id != camera?.id) {
+      setState(() {
+        camera = selected;
+        _appliedFeedback = false;
+        _apply(_profilePatch(widget.session), notify: false, fromProfile: true);
+      });
+    }
+  }
+
+  Widget _buildSelectorField({
+    required Key key,
+    required String label,
+    required String value,
+    required bool enabled,
+    required VoidCallback? onTap,
+    Widget? trailing,
+  }) {
+    // Dropdowns must use compact 48px height (itemHeight: 48.0)
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 48.0),
+      child: InkWell(
+        key: key,
+        borderRadius: BorderRadius.circular(12),
+        onTap: enabled && !widget.controller.busy ? onTap : null,
+        child: InputDecorator(
+          decoration: InputDecoration(
+            labelText: label,
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 10,
+            ),
+            suffixIcon:
+                trailing ??
+                Icon(
+                  Icons.keyboard_arrow_down_rounded,
+                  size: 18,
+                  color: enabled ? const Color(0xFF9CB5FF) : Colors.white24,
+                ),
+            suffixIconConstraints: const BoxConstraints(
+              minWidth: 32,
+              minHeight: 32,
+            ),
+            enabled: enabled,
+          ),
+          isEmpty: false,
+          child: Text(
+            value,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: enabled ? Colors.white : Colors.white38,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildProcessingResults(BuildContext context, Processing output) {
     final controller = widget.controller;
     final isMismatch = output.integrity.hasMismatch;
@@ -921,98 +1021,30 @@ class _MetadataFormState extends State<MetadataForm>
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              DropdownButtonFormField<String>(
-                isExpanded: true,
-                isDense: true,
-                menuMaxHeight: 180,
-                itemHeight: 48.0,
-                dropdownColor: const Color(0xFF141C28),
-                borderRadius: BorderRadius.circular(10),
-                elevation: 4,
-                icon: const Icon(
-                  Icons.keyboard_arrow_down_rounded,
-                  size: 18,
-                  color: Color(0xFF9CB5FF),
-                ),
-                alignment: AlignmentDirectional.centerStart,
+              _buildSelectorField(
                 key: const Key('profileBrand'),
-                initialValue: brand,
-                decoration: const InputDecoration(
-                  labelText: 'Brand',
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                ),
-                selectedItemBuilder: (context) => brands
-                    .map(
-                      (b) => Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          b,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                            color: Colors.white,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    )
-                    .toList(),
-                items: brands.map((b) {
-                  final isSelected = brand == b;
-                  return DropdownMenuItem<String>(
-                    value: b,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              b,
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: isSelected
-                                    ? FontWeight.w600
-                                    : FontWeight.w400,
-                                color: isSelected
-                                    ? const Color(0xFF9CB5FF)
-                                    : Colors.white,
-                              ),
-                            ),
-                          ),
-                          if (isSelected)
-                            const Icon(
-                              Icons.check_rounded,
-                              size: 16,
-                              color: Color(0xFF9CB5FF),
-                            ),
-                        ],
-                      ),
-                    ),
-                  );
-                }).toList(),
-                onChanged: widget.controller.busy
-                    ? null
-                    : (value) => setState(() {
-                        brand = value;
-                        profile = null;
-                        camera = null;
-                        _appliedFeedback = false;
-                      }),
+                label: 'Brand',
+                value: brand ?? 'Select brand',
+                enabled: true,
+                onTap: () => _openBrandPickerSheet(context, brands),
               ),
               const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                isExpanded: true,
-                isDense: true,
-                menuMaxHeight: 180,
-                itemHeight: 48.0,
-                dropdownColor: const Color(0xFF141C28),
-                borderRadius: BorderRadius.circular(10),
-                elevation: 4,
-                icon: Row(
+              _buildSelectorField(
+                key: ValueKey(
+                  'model-${brand ?? "none"}${profile != null ? "-${profile!.id}" : ""}',
+                ),
+                label: 'Model',
+                value:
+                    profile?.model ??
+                    (brand == null ? 'Choose a brand first' : 'Select model'),
+                enabled: brand != null,
+                onTap: brand == null
+                    ? null
+                    : () => _openModelSearchSheet(
+                        context,
+                        profiles.where((p) => p.brand == brand).toList(),
+                      ),
+                trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (brand != null)
@@ -1040,181 +1072,31 @@ class _MetadataFormState extends State<MetadataForm>
                                     .toList(),
                               ),
                       ),
-                    const Icon(
+                    Icon(
                       Icons.keyboard_arrow_down_rounded,
                       size: 18,
-                      color: Color(0xFF9CB5FF),
+                      color: brand != null
+                          ? const Color(0xFF9CB5FF)
+                          : Colors.white24,
                     ),
                   ],
                 ),
-                alignment: AlignmentDirectional.centerStart,
-                key: ValueKey(
-                  'model-${brand ?? "none"}${profile != null ? "-${profile!.id}" : ""}',
-                ),
-                initialValue: profile?.id,
-                decoration: const InputDecoration(
-                  labelText: 'Model',
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                ),
-                selectedItemBuilder: (context) => profiles
-                    .where((p) => p.brand == brand)
-                    .map(
-                      (p) => Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          p.model,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                            color: Colors.white,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    )
-                    .toList(),
-                items: profiles.where((p) => p.brand == brand).map((p) {
-                  final isSelected = profile?.id == p.id;
-                  return DropdownMenuItem<String>(
-                    value: p.id,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              p.model,
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: isSelected
-                                    ? FontWeight.w600
-                                    : FontWeight.w400,
-                                color: isSelected
-                                    ? const Color(0xFF9CB5FF)
-                                    : Colors.white,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          if (isSelected)
-                            const Icon(
-                              Icons.check_rounded,
-                              size: 16,
-                              color: Color(0xFF9CB5FF),
-                            ),
-                        ],
-                      ),
-                    ),
-                  );
-                }).toList(),
-                onChanged: widget.controller.busy
-                    ? null
-                    : (value) => setState(() {
-                        profile = profiles.firstWhere((p) => p.id == value);
-                        camera = profile!.cameras.first;
-                        _appliedFeedback = false;
-                        _apply(
-                          _profilePatch(widget.session),
-                          notify: false,
-                          fromProfile: true,
-                        );
-                      }),
               ),
               const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                isExpanded: true,
-                isDense: true,
-                menuMaxHeight: 180,
-                itemHeight: 48.0,
-                dropdownColor: const Color(0xFF141C28),
-                borderRadius: BorderRadius.circular(10),
-                elevation: 4,
-                icon: const Icon(
-                  Icons.keyboard_arrow_down_rounded,
-                  size: 18,
-                  color: Color(0xFF9CB5FF),
-                ),
-                alignment: AlignmentDirectional.centerStart,
+              _buildSelectorField(
                 key: ValueKey(
                   'camera-${profile?.id ?? "none"}${camera != null ? "-${camera!.id}" : ""}',
                 ),
-                initialValue: camera?.id,
-                decoration: const InputDecoration(
-                  labelText: 'Camera',
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                ),
-                selectedItemBuilder: (context) =>
-                    (profile?.cameras ?? <ProfileCamera>[])
-                        .map(
-                          (c) => Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              c.name,
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
-                                color: Colors.white,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        )
-                        .toList(),
-                items: (profile?.cameras ?? <ProfileCamera>[]).map((c) {
-                  final isSelected = camera?.id == c.id;
-                  return DropdownMenuItem<String>(
-                    value: c.id,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              c.name,
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: isSelected
-                                    ? FontWeight.w600
-                                    : FontWeight.w400,
-                                color: isSelected
-                                    ? const Color(0xFF9CB5FF)
-                                    : Colors.white,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          if (isSelected)
-                            const Icon(
-                              Icons.check_rounded,
-                              size: 16,
-                              color: Color(0xFF9CB5FF),
-                            ),
-                        ],
-                      ),
-                    ),
-                  );
-                }).toList(),
-                onChanged: widget.controller.busy
+                label: 'Camera',
+                value:
+                    camera?.name ??
+                    (profile == null
+                        ? 'Choose a model first'
+                        : 'Select camera'),
+                enabled: profile != null,
+                onTap: profile == null
                     ? null
-                    : (value) => setState(() {
-                        camera = profile!.cameras.firstWhere(
-                          (c) => c.id == value,
-                        );
-                        _appliedFeedback = false;
-                        _apply(
-                          _profilePatch(widget.session),
-                          notify: false,
-                          fromProfile: true,
-                        );
-                      }),
+                    : () => _openCameraPickerSheet(context, profile!.cameras),
               ),
               const SizedBox(height: 8),
               FilledButton(
@@ -1808,14 +1690,138 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
       minChildSize: 0.4,
       maxChildSize: 0.9,
       expand: false,
-      builder: (context, scrollController) => Padding(
-        padding: EdgeInsets.fromLTRB(
-          16,
-          12,
-          16,
-          16 + MediaQuery.of(context).viewInsets.bottom,
+      builder: (context, scrollController) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            16,
+            12,
+            16,
+            16 + MediaQuery.of(context).viewInsets.bottom,
+          ),
+          child: Column(
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Select Camera Model',
+                      style: Theme.of(context).textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 20),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _searchController,
+                autofocus: false,
+                decoration: InputDecoration(
+                  hintText: 'Search models…',
+                  prefixIcon: const Icon(Icons.search, size: 20),
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  suffixIcon: _searchController.text.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, size: 18),
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() {});
+                          },
+                        )
+                      : null,
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: filtered.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'No matching models found.',
+                          style: TextStyle(color: Colors.white60),
+                        ),
+                      )
+                    : ListView.separated(
+                        controller: scrollController,
+                        itemCount: filtered.length,
+                        separatorBuilder: (context, index) =>
+                            const Divider(height: 1),
+                        itemBuilder: (context, index) {
+                          final p = filtered[index];
+                          final isSelected = widget.selectedProfileId == p.id;
+                          return ListTile(
+                            dense: true,
+                            title: Text(
+                              p.model,
+                              style: TextStyle(
+                                fontWeight: isSelected
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                                color: isSelected
+                                    ? const Color(0xFF9CB5FF)
+                                    : Colors.white,
+                              ),
+                            ),
+                            subtitle: Text(
+                              '${p.brand} · ${p.cameras.length} camera(s)',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.white60,
+                              ),
+                            ),
+                            trailing: isSelected
+                                ? const Icon(
+                                    Icons.check_rounded,
+                                    color: Color(0xFF9CB5FF),
+                                    size: 20,
+                                  )
+                                : null,
+                            onTap: () {
+                              Navigator.of(context).pop(p);
+                            },
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
         ),
+      ),
+    );
+  }
+}
+
+class _BrandPickerSheet extends StatelessWidget {
+  const _BrandPickerSheet({required this.brands, required this.selectedBrand});
+
+  final List<String> brands;
+  final String? selectedBrand;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
             Container(
               width: 36,
@@ -1828,92 +1834,162 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
             ),
             Row(
               children: [
-                Text(
-                  'Select Camera Model',
-                  style: Theme.of(context).textTheme.titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w700),
+                Expanded(
+                  child: Text(
+                    'Select Brand',
+                    style: Theme.of(context).textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w700),
+                  ),
                 ),
-                const Spacer(),
                 IconButton(
                   icon: const Icon(Icons.close, size: 20),
                   onPressed: () => Navigator.of(context).pop(),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _searchController,
-              autofocus: false,
-              decoration: InputDecoration(
-                hintText: 'Search models…',
-                prefixIcon: const Icon(Icons.search, size: 20),
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-                suffixIcon: _searchController.text.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear, size: 18),
-                        onPressed: () {
-                          _searchController.clear();
-                          setState(() {});
-                        },
-                      )
-                    : null,
-              ),
-              onChanged: (_) => setState(() {}),
-            ),
-            const SizedBox(height: 12),
-            Expanded(
-              child: filtered.isEmpty
-                  ? const Center(
-                      child: Text(
-                        'No matching models found.',
-                        style: TextStyle(color: Colors.white60),
+            const Divider(height: 16),
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: brands.length,
+                separatorBuilder: (context, index) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final b = brands[index];
+                  final isSelected = selectedBrand == b;
+                  return ListTile(
+                    dense: true,
+                    title: Text(
+                      b,
+                      style: TextStyle(
+                        fontWeight: isSelected
+                            ? FontWeight.w700
+                            : FontWeight.w500,
+                        color: isSelected
+                            ? const Color(0xFF9CB5FF)
+                            : Colors.white,
                       ),
-                    )
-                  : ListView.separated(
-                      controller: scrollController,
-                      itemCount: filtered.length,
-                      separatorBuilder: (context, index) =>
-                          const Divider(height: 1),
-                      itemBuilder: (context, index) {
-                        final p = filtered[index];
-                        final isSelected = widget.selectedProfileId == p.id;
-                        return ListTile(
-                          dense: true,
-                          title: Text(
-                            p.model,
-                            style: TextStyle(
-                              fontWeight: isSelected
-                                  ? FontWeight.w700
-                                  : FontWeight.w500,
-                              color: isSelected
-                                  ? const Color(0xFF9CB5FF)
-                                  : Colors.white,
-                            ),
+                    ),
+                    trailing: isSelected
+                        ? const Icon(
+                            Icons.check_rounded,
+                            color: Color(0xFF9CB5FF),
+                            size: 20,
+                          )
+                        : null,
+                    onTap: () => Navigator.of(context).pop(b),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CameraPickerSheet extends StatelessWidget {
+  const _CameraPickerSheet({
+    required this.cameras,
+    required this.selectedCameraId,
+    this.profileModel,
+  });
+
+  final List<ProfileCamera> cameras;
+  final String? selectedCameraId;
+  final String? profileModel;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Select Camera',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                      if (profileModel != null)
+                        Text(
+                          profileModel!,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.white60,
                           ),
-                          subtitle: Text(
-                            '${p.brand} · ${p.cameras.length} camera(s)',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 20),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+            const Divider(height: 16),
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: cameras.length,
+                separatorBuilder: (context, index) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final c = cameras[index];
+                  final isSelected = selectedCameraId == c.id;
+                  return ListTile(
+                    dense: true,
+                    title: Text(
+                      c.name,
+                      style: TextStyle(
+                        fontWeight: isSelected
+                            ? FontWeight.w700
+                            : FontWeight.w500,
+                        color: isSelected
+                            ? const Color(0xFF9CB5FF)
+                            : Colors.white,
+                      ),
+                    ),
+                    subtitle:
+                        c.fields.containsKey('focalLength') &&
+                            c.fields.containsKey('fNumber')
+                        ? Text(
+                            '${c.fields['focalLength']}mm · f/${c.fields['fNumber']}',
                             style: const TextStyle(
                               fontSize: 12,
                               color: Colors.white60,
                             ),
-                          ),
-                          trailing: isSelected
-                              ? const Icon(
-                                  Icons.check,
-                                  color: Color(0xFF9CB5FF),
-                                  size: 20,
-                                )
-                              : null,
-                          onTap: () {
-                            Navigator.of(context).pop(p);
-                          },
-                        );
-                      },
-                    ),
+                          )
+                        : null,
+                    trailing: isSelected
+                        ? const Icon(
+                            Icons.check_rounded,
+                            color: Color(0xFF9CB5FF),
+                            size: 20,
+                          )
+                        : null,
+                    onTap: () => Navigator.of(context).pop(c),
+                  );
+                },
+              ),
             ),
           ],
         ),
