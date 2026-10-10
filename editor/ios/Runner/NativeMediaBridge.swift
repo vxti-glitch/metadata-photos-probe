@@ -5,6 +5,7 @@ import PhotosUI
 import UniformTypeIdentifiers
 import ProbeCore
 import CoreFoundation
+import MapKit
 
 /// A canceled operation retains its lease until the real OS/engine completion.
 /// Token checks also make late picker callbacks harmless after dismissal.
@@ -201,6 +202,12 @@ final class NativeMediaBridge: NSObject {
                 UIApplication.shared.open(url, options: [:]) { opened in
                     result(opened ? nil : FlutterError(code: "unsupported", message: "Could not open URL.", details: nil))
                 }
+            case "openLocationPicker":
+                guard !gate.busy else { throw NativeMediaError.busy }
+                let args = (call.arguments as? [String: Any]) ?? [:]
+                let initialLat = (args["latitude"] as? NSNumber)?.doubleValue
+                let initialLng = (args["longitude"] as? NSNumber)?.doubleValue
+                try presentLocationPicker(initialLat: initialLat, initialLng: initialLng, result: result)
             default: result(FlutterMethodNotImplemented)
             }
         } catch { result(Self.flutterError(error)) }
@@ -377,6 +384,27 @@ final class NativeMediaBridge: NSObject {
         controller.present(activity, animated: true)
     }
 
+    private func presentLocationPicker(initialLat: Double?, initialLng: Double?, result: @escaping FlutterResult) throws {
+        let controller = try presenter()
+        let token = try start(result)
+        let pickerVC = LocationPickerViewController(initialLat: initialLat, initialLng: initialLng) { [weak self] coord in
+            guard let self, self.gate.isCurrent(token) else { return }
+            if let c = coord {
+                self.finish(token, value: ["latitude": c.latitude, "longitude": c.longitude])
+            } else {
+                self.finish(token, value: nil)
+            }
+        }
+        let nav = UINavigationController(rootViewController: pickerVC)
+        nav.modalPresentationStyle = .pageSheet
+        if let sheet = nav.sheetPresentationController {
+            sheet.detents = [.large()]
+            sheet.prefersGrabberVisible = true
+        }
+        presentedPicker = nav
+        controller.present(nav, animated: true)
+    }
+
     static func arguments(_ value: Any?) throws -> [String: Any] {
         guard let map = value as? [String: Any] else { throw NativeMediaError.invalidArgument }
         return map
@@ -521,4 +549,86 @@ private final class NativePickerDelegate: NSObject, UIDocumentPickerDelegate, PH
     }
     func presentationControllerDidDismiss(_ presentationController: UIPresentationController) { cancel() }
     private func cancel() { guard !completed else { return }; completed = true; onCancel?(token) }
+}
+
+@MainActor
+final class LocationPickerViewController: UIViewController, MKMapViewDelegate {
+    private let initialLat: Double?
+    private let initialLng: Double?
+    private let onSelect: (CLLocationCoordinate2D?) -> Void
+    private var mapView: MKMapView!
+    private var annotation: MKPointAnnotation?
+
+    init(initialLat: Double?, initialLng: Double?, onSelect: @escaping (CLLocationCoordinate2D?) -> Void) {
+        self.initialLat = initialLat
+        self.initialLng = initialLng
+        self.onSelect = onSelect
+        super.init(nibName: nil, bundle: nil)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "Select Location"
+        view.backgroundColor = UIColor(red: 0x12/255.0, green: 0x12/255.0, blue: 0x14/255.0, alpha: 1.0)
+
+        mapView = MKMapView(frame: view.bounds)
+        mapView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        mapView.delegate = self
+        view.addSubview(mapView)
+
+        let gesture = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
+        mapView.addGestureRecognizer(gesture)
+
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+        mapView.addGestureRecognizer(tap)
+
+        navigationItem.leftBarButtonItem = UIBarButtonItem(title: "Cancel", style: .plain, target: self, action: #selector(cancelTapped))
+        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "Apply", style: .done, target: self, action: #selector(applyTapped))
+
+        if let lat = initialLat, let lng = initialLng, abs(lat) <= 90, abs(lng) <= 180 {
+            let coord = CLLocationCoordinate2D(latitude: lat, longitude: lng)
+            setPin(at: coord)
+            mapView.setRegion(MKCoordinateRegion(center: coord, latitudinalMeters: 2000, longitudinalMeters: 2000), animated: false)
+        }
+    }
+
+    @objc private func cancelTapped() {
+        dismiss(animated: true) { self.onSelect(nil) }
+    }
+
+    @objc private func applyTapped() {
+        let coord = annotation?.coordinate ?? mapView.centerCoordinate
+        dismiss(animated: true) { self.onSelect(coord) }
+    }
+
+    @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
+        if gesture.state == .ended {
+            let point = gesture.location(in: mapView)
+            let coord = mapView.convert(point, toCoordinateFrom: mapView)
+            setPin(at: coord)
+        }
+    }
+
+    @objc private func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
+        if gesture.state == .began {
+            let point = gesture.location(in: mapView)
+            let coord = mapView.convert(point, toCoordinateFrom: mapView)
+            setPin(at: coord)
+            let generator = UIImpactFeedbackGenerator(style: .medium)
+            generator.impactOccurred()
+        }
+    }
+
+    private func setPin(at coord: CLLocationCoordinate2D) {
+        if let existing = annotation {
+            existing.coordinate = coord
+        } else {
+            let pin = MKPointAnnotation()
+            pin.coordinate = coord
+            pin.title = "Target Location"
+            mapView.addAnnotation(pin)
+            annotation = pin
+        }
+    }
 }

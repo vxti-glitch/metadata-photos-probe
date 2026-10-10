@@ -754,6 +754,25 @@ class EditorController extends ChangeNotifier {
   Future<void> openUrl(String url) =>
       _run(EditorOperation.openingBrowser, (_) => bridge.openUrl(url));
   Future<void> openWebsite() => openUrl(AppBrand.websiteUrl);
+  Future<Map<String, double>?> pickLocation({
+    double? latitude,
+    double? longitude,
+  }) async {
+    if (busy || _disposed) return null;
+    try {
+      return await bridge.openLocationPicker(
+        latitude: latitude,
+        longitude: longitude,
+      );
+    } catch (failure) {
+      if (!_disposed) {
+        error = readableError(failure);
+        _emit();
+      }
+      return null;
+    }
+  }
+
   Future<void> clearCache() => clear();
   Future<void> resetPresets() async {
     final before = List<SavedPreset>.of(presets);

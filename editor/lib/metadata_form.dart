@@ -51,6 +51,7 @@ class _MetadataFormState extends State<MetadataForm>
   late final Future<List<CameraProfile>> catalog;
   late final TabController _tabController;
   int _tabIndex = 0;
+  int _batchStaggerSeconds = 0;
   CameraProfile? profile;
   ProfileCamera? camera;
   String? brand;
@@ -207,16 +208,29 @@ class _MetadataFormState extends State<MetadataForm>
       supportedFields: fields,
     );
     final removals = <String>[];
-    // Unknown specifications must not become an incompatible mix of two phones.
-    for (final key in [
-      ...profile!.clearFields,
-      ...camera!.clearFields,
-      'software',
-      'lensMake',
-      'hostComputer',
-    ]) {
-      if (fields.contains(key) && !patch.values.containsKey(key)) {
-        removals.add(key);
+    final hasCompeting =
+        source.inspection.structure['competingMetadata'] == 'true' ||
+        source.inspection.notes.any(
+          (n) =>
+              n.contains('Additional XMP') ||
+              n.contains('Additional PNG text') ||
+              n.contains('competing'),
+        );
+    if (!hasCompeting) {
+      final presentKeys = source.inspection.metadata.keys.toSet();
+      // Unknown specifications must not become an incompatible mix of two phones.
+      for (final key in [
+        ...profile!.clearFields,
+        ...camera!.clearFields,
+        'software',
+        'lensMake',
+        'hostComputer',
+      ]) {
+        if (presentKeys.contains(key) &&
+            fields.contains(key) &&
+            !patch.values.containsKey(key)) {
+          removals.add(key);
+        }
       }
     }
     return MetadataPatch(values: patch.values, removals: removals);
@@ -341,12 +355,45 @@ class _MetadataFormState extends State<MetadataForm>
     });
   }
 
+  MetadataPatch _offsetPatchDates(MetadataPatch patch, Duration offset) {
+    if (offset == Duration.zero) return patch;
+    final values = {...patch.values};
+    for (final key in [
+      ...sharedDateOffsets.keys,
+      ...movieDateKeys,
+      'quickTimeCreationDate',
+    ]) {
+      final val = values[key];
+      if (val is String) {
+        if (RegExp(r'^\d{4}:\d{2}:\d{2} \d{2}:\d{2}:\d{2}$').hasMatch(val)) {
+          try {
+            final dt = DateTime.parse(
+              '${val.substring(0, 10).replaceAll(':', '-')}T${val.substring(11)}',
+            );
+            final shifted = dt.add(offset);
+            values[key] =
+                '${shifted.year.toString().padLeft(4, '0')}:${shifted.month.toString().padLeft(2, '0')}:${shifted.day.toString().padLeft(2, '0')} ${shifted.hour.toString().padLeft(2, '0')}:${shifted.minute.toString().padLeft(2, '0')}:${shifted.second.toString().padLeft(2, '0')}';
+          } catch (_) {}
+        } else {
+          try {
+            final dt = DateTime.parse(val);
+            final shifted = dt.add(offset);
+            values[key] = val.endsWith('Z')
+                ? '${shifted.toUtc().toIso8601String().substring(0, 19)}Z'
+                : shifted.toIso8601String();
+          } catch (_) {}
+        }
+      }
+    }
+    return MetadataPatch(values: values, removals: patch.removals);
+  }
+
   Future<void> _process() async {
     try {
       if (widget.batch) {
-        final sources = widget.controller.sessions.where(
-          (s) => widget.controller.batchSelection.contains(s.id),
-        );
+        final sources = widget.controller.sessions
+            .where((s) => widget.controller.batchSelection.contains(s.id))
+            .toList();
         final manual = _patch(
           allowEmpty: settings.randomizeDates,
           fields: sources
@@ -358,7 +405,8 @@ class _MetadataFormState extends State<MetadataForm>
               .toSet(),
         );
         final patches = <String, MetadataPatch>{};
-        for (final source in sources) {
+        for (var i = 0; i < sources.length; i++) {
+          final source = sources[i];
           final itemManual = datesForMedia(
             manual,
             image: source.inspection.kind.isImage,
@@ -369,6 +417,7 @@ class _MetadataFormState extends State<MetadataForm>
                 .where((key) => modes[key] == 'keep')
                 .toSet(),
           );
+          MetadataPatch itemPatch;
           if (profile != null && camera != null && profileBaseline != null) {
             final kept = explicitOverrides
                 .where((key) => modes[key] == 'keep')
@@ -425,13 +474,17 @@ class _MetadataFormState extends State<MetadataForm>
                 removals.add(key);
               }
             }
-            patches[source.id] = MetadataPatch(
-              values: values,
-              removals: removals,
-            );
+            itemPatch = MetadataPatch(values: values, removals: removals);
           } else {
-            patches[source.id] = _standaloneAutomaticDates(itemManual, source);
+            itemPatch = _standaloneAutomaticDates(itemManual, source);
           }
+          if (_batchStaggerSeconds > 0 && i > 0) {
+            itemPatch = _offsetPatchDates(
+              itemPatch,
+              Duration(seconds: i * _batchStaggerSeconds),
+            );
+          }
+          patches[source.id] = itemPatch;
         }
         final sanitizedPatches = <String, MetadataPatch>{};
         for (final entry in patches.entries) {
@@ -600,42 +653,65 @@ class _MetadataFormState extends State<MetadataForm>
     Widget? trailing,
   }) {
     // Dropdowns must use compact 48px height (itemHeight: 48.0)
-    return ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: 48.0),
-      child: InkWell(
-        key: key,
+    final isPlaceholder =
+        !enabled || value.startsWith('Select') || value.startsWith('Choose');
+    return Container(
+      constraints: const BoxConstraints(minHeight: 52.0),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C1E),
         borderRadius: BorderRadius.circular(12),
-        onTap: enabled && !widget.controller.busy ? onTap : null,
-        child: InputDecorator(
-          decoration: InputDecoration(
-            labelText: label,
-            isDense: true,
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 10,
-            ),
-            suffixIcon:
-                trailing ??
-                Icon(
-                  Icons.keyboard_arrow_down_rounded,
-                  size: 18,
-                  color: enabled ? const Color(0xFF0A84FF) : Colors.white24,
+        border: Border.all(color: const Color(0xFF2C2C2E), width: 1),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          key: key,
+          onTap: enabled && !widget.controller.busy ? onTap : null,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        label,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.2,
+                          color: Color(0xFF8E8E93),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        value,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: enabled
+                              ? (isPlaceholder ? Colors.white38 : Colors.white)
+                              : Colors.white24,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
                 ),
-            suffixIconConstraints: const BoxConstraints(
-              minWidth: 32,
-              minHeight: 32,
+                const SizedBox(width: 8),
+                trailing ??
+                    Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      size: 20,
+                      color: enabled ? const Color(0xFF0A84FF) : Colors.white24,
+                    ),
+              ],
             ),
-            enabled: enabled,
-          ),
-          isEmpty: false,
-          child: Text(
-            value,
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              color: enabled ? Colors.white : Colors.white38,
-            ),
-            overflow: TextOverflow.ellipsis,
           ),
         ),
       ),
@@ -743,6 +819,7 @@ class _MetadataFormState extends State<MetadataForm>
               ],
             ),
           ),
+          _buildMetadataDiffCard(context, widget.session, output),
           if (isMismatch) ...[
             const SizedBox(height: 12),
             const Text(
@@ -872,6 +949,58 @@ class _MetadataFormState extends State<MetadataForm>
               ],
             ),
           ),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1C1C1E),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFF2C2C2E)),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.schedule_rounded,
+                  color: Color(0xFF0A84FF),
+                  size: 18,
+                ),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text(
+                    'Timestamp Spacing',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+                DropdownButton<int>(
+                  key: const Key('batchTimestampStagger'),
+                  value: _batchStaggerSeconds,
+                  dropdownColor: const Color(0xFF1C1C1E),
+                  underline: const SizedBox(),
+                  style: const TextStyle(
+                    color: Color(0xFF0A84FF),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 0, child: Text('Simultaneous')),
+                    DropdownMenuItem(value: 1, child: Text('+1s stagger')),
+                    DropdownMenuItem(value: 5, child: Text('+5s stagger')),
+                    DropdownMenuItem(value: 10, child: Text('+10s stagger')),
+                    DropdownMenuItem(value: 30, child: Text('+30s stagger')),
+                    DropdownMenuItem(value: 60, child: Text('+1m stagger')),
+                  ],
+                  onChanged: controller.busy
+                      ? null
+                      : (val) =>
+                            setState(() => _batchStaggerSeconds = val ?? 0),
+                ),
+              ],
+            ),
+          ),
         ] else ...[
           Text(
             source.displayName,
@@ -882,13 +1011,38 @@ class _MetadataFormState extends State<MetadataForm>
             '${source.inspection.kind.label} · ${source.inspection.sizeLabel}',
             style: const TextStyle(color: Colors.white60),
           ),
+          const SizedBox(height: 12),
+          _buildMediaInspectorHUD(context, source),
         ],
         if (formError != null)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Text(
-              formError!,
-              style: const TextStyle(color: Colors.redAccent),
+          Container(
+            margin: const EdgeInsets.symmetric(vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF261215),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFF591C22)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(
+                  Icons.error_outline_rounded,
+                  color: Color(0xFFFF453A),
+                  size: 20,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    formError!,
+                    style: const TextStyle(
+                      color: Color(0xFFFFB4AB),
+                      fontSize: 13,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         const SizedBox(height: 20),
@@ -1214,42 +1368,129 @@ class _MetadataFormState extends State<MetadataForm>
       ),
       const SizedBox(height: 20),
       const Text('Saved presets'),
-      for (final preset in widget.controller.presets)
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          title: Text(preset.name),
-          onTap: widget.controller.busy ? null : () => _loadPreset(preset),
-          subtitle: Text(
-            preset.recipe == null
-                ? 'Fixed metadata values'
-                : 'Camera & randomization recipe',
+      const SizedBox(height: 10),
+      if (widget.controller.presets.isEmpty)
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1C1C1E),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFF2C2C2E)),
           ),
-          trailing: PopupMenuButton<String>(
-            onSelected: (v) {
-              if (v == 'export') {
-                widget.controller.exportPreset(preset);
-              } else {
-                widget.controller.deletePreset(preset);
-              }
-            },
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'export', child: Text('Export preset')),
-              PopupMenuItem(value: 'delete', child: Text('Delete preset')),
+          child: const Center(
+            child: Text(
+              'No saved presets. Save current edits or import a recipe.',
+              style: TextStyle(color: Color(0xFF8E8E93), fontSize: 13),
+            ),
+          ),
+        )
+      else
+        Container(
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFF2C2C2E)),
+          ),
+          child: Material(
+            color: const Color(0xFF1C1C1E),
+            child: Column(
+            children: [
+              for (var i = 0; i < widget.controller.presets.length; i++) ...[
+                if (i > 0)
+                  const Divider(
+                    height: 1,
+                    thickness: 1,
+                    color: Color(0xFF2C2C2E),
+                    indent: 52,
+                  ),
+                ListTile(
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 2,
+                  ),
+                  leading: Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: widget.controller.presets[i].recipe == null
+                          ? const Color(0xFF2C2C2E)
+                          : const Color(0xFF1E2A3E),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      widget.controller.presets[i].recipe == null
+                          ? Icons.tune_rounded
+                          : Icons.auto_awesome_rounded,
+                      size: 16,
+                      color: widget.controller.presets[i].recipe == null
+                          ? const Color(0xFF8E8E93)
+                          : const Color(0xFF0A84FF),
+                    ),
+                  ),
+                  title: Text(
+                    widget.controller.presets[i].name,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
+                  ),
+                  subtitle: Text(
+                    widget.controller.presets[i].recipe == null
+                        ? 'Fixed metadata values'
+                        : 'Camera & randomization recipe',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF8E8E93),
+                    ),
+                  ),
+                  onTap: widget.controller.busy
+                      ? null
+                      : () => _loadPreset(widget.controller.presets[i]),
+                  trailing: PopupMenuButton<String>(
+                    onSelected: (v) {
+                      if (v == 'export') {
+                        widget.controller.exportPreset(
+                          widget.controller.presets[i],
+                        );
+                      } else {
+                        widget.controller.deletePreset(
+                          widget.controller.presets[i],
+                        );
+                      }
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                        value: 'export',
+                        child: Text('Export preset'),
+                      ),
+                      PopupMenuItem(
+                        value: 'delete',
+                        child: Text('Delete preset'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ],
           ),
         ),
+        ),
+      const SizedBox(height: 12),
       Wrap(
         spacing: 8,
+        runSpacing: 8,
         children: [
-          TextButton(
+          OutlinedButton.icon(
             onPressed: widget.controller.busy ? null : _savePreset,
-            child: const Text('Save current edits'),
+            icon: const Icon(Icons.bookmark_add_outlined, size: 16),
+            label: const Text('Save current edits'),
           ),
-          TextButton(
+          OutlinedButton.icon(
             onPressed: widget.controller.busy
                 ? null
                 : widget.controller.importPreset,
-            child: const Text('Import preset'),
+            icon: const Icon(Icons.file_download_outlined, size: 16),
+            label: const Text('Import preset'),
           ),
         ],
       ),
@@ -1272,6 +1513,18 @@ class _MetadataFormState extends State<MetadataForm>
             title: Text(group),
             children: [
               if (group == 'Dates' || group == 'Video dates') _automaticDates(),
+              if (group == 'Location')
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: OutlinedButton.icon(
+                    key: const Key('pickLocationMap'),
+                    onPressed: widget.controller.busy
+                        ? null
+                        : _selectLocationOnMap,
+                    icon: const Icon(Icons.map_outlined, size: 18),
+                    label: const Text('Select Location on Map'),
+                  ),
+                ),
               for (final field in metadataFields.where(
                 (f) => f.group == group && supported.contains(f.key),
               ))
@@ -1649,6 +1902,412 @@ class _MetadataFormState extends State<MetadataForm>
     if (result != null && mounted) {
       _settingsChanged(result);
     }
+  }
+
+  Future<void> _selectLocationOnMap() async {
+    final currentLat = double.tryParse(inputs['latitude']?.text ?? '');
+    final currentLon = double.tryParse(inputs['longitude']?.text ?? '');
+    final loc = await widget.controller.pickLocation(
+      latitude: currentLat,
+      longitude: currentLon,
+    );
+    if (loc != null && mounted) {
+      setState(() {
+        inputs['latitude']?.text = loc['latitude']!.toStringAsFixed(6);
+        inputs['longitude']?.text = loc['longitude']!.toStringAsFixed(6);
+        modes['latitude'] = 'set';
+        modes['longitude'] = 'set';
+        explicitOverrides.add('latitude');
+        explicitOverrides.add('longitude');
+      });
+    }
+  }
+
+  Widget _buildMediaInspectorHUD(BuildContext context, MediaSession source) {
+    final meta = source.inspection.metadata;
+    final make = meta['make'];
+    final model = meta['model'];
+    final parts = <String>[];
+    if (make != null && make != 'Apple') parts.add(make);
+    if (model != null) parts.add(model);
+    final cameraName = parts.join(' ');
+    final lens = meta['lensModel'] ?? meta['lens'];
+    final fNumber = meta['fNumber'];
+    final shutter = meta['exposureTime'];
+    final iso = meta['iso'];
+    final focal = meta['focalLength35mm'] ?? meta['focalLength'];
+    final hasGps =
+        meta.containsKey('latitude') && meta.containsKey('longitude');
+    final dimensions =
+        source.details['Dimensions'] ??
+        source.inspection.structure['resolution'] ??
+        (meta['pixelWidth'] != null && meta['pixelHeight'] != null
+            ? '${meta['pixelWidth']}×${meta['pixelHeight']}'
+            : null);
+
+    return Container(
+      key: const Key('mediaInspectorHUD'),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C1E),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF2C2C2E)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(
+                source.inspection.kind.isImage
+                    ? Icons.camera_alt_outlined
+                    : Icons.videocam_outlined,
+                color: const Color(0xFF0A84FF),
+                size: 16,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  cameraName.isNotEmpty
+                      ? cameraName
+                      : 'Original Hardware Unspecified',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              OutlinedButton.icon(
+                key: const Key('quickPrivacyScrubButton'),
+                onPressed: widget.controller.busy
+                    ? null
+                    : () => _openQuickPrivacyScrubber(context),
+                icon: const Icon(Icons.shield_outlined, size: 14),
+                label: const Text(
+                  'Quick Scrub',
+                  style: TextStyle(fontSize: 11),
+                ),
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  side: const BorderSide(color: Color(0xFF3A3A3C)),
+                ),
+              ),
+            ],
+          ),
+          if (lens != null && lens.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              lens,
+              style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93)),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              _buildHUDChip(
+                label: fNumber != null ? 'ƒ/$fNumber' : 'ƒ/--',
+                active: fNumber != null,
+              ),
+              _buildHUDChip(
+                label: shutter != null ? '${shutter}s' : '--s',
+                active: shutter != null,
+              ),
+              _buildHUDChip(
+                label: iso != null ? 'ISO $iso' : 'ISO --',
+                active: iso != null,
+              ),
+              _buildHUDChip(
+                label: focal != null ? '${focal}mm' : '--mm',
+                active: focal != null,
+              ),
+              if (dimensions != null)
+                _buildHUDChip(label: dimensions, active: true),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: hasGps
+                      ? const Color(0xFF132720)
+                      : const Color(0xFF121214),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: hasGps
+                        ? const Color(0xFF224436)
+                        : const Color(0xFF2C2C2E),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      hasGps ? Icons.location_on : Icons.location_off_outlined,
+                      size: 12,
+                      color: hasGps
+                          ? const Color(0xFF84E4C7)
+                          : const Color(0xFF8E8E93),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      hasGps ? 'GPS Tagged' : 'No Geotag',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: hasGps
+                            ? const Color(0xFF84E4C7)
+                            : const Color(0xFF8E8E93),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHUDChip({required String label, required bool active}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFF121214),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: const Color(0xFF2C2C2E)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          fontFamily: 'monospace',
+          fontWeight: FontWeight.w600,
+          color: active ? Colors.white : const Color(0xFF8E8E93),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openQuickPrivacyScrubber(BuildContext context) async {
+    final scrubbed = await showModalBottomSheet<Set<String>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF121214),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (ctx) => _QuickPrivacyScrubberSheet(supportedFields: supported),
+    );
+    if (scrubbed != null && scrubbed.isNotEmpty && mounted) {
+      setState(() {
+        for (final key in scrubbed) {
+          modes[key] = 'remove';
+          explicitOverrides.add(key);
+        }
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(this.context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Privacy scrub queued for ${scrubbed.length} fields. Tap "Process file" to write cleaned media.',
+            ),
+            backgroundColor: const Color(0xFF1C1C1E),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  Widget _buildMetadataDiffCard(
+    BuildContext context,
+    MediaSession source,
+    Processing output,
+  ) {
+    final original = source.inspection.metadata;
+    final processed = output.inspection.metadata;
+    final removals = output.metadataPatch?.removals ?? <String>[];
+
+    final changed = <String, (String, String)>{};
+    for (final entry in processed.entries) {
+      final origVal = original[entry.key];
+      if (origVal != null && origVal != entry.value) {
+        changed[entry.key] = (origVal, entry.value);
+      } else if (origVal == null &&
+          (output.metadataPatch?.values.containsKey(entry.key) ?? false)) {
+        changed[entry.key] = ('(none)', entry.value);
+      }
+    }
+
+    final preserved = <String>[];
+    for (final entry in processed.entries) {
+      if (!changed.containsKey(entry.key) &&
+          original[entry.key] == entry.value) {
+        preserved.add(entry.key);
+      }
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFF2C2C2E)),
+      ),
+      child: Material(
+        color: const Color(0xFF121214),
+        child: Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            key: const Key('metadataDiffTile'),
+            tilePadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 2,
+            ),
+            title: const Row(
+              children: [
+                Icon(
+                  Icons.compare_arrows_rounded,
+                  color: Color(0xFF0A84FF),
+                  size: 18,
+                ),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Metadata Diff (Before vs After)',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            subtitle: Text(
+              '${changed.length} changed · ${removals.length} removed · ${preserved.length} preserved',
+              style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93)),
+            ),
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Divider(color: Color(0xFF2C2C2E), height: 1),
+                    const SizedBox(height: 8),
+                    if (changed.isNotEmpty) ...[
+                      const Text(
+                        'CHANGED / ADDED',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.5,
+                          color: Color(0xFF0A84FF),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      for (final entry in changed.entries)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${entry.key}: ',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.white70,
+                                ),
+                              ),
+                              Expanded(
+                                child: Text(
+                                  '${entry.value.$1}  ➔  ${entry.value.$2}',
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontFamily: 'monospace',
+                                    color: Color(0xFF84E4C7),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      const SizedBox(height: 8),
+                    ],
+                    if (removals.isNotEmpty) ...[
+                      const Text(
+                        'REMOVED',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.5,
+                          color: Color(0xFFFF453A),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      for (final key in removals)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.remove_circle_outline,
+                                size: 12,
+                                color: Color(0xFFFF453A),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                key,
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Color(0xFFFFB4AB),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      const SizedBox(height: 8),
+                    ],
+                    if (preserved.isNotEmpty) ...[
+                      Text(
+                        'PRESERVED (${preserved.length} tags unchanged)',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.5,
+                          color: Color(0xFF8E8E93),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        preserved.join(', '),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF8E8E93),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -2390,6 +3049,273 @@ class _CameraPickerSheet extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _QuickPrivacyScrubberSheet extends StatefulWidget {
+  const _QuickPrivacyScrubberSheet({required this.supportedFields});
+  final Set<String> supportedFields;
+
+  @override
+  State<_QuickPrivacyScrubberSheet> createState() =>
+      _QuickPrivacyScrubberSheetState();
+}
+
+class _QuickPrivacyScrubberSheetState
+    extends State<_QuickPrivacyScrubberSheet> {
+  bool _stripLocation = true;
+  bool _stripHardware = true;
+  bool _stripDates = false;
+  bool _stripAuthor = true;
+
+  static const _locationFields = {'latitude', 'longitude', 'altitude'};
+  static const _hardwareFields = {
+    'serialNumber',
+    'lensSerialNumber',
+    'cameraOwnerName',
+    'software',
+    'hostComputer',
+  };
+  static const _dateFields = {
+    'dateTimeOriginal',
+    'createDate',
+    'modifyDate',
+    'offsetTimeOriginal',
+    'offsetTimeDigitized',
+    'offsetTime',
+    'quickTimeCreationDate',
+    'movieCreateDate',
+    'movieModifyDate',
+    'trackCreateDate',
+    'trackModifyDate',
+    'mediaCreateDate',
+    'mediaModifyDate',
+  };
+  static const _authorFields = {
+    'artist',
+    'copyright',
+    'userComment',
+    'imageDescription',
+  };
+
+  Set<String> _calculateFields() {
+    final fields = <String>{};
+    if (_stripLocation) fields.addAll(_locationFields);
+    if (_stripHardware) fields.addAll(_hardwareFields);
+    if (_stripDates) fields.addAll(_dateFields);
+    if (_stripAuthor) fields.addAll(_authorFields);
+    return fields.where((f) => widget.supportedFields.contains(f)).toSet();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final eligible = _calculateFields();
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SizedBox(height: 12),
+            Center(
+              child: Container(
+                width: 36,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF3A3A3C),
+                  borderRadius: BorderRadius.circular(2.5),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1E2A3E),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.shield_outlined,
+                      color: Color(0xFF0A84FF),
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Quick Privacy Scrubber',
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.4,
+                            color: Colors.white,
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          'Select categories to strip before sharing',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF8E8E93),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(16),
+                      onTap: () => Navigator.pop(context),
+                      child: Container(
+                        width: 30,
+                        height: 30,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF2C2C2E),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.close_rounded,
+                          size: 16,
+                          color: Color(0xFF8E8E93),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1C1C1E),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFF2C2C2E)),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  children: [
+                    _buildToggleRow(
+                      icon: Icons.location_off_outlined,
+                      title: 'Location & GPS Geotags',
+                      subtitle: 'Latitude, longitude, altitude coordinates',
+                      value: _stripLocation,
+                      onChanged: (v) => setState(() => _stripLocation = v),
+                    ),
+                    const Divider(
+                      height: 1,
+                      thickness: 1,
+                      color: Color(0xFF2C2C2E),
+                      indent: 52,
+                    ),
+                    _buildToggleRow(
+                      icon: Icons.perm_device_information_outlined,
+                      title: 'Hardware & Device Identifiers',
+                      subtitle: 'Camera/lens serial numbers, owner name, host',
+                      value: _stripHardware,
+                      onChanged: (v) => setState(() => _stripHardware = v),
+                    ),
+                    const Divider(
+                      height: 1,
+                      thickness: 1,
+                      color: Color(0xFF2C2C2E),
+                      indent: 52,
+                    ),
+                    _buildToggleRow(
+                      icon: Icons.person_outline_rounded,
+                      title: 'Author & Copyright Data',
+                      subtitle: 'Artist, copyright text, user comments',
+                      value: _stripAuthor,
+                      onChanged: (v) => setState(() => _stripAuthor = v),
+                    ),
+                    const Divider(
+                      height: 1,
+                      thickness: 1,
+                      color: Color(0xFF2C2C2E),
+                      indent: 52,
+                    ),
+                    _buildToggleRow(
+                      icon: Icons.schedule_outlined,
+                      title: 'Capture Timestamps',
+                      subtitle: 'Strip creation dates & UTC offsets',
+                      value: _stripDates,
+                      onChanged: (v) => setState(() => _stripDates = v),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: FilledButton.icon(
+                key: const Key('applyPrivacyScrub'),
+                onPressed: eligible.isEmpty
+                    ? null
+                    : () => Navigator.pop(context, eligible),
+                icon: const Icon(Icons.check_rounded, size: 18),
+                label: Text('Apply Privacy Scrub (${eligible.length} fields)'),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildToggleRow({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return SwitchListTile.adaptive(
+      value: value,
+      onChanged: onChanged,
+      activeTrackColor: const Color(0xFF0A84FF),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      secondary: Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: value ? const Color(0xFF1E2A3E) : const Color(0xFF2C2C2E),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(
+          icon,
+          size: 16,
+          color: value ? const Color(0xFF0A84FF) : const Color(0xFF8E8E93),
+        ),
+      ),
+      title: Text(
+        title,
+        style: const TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+          color: Colors.white,
+        ),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93)),
       ),
     );
   }

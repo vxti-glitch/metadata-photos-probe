@@ -91,19 +91,28 @@ public enum VideoMetadataWriter {
         let newMovie = try VideoBMFF.atom("moov", rebuilt)
         guard newMovie.count <= Int(VideoBMFF.maxMovieBytes) else { throw ProbeError.unsupported("Edited movie header exceeds 16 MiB budget") }
         try Task.checkCancellation()
-        guard FileManager.default.createFile(atPath: output.path, contents: nil) else { throw ProbeError.writeFailed("Cannot create staged movie") }
         var complete = false
         defer { if !complete { try? FileManager.default.removeItem(at: output) } }
-        let destination = try FileHandle(forWritingTo: output)
-        defer { try? destination.close() }
-        try input.seek(toOffset: 0)
-        var copied: UInt64 = 0
-        while let bytes = try input.read(upToCount: 1_048_576), !bytes.isEmpty {
-            try Task.checkCancellation()
-            try destination.write(contentsOf: bytes)
-            copied += UInt64(bytes.count)
+        var didClone = false
+        if (try? FileManager.default.copyItem(at: source, to: output)) != nil {
+            didClone = true
         }
-        guard copied == UInt64(count) else { throw ProbeError.writeFailed("Source changed while being copied") }
+        let destination: FileHandle
+        if didClone {
+            destination = try FileHandle(forUpdating: output)
+        } else {
+            guard FileManager.default.createFile(atPath: output.path, contents: nil) else { throw ProbeError.writeFailed("Cannot create staged movie") }
+            destination = try FileHandle(forWritingTo: output)
+            try input.seek(toOffset: 0)
+            var copied: UInt64 = 0
+            while let bytes = try input.read(upToCount: 2_097_152), !bytes.isEmpty {
+                try Task.checkCancellation()
+                try destination.write(contentsOf: bytes)
+                copied += UInt64(bytes.count)
+            }
+            guard copied == UInt64(count) else { throw ProbeError.writeFailed("Source changed while being copied") }
+        }
+        defer { try? destination.close() }
         // Retire the old movie atom without moving any media. Zero its retired payload
         // so stale camera values are not left in free space. The original stays immutable.
         try destination.seek(toOffset: movie.offset + 4)
@@ -117,7 +126,7 @@ public enum VideoMetadataWriter {
             try destination.write(contentsOf: zero.prefix(Int(amount)))
             remaining -= amount
         }
-        try destination.seek(toOffset: copied)
+        _ = try destination.seekToEnd()
         try destination.write(contentsOf: newMovie)
         try destination.synchronize()
         complete = true
@@ -205,11 +214,20 @@ private enum VideoBMFF {
             throw ProbeError.unsupported("Unqualified movie atoms: \(names.joined(separator: ", ")); no relocation attempted")
         }
     }
+    private static let recognizedUserDataAtoms: Set<UInt32> = Set([
+        "meta", "free", "skip", "loci", "XMP_", "chpl",
+        "cprt", "auth", "titl", "dscp", "perf", "gnre", "yrrc", "albm", "rtng", "clsf", "kywd",
+        "name", "vndr", "WLOC", "clip", "load", "matt", "kmat", "ctab", "ptv ", "hint", "hinf",
+        "LOOP", "SelO", "AllF",
+        "NCDT", "FIRM", "MANF", "TAGS", "CANO", "CASI", "SONY", "USMT", "GUMI", "DJMD", "fdsc"
+    ].map(code))
+
     static func validateUserData(_ data: Data) throws {
         for child in try atoms(data) {
             let bytes = number(child.type)
-            guard bytes.first == 0xA9 || ["meta", "free", "skip", "loci", "XMP_", "chpl"].map(code).contains(child.type) else {
-                throw ProbeError.unsupported("Unqualified user-data atom")
+            guard bytes.first == 0xA9 || recognizedUserDataAtoms.contains(child.type) else {
+                let name = String(decoding: bytes, as: UTF8.self)
+                throw ProbeError.unsupported("Unqualified user-data atom '\(name)'")
             }
             if child.type == code("meta") { _ = try metadataChildren(child) }
         }
@@ -348,7 +366,12 @@ private enum VideoBMFF {
             // tuple for an independent reader to report as a competing location.
             if changesLocation { return Data() }
         }
-        let legacy: [UInt32: Set<String>] = [0xa96d616b: ["make"], 0xa96d6f64: ["model"], 0xa9737772: ["software"], 0xa978797a: VideoMetadataFields.gpsKeys, 0xa96e616d: ["title"], 0xa9637079: ["copyright"], 0xa9415254: ["artist"], 0xa9636d74: ["description"]]
+        let legacy: [UInt32: Set<String>] = [
+            0xa96d616b: ["make"], 0xa96d6f64: ["model"], 0xa9737772: ["software"], 0xa978797a: VideoMetadataFields.gpsKeys,
+            0xa96e616d: ["title"], 0xa9637079: ["copyright"], 0xa9415254: ["artist"], 0xa9636d74: ["description"],
+            code("cprt"): ["copyright"], code("auth"): ["artist"], code("titl"): ["title"], code("dscp"): ["description"],
+            code("perf"): ["artist"], code("gnre"): ["genre"]
+        ]
         if let fields = legacy[item.type], !fields.isDisjoint(with: patch.targetedKeys) { return Data() }
         return item.raw
     }

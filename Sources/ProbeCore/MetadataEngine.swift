@@ -37,9 +37,21 @@ public enum MetadataEngine {
             structure["orientation"] = structure["orientation"] ?? "1"
             structure["containerType"] = type
             var notes = ["Embedded metadata only; Photos display and source attribution require physical-device observation."]
-            if kind == .jpeg { _ = try JPEGInventory.read(url) }
-            else if kind == .heic { _ = try BoxInventory.read(url); notes.append("HEIC item graph/auxiliary/HDR preservation is not fully qualified.") }
-            else { _ = try StillContainerMetadata.layout(url, kind: .png) }
+            if kind == .jpeg {
+                _ = try JPEGInventory.read(url)
+                if let layout = try? StillContainerMetadata.layout(url, kind: .jpeg), layout.competingMetadata {
+                    structure["competingMetadata"] = "true"
+                    notes.append("Additional XMP/IPTC metadata present; removal restricted to avoid unscrubbed duplicate copies.")
+                }
+            } else if kind == .heic {
+                _ = try BoxInventory.read(url); notes.append("HEIC item graph/auxiliary/HDR preservation is not fully qualified.")
+            } else {
+                let layout = try StillContainerMetadata.layout(url, kind: .png)
+                if layout.competingMetadata {
+                    structure["competingMetadata"] = "true"
+                    notes.append("Additional PNG text metadata present; removal restricted to avoid unscrubbed duplicate copies.")
+                }
+            }
             return MediaInspection(kind: kind, byteCount: size, metadata: metadata, notes: notes, structure: structure,
                 location: EmbeddedLocationEvidence.image(gps: properties[kCGImagePropertyGPSDictionary as String] as? [String: Any]))
         }

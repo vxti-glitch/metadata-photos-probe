@@ -36,6 +36,10 @@ abstract interface class MediaBridge {
     String sessionId,
     String processingId,
   );
+  Future<Map<String, double>?> openLocationPicker({
+    double? latitude,
+    double? longitude,
+  });
 }
 
 class NativeMediaBridge implements MediaBridge {
@@ -189,6 +193,23 @@ class NativeMediaBridge implements MediaBridge {
   @override
   Future<void> openUrl(String url) =>
       _channel.invokeMethod<void>('openUrl', {'url': url});
+  @override
+  Future<Map<String, double>?> openLocationPicker({
+    double? latitude,
+    double? longitude,
+  }) async {
+    final result = await _channel.invokeMethod<Object?>(
+      'openLocationPicker',
+      <String, Object?>{'latitude': latitude, 'longitude': longitude},
+    );
+    if (result is! Map) return null;
+    final lat = result['latitude'];
+    final lng = result['longitude'];
+    if (lat is num && lng is num) {
+      return {'latitude': lat.toDouble(), 'longitude': lng.toDouble()};
+    }
+    return null;
+  }
 }
 
 String readableError(Object error) {

@@ -327,4 +327,15 @@ class FakeMediaBridge implements MediaBridge {
   Future<void> openUrl(String url) async {
     openedUrls.add(url);
   }
+
+  Map<String, double>? nextLocationPickerResult;
+  @override
+  Future<Map<String, double>?> openLocationPicker({
+    double? latitude,
+    double? longitude,
+  }) async =>
+      nextLocationPickerResult ??
+      (latitude != null && longitude != null
+          ? {'latitude': latitude, 'longitude': longitude}
+          : null);
 }
