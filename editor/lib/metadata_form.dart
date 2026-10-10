@@ -1774,14 +1774,19 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
               ),
               const SizedBox(height: 14),
               Container(
+                height: 38,
                 decoration: BoxDecoration(
                   color: const Color(0xFF162032),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: const Color(0xFF243044)),
                 ),
                 child: TextField(
                   controller: _searchController,
                   autofocus: false,
+                  textAlignVertical: TextAlignVertical.center,
+                  cursorColor: const Color(0xFF9CB5FF),
+                  cursorWidth: 1.5,
+                  cursorHeight: 16,
                   style: const TextStyle(fontSize: 13, color: Colors.white),
                   decoration: InputDecoration(
                     hintText: 'Search $brandName models…',
@@ -1789,21 +1794,40 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                       fontSize: 13,
                       color: Color(0xFF788596),
                     ),
-                    prefixIcon: const Icon(
-                      Icons.search_rounded,
-                      size: 18,
-                      color: Color(0xFF9CB5FF),
+                    prefixIconConstraints: const BoxConstraints(
+                      minWidth: 36,
+                      minHeight: 38,
+                    ),
+                    prefixIcon: const Padding(
+                      padding: EdgeInsets.only(left: 10, right: 6),
+                      child: Icon(
+                        Icons.search_rounded,
+                        size: 16,
+                        color: Color(0xFF9CB5FF),
+                      ),
                     ),
                     isDense: true,
+                    isCollapsed: true,
                     border: InputBorder.none,
                     enabledBorder: InputBorder.none,
                     focusedBorder: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
+                    contentPadding: const EdgeInsets.only(
+                      left: 4,
+                      right: 10,
+                      top: 10,
+                      bottom: 10,
+                    ),
+                    suffixIconConstraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 38,
                     ),
                     suffixIcon: _searchController.text.isNotEmpty
                         ? IconButton(
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                              minWidth: 28,
+                              minHeight: 28,
+                            ),
                             icon: const Icon(
                               Icons.clear_rounded,
                               size: 16,
