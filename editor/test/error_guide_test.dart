@@ -20,8 +20,9 @@ void main() {
     Widget screen, {
     double scale = 1,
     double keyboard = 0,
+    double width = 360,
   }) async {
-    tester.view.physicalSize = const Size(360, 640);
+    tester.view.physicalSize = Size(width, 640);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -58,78 +59,410 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('latest issue opens steps and can return to the editor', (
+  Future<void> tapKey(WidgetTester tester, String key) async {
+    final finder = find.byKey(Key(key));
+    await tester.ensureVisible(finder);
+    await tester.pumpAndSettle();
+    await tester.tap(finder);
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> openCatalog(WidgetTester tester) async {
+    if (find.byKey(const Key('errorSearchInput')).evaluate().isEmpty) {
+      await tapKey(tester, 'browseErrorCatalog');
+    }
+  }
+
+  Future<void> selectCategory(WidgetTester tester, String category) async {
+    await tapKey(tester, 'errorCategoryFilter');
+    await tester.tap(find.byKey(Key('categoryPill_$category')));
+    await tester.pumpAndSettle();
+  }
+
+  ErrorGuideItem entry(String code) =>
+      kErrorGuideCatalog.firstWhere((item) => item.code == code);
+
+  Future<void> pumpGuide(WidgetTester tester, {VoidCallback? onOpenEditor}) =>
+      pumpScreen(
+        tester,
+        Scaffold(
+          body: ErrorGuideSheet(
+            isModal: false,
+            controller: controller,
+            onOpenEditor: onOpenEditor,
+          ),
+        ),
+      );
+
+  testWidgets('Current issue defaults to a single compact summary', (
     tester,
   ) async {
-    var returned = false;
     controller.recordError('Processing failed', code: 'ERR_PROCESSING');
-    await pumpScreen(
-      tester,
-      Scaffold(
-        body: ErrorGuideSheet(
-          isModal: false,
-          controller: controller,
-          onOpenEditor: () => returned = true,
-        ),
-      ),
+    await pumpGuide(tester);
+    expect(find.byKey(const Key('latestIssueCard')), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.byKey(const Key('latestIssueCard'))).dy,
+      lessThan(32),
     );
-    final cause = kErrorGuideCatalog
-        .firstWhere((entry) => entry.code == 'ERR_PROCESSING')
-        .cause;
-    expect(find.text(cause), findsNothing);
-    await tester.tap(find.byKey(const Key('viewLatestSteps')));
-    await tester.pumpAndSettle();
-    expect(find.text(cause), findsOneWidget);
-    await tester.ensureVisible(
-      find.byKey(const Key('returnToEditorFromGuide')),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('returnToEditorFromGuide')));
-    expect(returned, isTrue);
+
+    expect(find.text(entry('ERR_PROCESSING').title), findsOneWidget);
+    expect(find.byKey(const Key('browseErrorCatalog')), findsOneWidget);
+    expect(find.byKey(const Key('errorSearchInput')), findsNothing);
+    expect(find.byKey(const Key('errorTile_ERR_PROCESSING')), findsNothing);
+    expect(find.text(entry('ERR_PROCESSING').cause), findsNothing);
+    expect(find.text('JUST ENCOUNTERED'), findsNothing);
+    expect(find.text('Troubleshooting'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('startup recovery remains available after clearing error history', (
+  testWidgets(
+    'View steps shows exact inline guidance without opening catalog',
+    (tester) async {
+      var returned = false;
+      controller.recordError('Processing failed', code: 'ERR_PROCESSING');
+      await pumpGuide(tester, onOpenEditor: () => returned = true);
+      await tapKey(tester, 'viewLatestSteps');
+      final item = entry('ERR_PROCESSING');
+      expect(find.text(item.cause), findsOneWidget);
+      for (final step in item.steps) {
+        expect(find.text(step), findsOneWidget);
+      }
+      expect(find.text(item.proTip), findsOneWidget);
+      expect(find.text(item.title), findsOneWidget);
+      expect(find.byKey(const Key('errorSearchInput')), findsNothing);
+      expect(find.text('Hide steps'), findsOneWidget);
+      await tapKey(tester, 'viewLatestSteps');
+      expect(find.text(item.cause), findsNothing);
+      expect(find.byKey(const Key('errorSearchInput')), findsNothing);
+
+      await tapKey(tester, 'returnToEditorFromGuide');
+      expect(returned, isTrue);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('Browse reveals all nine codes including the current issue', (
+    tester,
+  ) async {
+    controller.recordError('Processing failed', code: 'ERR_PROCESSING');
+    await pumpGuide(tester);
+    await openCatalog(tester);
+    expect(kErrorGuideCatalog, hasLength(9));
+    for (final item in kErrorGuideCatalog) {
+      expect(find.byKey(Key('errorTile_${item.code}')), findsOneWidget);
+      expect(find.text(item.cause), findsNothing);
+    }
+    for (final item in kErrorGuideCatalog) {
+      await tapKey(tester, 'errorSearchInput');
+      await tester.enterText(
+        find.byKey(const Key('errorSearchInput')),
+        item.code,
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(Key('errorTile_${item.code}')), findsOneWidget);
+      for (final other in kErrorGuideCatalog.where(
+        (entry) => entry.code != item.code,
+      )) {
+        expect(find.byKey(Key('errorTile_${other.code}')), findsNothing);
+      }
+    }
+    await tapKey(tester, 'clearSearchButton');
+    await selectCategory(tester, 'Processing');
+    expect(find.byKey(const Key('errorTile_ERR_PROCESSING')), findsOneWidget);
+    expect(find.byKey(const Key('errorTile_ERR_DATE_FMT')), findsNothing);
+    await selectCategory(tester, 'All');
+    for (final item in kErrorGuideCatalog) {
+      expect(find.byKey(Key('errorTile_${item.code}')), findsOneWidget);
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('No issue opens browse catalog and all category menu options', (
+    tester,
+  ) async {
+    await pumpGuide(tester);
+    expect(find.text('Nothing to troubleshoot yet'), findsOneWidget);
+    expect(find.byKey(const Key('errorSearchInput')), findsOneWidget);
+    expect(find.byKey(const Key('viewLatestSteps')), findsNothing);
+    await tapKey(tester, 'errorCategoryFilter');
+    for (final category in [
+      'All',
+      ...kErrorGuideCatalog.map((item) => item.category).toSet(),
+    ]) {
+      expect(find.byKey(Key('categoryPill_$category')), findsOneWidget);
+    }
+    await tester.tap(find.byKey(const Key('categoryPill_Integrity')));
+    await tester.pumpAndSettle();
+    await tapKey(tester, 'errorSearchInput');
+    await tester.enterText(
+      find.byKey(const Key('errorSearchInput')),
+      'XYZ_NO_MATCH',
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('No matching error codes found'), findsOneWidget);
+    await tapKey(tester, 'resetFiltersButton');
+    expect(find.text('No matching error codes found'), findsNothing);
+    for (final item in kErrorGuideCatalog) {
+      expect(find.byKey(Key('errorTile_${item.code}')), findsOneWidget);
+    }
+  });
+
+  testWidgets('New live error resets query category steps and scroll', (
+    tester,
+  ) async {
+    controller.recordError('Processing failed', code: 'ERR_PROCESSING');
+    await pumpGuide(tester);
+    await tapKey(tester, 'viewLatestSteps');
+    await openCatalog(tester);
+    await selectCategory(tester, 'Location');
+    await tapKey(tester, 'errorSearchInput');
+    await tester.enterText(
+      find.byKey(const Key('errorSearchInput')),
+      'latitude',
+    );
+    await tester.pumpAndSettle();
+    controller.recordError(
+      'Integrity verification mismatch',
+      code: 'ERR_MEDIA_INTEGRITY',
+    );
+    await tester.pumpAndSettle();
+    final scrollable = find
+        .descendant(
+          of: find.byKey(const Key('errorGuideScroll')),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    expect(tester.state<ScrollableState>(scrollable).position.pixels, 0);
+    expect(find.text(entry('ERR_MEDIA_INTEGRITY').title), findsOneWidget);
+    expect(find.text(entry('ERR_MEDIA_INTEGRITY').cause), findsNothing);
+    expect(find.text(entry('ERR_PROCESSING').cause), findsNothing);
+    expect(find.byKey(const Key('errorSearchInput')), findsNothing);
+    await openCatalog(tester);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('errorSearchInput')))
+          .controller!
+          .text,
+      isEmpty,
+    );
+    for (final item in kErrorGuideCatalog) {
+      expect(find.byKey(Key('errorTile_${item.code}')), findsOneWidget);
+    }
+  });
+
+  testWidgets(
+    'Clearing history resets browser and persists without clearing operation error',
+    (tester) async {
+      controller.error = 'Operation still failed';
+      controller.recordError(controller.error!, code: 'ERR_PROCESSING');
+      await pumpGuide(tester);
+      await tapKey(tester, 'viewLatestSteps');
+      await openCatalog(tester);
+      await tapKey(tester, 'errorSearchInput');
+      await tester.enterText(
+        find.byKey(const Key('errorSearchInput')),
+        'processing',
+      );
+      await tester.pumpAndSettle();
+      await tapKey(tester, 'clearGuideHistory');
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      await tester.pumpAndSettle();
+      expect(controller.lastErrorCode, isNull);
+      expect(controller.error, 'Operation still failed');
+      expect(bridge.editorState.containsKey('lastErrorCode'), isFalse);
+      expect(bridge.editorState.containsKey('lastErrorMessage'), isFalse);
+      expect(find.text('Nothing to troubleshoot yet'), findsOneWidget);
+      expect(find.text(entry('ERR_PROCESSING').cause), findsNothing);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('errorSearchInput')))
+            .controller!
+            .text,
+        isEmpty,
+      );
+      for (final item in kErrorGuideCatalog) {
+        expect(find.byKey(Key('errorTile_${item.code}')), findsOneWidget);
+      }
+    },
+  );
+
+  testWidgets(
+    'Unknown current code has safe guidance and browsable reference',
+    (tester) async {
+      controller.recordError('Unknown stage', code: 'ERR_UNKNOWN_TEST');
+      await pumpGuide(tester, onOpenEditor: () {});
+      expect(find.textContaining('ERR_UNKNOWN_TEST'), findsOneWidget);
+      expect(
+        find.textContaining('This code has no catalog entry'),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('viewLatestSteps')), findsNothing);
+      expect(find.byKey(const Key('returnToEditorFromGuide')), findsOneWidget);
+      await openCatalog(tester);
+      for (final item in kErrorGuideCatalog) {
+        expect(find.byKey(Key('errorTile_${item.code}')), findsOneWidget);
+      }
+    },
+  );
+
+  testWidgets('Startup retry survives cleared history and remains busy gated', (
     tester,
   ) async {
     controller.capabilities = null;
     controller.recordError('Startup failed');
     controller.clearLastError();
-    // Controller setup creates its persistence tail outside the widget fake clock.
     await tester.runAsync(() => Future<void>.delayed(Duration.zero));
-    await pumpScreen(
-      tester,
-      Scaffold(body: ErrorGuideSheet(isModal: false, controller: controller)),
-    );
-    expect(find.text('Startup required'), findsOneWidget);
-    expect(find.textContaining('This code has no catalog entry'), findsNothing);
-    await tester.tap(find.byKey(const Key('retryStartupFromGuide')));
-    await tester.pump();
-    await tester.pump();
-    await tester.pumpAndSettle();
-    expect(
-      controller.ready,
-      isTrue,
-      reason:
-          '${controller.error} / ${controller.operation} / ${bridge.editorState}',
-    );
-    expect(find.byKey(const Key('retryStartupFromGuide')), findsNothing);
-  });
-
-  testWidgets('busy startup disables retry from the guide', (tester) async {
-    controller.capabilities = null;
     controller.operation = EditorOperation.loading;
-    await pumpScreen(
-      tester,
-      Scaffold(body: ErrorGuideSheet(isModal: false, controller: controller)),
-    );
+    await pumpGuide(tester);
+    expect(find.text('Startup required'), findsOneWidget);
     expect(
       tester
           .widget<FilledButton>(find.byKey(const Key('retryStartupFromGuide')))
           .onPressed,
       isNull,
     );
+    controller.operation = null;
+    controller.recordError('Startup failed');
+    await tester.pumpAndSettle();
+    await tapKey(tester, 'retryStartupFromGuide');
+    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(controller.ready, isTrue);
+    expect(find.byKey(const Key('retryStartupFromGuide')), findsNothing);
   });
+
+  testWidgets('Updated highlighted code resets a reused standalone guide', (
+    tester,
+  ) async {
+    await pumpScreen(
+      tester,
+      const Scaffold(
+        body: ErrorGuideSheet(isModal: false, highlightedCode: 'ERR_DATE_FMT'),
+      ),
+    );
+    await tapKey(tester, 'viewLatestSteps');
+    final previousState = tester.state(find.byType(ErrorGuideSheet));
+    await pumpScreen(
+      tester,
+      const Scaffold(
+        body: ErrorGuideSheet(
+          isModal: false,
+          highlightedCode: 'ERR_PROCESSING',
+        ),
+      ),
+    );
+    expect(tester.state(find.byType(ErrorGuideSheet)), same(previousState));
+
+    expect(find.text(entry('ERR_PROCESSING').title), findsOneWidget);
+    expect(find.text(entry('ERR_DATE_FMT').cause), findsNothing);
+    expect(find.byKey(const Key('errorSearchInput')), findsNothing);
+    await tapKey(tester, 'viewLatestSteps');
+    expect(find.text(entry('ERR_PROCESSING').cause), findsOneWidget);
+  });
+
+  testWidgets(
+    'Modal live history overrides opening highlight and close stays fixed after steps',
+    (tester) async {
+      controller.recordError('Invalid GPS', code: 'ERR_GPS_BOUNDS');
+      await pumpScreen(
+        tester,
+        Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => openErrorGuideSheet(
+                context,
+                highlightedCode: 'ERR_GPS_BOUNDS',
+                controller: controller,
+              ),
+              child: const Text('Open guide'),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open guide'));
+      await tester.pumpAndSettle();
+      controller.recordError('Processing failed', code: 'ERR_PROCESSING');
+      await tester.pumpAndSettle();
+      expect(find.text(entry('ERR_PROCESSING').title), findsOneWidget);
+      expect(find.textContaining('ERR_GPS_BOUNDS'), findsNothing);
+      await tapKey(tester, 'viewLatestSteps');
+      expect(find.text(entry('ERR_PROCESSING').cause), findsOneWidget);
+      await tester.drag(
+        find.byKey(const Key('errorGuideScroll')),
+        const Offset(0, -800),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('closeErrorGuideButton')).hitTestable(),
+        findsOneWidget,
+      );
+      controller.clearLastError();
+      await tester.pumpAndSettle();
+      expect(find.text(entry('ERR_PROCESSING').cause), findsNothing);
+      expect(find.byKey(const Key('errorSearchInput')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('closeErrorGuideButton')));
+      await tester.pumpAndSettle();
+      expect(find.text('Open guide'), findsOneWidget);
+      expect(find.byKey(const Key('closeErrorGuideButton')), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final scale in [1.0, 2.0]) {
+    testWidgets(
+      'Guide fits 320px at text scale $scale with keyboard and inline steps',
+      (tester) async {
+        controller.recordError(
+          'Integrity mismatch',
+          code: 'ERR_MEDIA_INTEGRITY',
+        );
+        await pumpScreen(
+          tester,
+          Scaffold(
+            body: ErrorGuideSheet(isModal: false, controller: controller),
+          ),
+          width: 320,
+          scale: scale,
+          keyboard: 280,
+        );
+        await tapKey(tester, 'viewLatestSteps');
+        final layoutError = tester.takeException();
+        expect(
+          layoutError,
+          isNull,
+          reason: layoutError is FlutterError
+              ? layoutError.diagnostics
+                    .map((node) => node.toStringDeep())
+                    .join('\n')
+              : null,
+        );
+        await openCatalog(tester);
+        await tapKey(tester, 'errorSearchInput');
+        await tester.enterText(
+          find.byKey(const Key('errorSearchInput')),
+          'no matching code',
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('No matching error codes found'), findsOneWidget);
+        await tapKey(tester, 'resetFiltersButton');
+        await selectCategory(tester, 'Processing');
+        expect(
+          find.byKey(const Key('errorTile_ERR_PROCESSING')),
+          findsOneWidget,
+        );
+        final catalogError = tester.takeException();
+        expect(
+          catalogError,
+          isNull,
+          reason: catalogError is FlutterError
+              ? catalogError.diagnostics
+                    .map((node) => node.toStringDeep())
+                    .join('\n')
+              : null,
+        );
+      },
+    );
+  }
 
   for (final scale in [1.0, 2.0]) {
     testWidgets('Settings fits 360px with text scale $scale and recent error', (
@@ -158,196 +491,7 @@ void main() {
       );
       expect(tester.takeException(), isNull);
     });
-    testWidgets('Guide fits 360px with text scale $scale and keyboard', (
-      tester,
-    ) async {
-      controller.recordError('Integrity verification mismatch');
-      await pumpScreen(
-        tester,
-        Scaffold(body: ErrorGuideSheet(isModal: false, controller: controller)),
-        scale: scale,
-        keyboard: 280,
-      );
-      expect(tester.takeException(), isNull);
-      await tester.ensureVisible(find.byKey(const Key('errorSearchInput')));
-      await tester.enterText(
-        find.byKey(const Key('errorSearchInput')),
-        'no matching code',
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('No matching error codes found'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-      final search = tester.widget<TextField>(
-        find.byKey(const Key('errorSearchInput')),
-      );
-      expect(search.controller!.text, 'no matching code');
-    });
   }
-
-  testWidgets('Every catalog category is available including Processing', (
-    tester,
-  ) async {
-    await pumpScreen(
-      tester,
-      const Scaffold(body: ErrorGuideSheet(isModal: false)),
-    );
-    expect(
-      find.textContaining('${kErrorGuideCatalog.length} error codes'),
-      findsOneWidget,
-    );
-    for (final category
-        in kErrorGuideCatalog.map((item) => item.category).toSet()) {
-      expect(find.byKey(Key('categoryPill_$category')), findsOneWidget);
-    }
-    await tester.ensureVisible(
-      find.byKey(const Key('categoryPill_Processing')),
-    );
-    await tester.tap(find.byKey(const Key('categoryPill_Processing')));
-    await tester.pumpAndSettle();
-    expect(find.text('ERR_PROCESSING'), findsOneWidget);
-    expect(find.text('ERR_DATE_FMT'), findsNothing);
-  });
-
-  testWidgets(
-    'New controller error clears filters and promotes matching guide',
-    (tester) async {
-      await pumpScreen(
-        tester,
-        Scaffold(body: ErrorGuideSheet(isModal: false, controller: controller)),
-      );
-      await tester.enterText(find.byKey(const Key('errorSearchInput')), 'gps');
-      await tester.pumpAndSettle();
-      controller.recordError('Integrity verification mismatch');
-      await tester.pumpAndSettle();
-      expect(
-        tester
-            .widget<TextField>(find.byKey(const Key('errorSearchInput')))
-            .controller!
-            .text,
-        isEmpty,
-      );
-      expect(
-        find.byKey(const Key('justEncounteredBadge_ERR_MEDIA_INTEGRITY')),
-        findsOneWidget,
-      );
-      await tester.ensureVisible(find.byKey(const Key('viewLatestSteps')));
-      await tester.tap(find.byKey(const Key('viewLatestSteps')));
-      await tester.pumpAndSettle();
-      expect(
-        find.text(
-          kErrorGuideCatalog
-              .firstWhere((item) => item.code == 'ERR_MEDIA_INTEGRITY')
-              .cause,
-        ),
-        findsOneWidget,
-      );
-    },
-  );
-
-  testWidgets(
-    'Modal guide follows live controller error over opening highlight',
-    (tester) async {
-      controller.recordError(
-        'Latitude must be between -90 and 90',
-        code: 'ERR_GPS_BOUNDS',
-      );
-      await pumpScreen(
-        tester,
-        Scaffold(
-          body: Builder(
-            builder: (context) => TextButton(
-              onPressed: () => openErrorGuideSheet(
-                context,
-                highlightedCode: 'ERR_GPS_BOUNDS',
-                controller: controller,
-              ),
-              child: const Text('Open guide'),
-            ),
-          ),
-        ),
-      );
-      await tester.tap(find.text('Open guide'));
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const Key('justEncounteredBadge_ERR_GPS_BOUNDS')),
-        findsOneWidget,
-      );
-
-      controller.recordError(
-        'Processing could not finish',
-        code: 'ERR_PROCESSING',
-      );
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const Key('justEncounteredBadge_ERR_PROCESSING')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const Key('justEncounteredBadge_ERR_GPS_BOUNDS')),
-        findsNothing,
-      );
-      await tester.ensureVisible(find.byKey(const Key('viewLatestSteps')));
-      await tester.tap(find.byKey(const Key('viewLatestSteps')));
-      await tester.pumpAndSettle();
-      expect(
-        find.text(
-          kErrorGuideCatalog
-              .firstWhere((item) => item.code == 'ERR_PROCESSING')
-              .cause,
-        ),
-        findsOneWidget,
-      );
-
-      controller.clearLastError();
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const Key('justEncounteredBadge_ERR_PROCESSING')),
-        findsNothing,
-      );
-      expect(
-        find.byKey(const Key('justEncounteredBadge_ERR_GPS_BOUNDS')),
-        findsNothing,
-      );
-      expect(find.text('JUST ENCOUNTERED'), findsNothing);
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets('Updated highlighted code promotes a reused guide', (
-    tester,
-  ) async {
-    await pumpScreen(
-      tester,
-      const Scaffold(
-        body: ErrorGuideSheet(isModal: false, highlightedCode: 'ERR_DATE_FMT'),
-      ),
-    );
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: Scaffold(
-          body: ErrorGuideSheet(
-            isModal: false,
-            highlightedCode: 'ERR_PROCESSING',
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(const Key('justEncounteredBadge_ERR_PROCESSING')),
-      findsOneWidget,
-    );
-    await tester.tap(find.byKey(const Key('viewLatestSteps')));
-    await tester.pumpAndSettle();
-    expect(
-      find.text(
-        kErrorGuideCatalog
-            .firstWhere((item) => item.code == 'ERR_PROCESSING')
-            .cause,
-      ),
-      findsOneWidget,
-    );
-  });
 
   testWidgets('Busy and unavailable engine disable actual settings handlers', (
     tester,

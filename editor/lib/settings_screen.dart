@@ -1108,22 +1108,26 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
 
   late final TextEditingController _searchController;
   final ScrollController _scrollController = ScrollController();
-  String _selectedCategory = 'All';
-  late final Set<String> _expandedCodes;
-  String? _lastHighlight;
   final GlobalKey _latestDetailsKey = GlobalKey();
+  final Set<String> _expandedCodes = {};
+  String _selectedCategory = 'All';
+  String? _lastHighlight;
+  bool _latestExpanded = false;
+  late bool _catalogOpen;
 
   String? get _activeHighlight => widget.controller != null
       ? widget.controller!.lastErrorCode
       : widget.highlightedCode;
 
+  bool get _hasFilters =>
+      _searchController.text.trim().isNotEmpty || _selectedCategory != 'All';
+
   @override
   void initState() {
     super.initState();
     _searchController = TextEditingController();
-    final activeCode = _activeHighlight;
-    _lastHighlight = activeCode;
-    _expandedCodes = {};
+    _lastHighlight = _activeHighlight;
+    _catalogOpen = _lastHighlight == null;
     widget.controller?.addListener(_handleControllerChange);
   }
 
@@ -1147,72 +1151,52 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
 
   void _updateHighlight() {
     final active = _activeHighlight;
-    if (active != _lastHighlight) {
-      _lastHighlight = active;
-      if (active != null) {
-        _expandedCodes.clear();
-        _selectedCategory = 'All';
-        _searchController.clear();
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted && _scrollController.hasClients) {
-            _scrollController.jumpTo(0);
-          }
-        });
+    if (active == _lastHighlight) return;
+    _lastHighlight = active;
+    _latestExpanded = false;
+    _catalogOpen = active == null;
+    _expandedCodes.clear();
+    _selectedCategory = 'All';
+    _searchController.clear();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _scrollController.hasClients) {
+        _scrollController.jumpTo(0);
       }
-    }
+    });
   }
 
   void _handleControllerChange() {
-    if (!mounted) return;
-    setState(_updateHighlight);
+    if (mounted) setState(_updateHighlight);
   }
 
   List<ErrorGuideItem> get _filteredItems {
     final query = _searchController.text.trim().toLowerCase();
-    final items = kErrorGuideCatalog.where((item) {
-      final categoryMatches =
-          _selectedCategory == 'All' || item.category == _selectedCategory;
-      if (!categoryMatches) return false;
-      if (query.isEmpty) return true;
-      return item.code.toLowerCase().contains(query) ||
-          item.title.toLowerCase().contains(query) ||
-          item.cause.toLowerCase().contains(query) ||
-          item.proTip.toLowerCase().contains(query) ||
-          item.steps.any((s) => s.toLowerCase().contains(query));
-    }).toList();
-
-    final activeHighlight = _activeHighlight;
-    if (activeHighlight != null) {
-      final highlightIndex = items.indexWhere(
-        (it) => it.code == activeHighlight,
-      );
-      if (highlightIndex > 0) {
-        final highlighted = items.removeAt(highlightIndex);
-        items.insert(0, highlighted);
+    return kErrorGuideCatalog.where((item) {
+      if (_selectedCategory != 'All' && item.category != _selectedCategory) {
+        return false;
       }
-    }
-
-    return items;
+      if (query.isEmpty) return true;
+      return [
+        item.code,
+        item.title,
+        item.category,
+        item.cause,
+        item.proTip,
+        ...item.steps,
+      ].any((text) => text.toLowerCase().contains(query));
+    }).toList();
   }
 
-  void _toggleExpanded(String code) {
+  void _resetFilters() {
     setState(() {
-      if (_expandedCodes.contains(code)) {
-        _expandedCodes.remove(code);
-      } else {
-        _expandedCodes.add(code);
-      }
+      _searchController.clear();
+      _selectedCategory = 'All';
     });
   }
 
   void _showLatestSteps() {
-    final code = _activeHighlight;
-    if (code == null) return;
-    setState(() {
-      _selectedCategory = 'All';
-      _searchController.clear();
-      _expandedCodes.add(code);
-    });
+    setState(() => _latestExpanded = !_latestExpanded);
+    if (!_latestExpanded) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final detailsContext = _latestDetailsKey.currentContext;
       if (mounted && detailsContext != null) {
@@ -1231,15 +1215,15 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
         .where((entry) => entry.code == code)
         .firstOrNull;
     final needsStartup = controller != null && !controller.ready;
+    final hasIssue = code != null || needsStartup;
     return Container(
       key: const Key('latestIssueCard'),
-      margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: code == null ? _panel : const Color(0xFF221418),
-        borderRadius: BorderRadius.circular(16),
+        color: _panel,
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: code == null ? _cardBorder : const Color(0xFF591C22),
+          color: hasIssue ? const Color(0xFF51403A) : _cardBorder,
         ),
       ),
       child: Column(
@@ -1249,11 +1233,11 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Icon(
-                code == null
-                    ? Icons.check_circle_outline_rounded
-                    : Icons.warning_amber_rounded,
+                hasIssue
+                    ? Icons.info_outline_rounded
+                    : Icons.check_circle_outline_rounded,
                 size: 22,
-                color: code == null ? _activeGreen : const Color(0xFFFF9B9B),
+                color: hasIssue ? const Color(0xFFE5B495) : _muted,
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -1272,27 +1256,16 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
                                 : 'Nothing to troubleshoot yet'
                           : item?.title ?? 'An operation could not finish',
                       style: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ],
                 ),
               ),
-              if (code != null && controller != null)
-                IconButton(
-                  key: const Key('clearGuideHistory'),
-                  tooltip: 'Clear error history',
-                  onPressed: controller.clearLastError,
-                  icon: const Icon(
-                    Icons.close_rounded,
-                    size: 18,
-                    color: _muted,
-                  ),
-                ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Text(
             code == null && !needsStartup
                 ? 'If an operation fails, its code and next steps will appear here.'
@@ -1301,25 +1274,26 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
                 : 'Your original is unchanged. Review the steps, then return to your edits.',
             style: const TextStyle(
               fontSize: 13,
-              height: 1.4,
+              height: 1.45,
               color: Colors.white70,
             ),
           ),
-          if (code != null || needsStartup) ...[
+          if (code != null) ...[
             const SizedBox(height: 8),
-            if (code != null)
-              Text(
-                'Code: $code',
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontFamily: 'monospace',
-                  color: Color(0xFFFF9B9B),
-                ),
+            Text(
+              'Code: $code',
+              style: const TextStyle(
+                fontSize: 11,
+                fontFamily: 'monospace',
+                color: _muted,
               ),
+            ),
+          ],
+          if (hasIssue) ...[
             const SizedBox(height: 12),
             Wrap(
               spacing: 8,
-              runSpacing: 6,
+              runSpacing: 8,
               children: [
                 if (needsStartup)
                   FilledButton.icon(
@@ -1329,18 +1303,22 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
                     label: const Text('Retry startup'),
                   ),
                 if (item != null)
-                  needsStartup
-                      ? OutlinedButton(
-                          key: const Key('viewLatestSteps'),
-                          onPressed: _showLatestSteps,
-                          child: const Text('View steps'),
-                        )
-                      : FilledButton.icon(
-                          key: const Key('viewLatestSteps'),
-                          onPressed: _showLatestSteps,
-                          icon: const Icon(Icons.checklist_rounded, size: 18),
-                          label: const Text('View steps'),
-                        ),
+                  Semantics(
+                    expanded: _latestExpanded,
+                    child: OutlinedButton.icon(
+                      key: const Key('viewLatestSteps'),
+                      onPressed: _showLatestSteps,
+                      icon: Icon(
+                        _latestExpanded
+                            ? Icons.keyboard_arrow_up_rounded
+                            : Icons.keyboard_arrow_down_rounded,
+                        size: 18,
+                      ),
+                      label: Text(
+                        _latestExpanded ? 'Hide steps' : 'View steps',
+                      ),
+                    ),
+                  ),
                 if (widget.onOpenEditor != null)
                   TextButton(
                     key: const Key('returnToEditorFromGuide'),
@@ -1349,300 +1327,276 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
                   ),
               ],
             ),
-            if (item == null && code != null)
-              const Text(
-                'This code has no catalog entry. Keep the original and share the code with the developer; avoid sharing private media or location data.',
-                style: TextStyle(fontSize: 12, color: _muted, height: 1.4),
-              ),
+          ],
+          if (item == null && code != null) ...[
+            const SizedBox(height: 8),
+            const Text(
+              'This code has no catalog entry. Keep the original and share the code with the developer; avoid sharing private media or location data.',
+              style: TextStyle(fontSize: 12, color: _muted, height: 1.4),
+            ),
+          ],
+          if (_latestExpanded && item != null) ...[
+            const SizedBox(height: 16),
+            const Divider(height: 1, color: _cardBorder),
+            Padding(
+              key: _latestDetailsKey,
+              padding: const EdgeInsets.only(top: 16),
+              child: _buildGuidance(item),
+            ),
+          ],
+          if (code != null && controller != null) ...[
+            const SizedBox(height: 4),
+            TextButton(
+              key: const Key('clearGuideHistory'),
+              onPressed: controller.clearLastError,
+              child: const Text('Clear error history'),
+            ),
           ],
         ],
       ),
     );
   }
 
+  Widget _catalogControls(List<ErrorGuideItem> items) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Container(
+        constraints: const BoxConstraints(minHeight: 48),
+        decoration: BoxDecoration(
+          color: _panel,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: _cardBorder),
+        ),
+        child: TextField(
+          key: const Key('errorSearchInput'),
+          controller: _searchController,
+          style: const TextStyle(fontSize: 14, color: Colors.white),
+          textInputAction: TextInputAction.search,
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            hintText: 'Search code or symptom',
+            hintStyle: const TextStyle(fontSize: 13, color: _muted),
+            prefixIcon: const Icon(
+              Icons.search_rounded,
+              size: 18,
+              color: _muted,
+            ),
+            suffixIcon: _searchController.text.isNotEmpty
+                ? IconButton(
+                    key: const Key('clearSearchButton'),
+                    tooltip: 'Clear search',
+                    icon: const Icon(
+                      Icons.close_rounded,
+                      size: 18,
+                      color: _muted,
+                    ),
+                    onPressed: () {
+                      _searchController.clear();
+                      setState(() {});
+                    },
+                  )
+                : null,
+            isDense: true,
+            border: InputBorder.none,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 8,
+              vertical: 14,
+            ),
+          ),
+        ),
+      ),
+      const SizedBox(height: 8),
+      Wrap(
+        spacing: 12,
+        runSpacing: 4,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          PopupMenuButton<String>(
+            key: const Key('errorCategoryFilter'),
+            tooltip: 'Filter by category',
+            initialValue: _selectedCategory,
+            onSelected: (category) =>
+                setState(() => _selectedCategory = category),
+            itemBuilder: (_) => _categories
+                .map(
+                  (category) => PopupMenuItem<String>(
+                    key: Key('categoryPill_$category'),
+                    value: category,
+                    child: Row(
+                      children: [
+                        Expanded(child: Text(category)),
+                        if (category == _selectedCategory)
+                          const Icon(Icons.check_rounded, size: 18),
+                      ],
+                    ),
+                  ),
+                )
+                .toList(),
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 44),
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.filter_list_rounded,
+                    size: 18,
+                    color: _muted,
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      _selectedCategory == 'All'
+                          ? 'All categories'
+                          : _selectedCategory,
+                      style: const TextStyle(fontSize: 13, color: _muted),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  const Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    size: 18,
+                    color: _muted,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Text(
+            _hasFilters
+                ? '${items.length} ${items.length == 1 ? 'match' : 'matches'}'
+                : '${items.length} error codes',
+            style: const TextStyle(fontSize: 12, color: _muted),
+          ),
+          if (_hasFilters)
+            TextButton(
+              key: const Key('resetFiltersButton'),
+              onPressed: _resetFilters,
+              child: const Text('Reset filters'),
+            ),
+        ],
+      ),
+    ],
+  );
+
   @override
   Widget build(BuildContext context) {
     final items = _filteredItems;
-
-    final sheetContent = Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF121214),
-        borderRadius: widget.isModal
-            ? const BorderRadius.vertical(top: Radius.circular(28))
-            : BorderRadius.zero,
-        border: widget.isModal
-            ? const Border(
-                top: BorderSide(color: _cardBorder),
-                left: BorderSide(color: _cardBorder),
-                right: BorderSide(color: _cardBorder),
-              )
-            : null,
-      ),
+    final sheetContent = Material(
+      color: const Color(0xFF121214),
+      borderRadius: widget.isModal
+          ? const BorderRadius.vertical(top: Radius.circular(28))
+          : BorderRadius.zero,
+      clipBehavior: Clip.antiAlias,
       child: SafeArea(
         top: false,
         child: SingleChildScrollView(
           key: const Key('errorGuideScroll'),
           controller: _scrollController,
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               if (widget.isModal) ...[
-                const SizedBox(height: 10),
-                Center(
-                  child: Container(
-                    width: 36,
-                    height: 5,
-                    decoration: BoxDecoration(
-                      color: _cardBorder,
-                      borderRadius: BorderRadius.circular(2.5),
-                    ),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(4, 0, 48, 20),
+                  child: Text(
+                    'Error Codes & Fixes',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
                   ),
                 ),
               ],
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 12, 12, 8),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 32,
-                      height: 32,
-                      decoration: BoxDecoration(
-                        color: _iconBg,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      alignment: Alignment.center,
-                      child: const Icon(
-                        Icons.menu_book_rounded,
-                        size: 18,
-                        color: _accent,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Troubleshooting',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.white,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            '${kErrorGuideCatalog.length} error codes with diagnostic steps',
-                            style: const TextStyle(fontSize: 12, color: _muted),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (widget.isModal) const SizedBox(width: 48, height: 48),
-                  ],
-                ),
-              ),
               _latestIssue(),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                child: Container(
-                  constraints: const BoxConstraints(minHeight: 48),
-                  decoration: BoxDecoration(
-                    color: _panel,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: _cardBorder),
-                  ),
-                  child: TextField(
-                    key: const Key('errorSearchInput'),
-                    controller: _searchController,
-                    style: const TextStyle(fontSize: 14, color: Colors.white),
-                    textInputAction: TextInputAction.search,
-                    onChanged: (_) => setState(() {}),
-                    decoration: InputDecoration(
-                      hintText: 'Search code, keyword, or symptom...',
-                      hintStyle: const TextStyle(fontSize: 13, color: _subtle),
-                      prefixIcon: const Icon(
-                        Icons.search_rounded,
-                        size: 18,
-                        color: _muted,
-                      ),
-                      suffixIcon: _searchController.text.isNotEmpty
-                          ? IconButton(
-                              key: const Key('clearSearchButton'),
-                              tooltip: 'Clear search',
-                              icon: const Icon(
-                                Icons.close_rounded,
-                                size: 16,
-                                color: _muted,
-                              ),
-                              onPressed: () {
-                                _searchController.clear();
-                                setState(() {});
-                              },
-                            )
-                          : null,
-                      isDense: true,
-                      border: InputBorder.none,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 11,
-                      ),
-                    ),
-                  ),
-                ),
+              const SizedBox(height: 20),
+              const Text(
+                'Error reference guide',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
               ),
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 4,
-                ),
-                child: Wrap(
-                  spacing: 0,
-                  runSpacing: 6,
-                  children: _categories.map((cat) {
-                    final isSelected = _selectedCategory == cat;
-                    return Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: Semantics(
-                        selected: isSelected,
-                        button: true,
-                        child: InkWell(
-                          key: Key('categoryPill_$cat'),
-                          borderRadius: BorderRadius.circular(16),
-                          onTap: () => setState(() => _selectedCategory = cat),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: isSelected ? _accent : _panel,
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
-                                color: isSelected ? _accent : _cardBorder,
-                              ),
-                            ),
-                            child: Text(
-                              cat,
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: isSelected
-                                    ? FontWeight.w700
-                                    : FontWeight.w500,
-                                color: isSelected ? Colors.white : _muted,
-                              ),
-                            ),
-                          ),
+              const SizedBox(height: 4),
+              Semantics(
+                expanded: _catalogOpen,
+                child: TextButton(
+                  key: const Key('browseErrorCatalog'),
+                  onPressed: () => setState(() => _catalogOpen = !_catalogOpen),
+                  style: TextButton.styleFrom(alignment: Alignment.centerLeft),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _catalogOpen
+                            ? Icons.keyboard_arrow_up_rounded
+                            : Icons.keyboard_arrow_down_rounded,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _catalogOpen
+                              ? 'Hide reference guide'
+                              : 'Browse all errors',
                         ),
                       ),
-                    );
-                  }).toList(),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(height: 6),
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 18,
-                  vertical: 4,
-                ),
-                child: Row(
-                  children: [
-                    Text(
-                      '${items.length} of ${kErrorGuideCatalog.length} codes',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: _muted,
-                        letterSpacing: 0.3,
+              if (_catalogOpen) ...[
+                const SizedBox(height: 8),
+                _catalogControls(items),
+                const SizedBox(height: 8),
+                if (items.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: Column(
+                      children: [
+                        Icon(Icons.search_off_rounded, size: 28, color: _muted),
+                        SizedBox(height: 10),
+                        Text(
+                          'No matching error codes found',
+                          textAlign: TextAlign.center,
+                        ),
+                        SizedBox(height: 6),
+                        Text(
+                          'Try another code, symptom, or category.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(fontSize: 13, color: _muted),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  ...items.map(
+                    (item) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _buildErrorCard(
+                        item,
+                        _expandedCodes.contains(item.code),
                       ),
                     ),
-                  ],
-                ),
-              ),
-              const Divider(height: 1, color: _cardBorder),
-              items.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.search_off_rounded,
-                            size: 40,
-                            color: _subtle,
-                          ),
-                          const SizedBox(height: 12),
-                          const Text(
-                            'No matching error codes found',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.white,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          const Text(
-                            'Try a different code or keyword',
-                            style: TextStyle(fontSize: 12, color: _muted),
-                          ),
-                          const SizedBox(height: 16),
-                          FilledButton(
-                            key: const Key('resetFiltersButton'),
-                            style: FilledButton.styleFrom(
-                              backgroundColor: _panel,
-                              foregroundColor: _accent,
-                              side: const BorderSide(color: _cardBorder),
-                            ),
-                            onPressed: () {
-                              setState(() {
-                                _searchController.clear();
-                                _selectedCategory = 'All';
-                              });
-                            },
-                            child: const Text('Reset Filters'),
-                          ),
-                        ],
-                      ),
-                    )
-                  : ListView.separated(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      keyboardDismissBehavior:
-                          ScrollViewKeyboardDismissBehavior.onDrag,
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-                      itemCount: items.length,
-                      separatorBuilder: (context, index) =>
-                          const SizedBox(height: 10),
-                      itemBuilder: (context, index) {
-                        final item = items[index];
-                        final isExpanded = _expandedCodes.contains(item.code);
-                        final card = _buildErrorCard(item, isExpanded);
-                        return item.code == _activeHighlight
-                            ? KeyedSubtree(key: _latestDetailsKey, child: card)
-                            : card;
-                      },
-                    ),
+                  ),
+              ],
             ],
           ),
         ),
       ),
     );
-
     if (!widget.isModal) {
-      return Center(
+      return Align(
+        alignment: Alignment.topCenter,
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 720),
-          child: sheetContent,
+          child: SizedBox.expand(child: sheetContent),
         ),
       );
     }
-
-    final maxHeight = MediaQuery.sizeOf(context).height * 0.90;
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       child: Align(
         alignment: Alignment.bottomCenter,
         child: ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: maxHeight, maxWidth: 720),
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * 0.90,
+            maxWidth: 720,
+          ),
           child: Stack(
             children: [
               sheetContent,
@@ -1667,251 +1621,156 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
     );
   }
 
-  Widget _buildErrorCard(ErrorGuideItem item, bool isExpanded) {
-    final isHighlighted = item.code == (_activeHighlight);
-    return Container(
-      key: Key('errorTile_${item.code}'),
-      decoration: BoxDecoration(
-        color: isHighlighted ? const Color(0xFF221418) : _panel,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: isHighlighted
-              ? const Color(0xFFFF453A)
-              : (isExpanded ? _accent.withValues(alpha: 0.4) : _cardBorder),
-          width: isHighlighted ? 1.5 : 1.0,
-        ),
+  Widget _buildErrorCard(ErrorGuideItem item, bool isExpanded) => Material(
+    key: Key('errorTile_${item.code}'),
+    color: _panel,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(12),
+      side: BorderSide(
+        color: isExpanded ? _accent.withValues(alpha: 0.4) : _cardBorder,
       ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          InkWell(
-            onTap: () => _toggleExpanded(item.code),
+    ),
+    clipBehavior: Clip.antiAlias,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Semantics(
+          button: true,
+          expanded: isExpanded,
+          child: InkWell(
+            onTap: () => setState(() {
+              if (!_expandedCodes.add(item.code)) {
+                _expandedCodes.remove(item.code);
+              }
+            }),
             child: Padding(
               padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Row(
                 children: [
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 6,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 7,
-                          vertical: 2.5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: isHighlighted
-                              ? const Color(0xFF38151A)
-                              : const Color(0xFF1E2838),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(
-                            color: isHighlighted
-                                ? const Color(0xFF75242C)
-                                : const Color(0xFF334A6E),
-                          ),
-                        ),
-                        child: Text(
-                          item.code,
-                          style: TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: isHighlighted
-                                ? const Color(0xFFFF9B9B)
-                                : const Color(0xFF9CB5FF),
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      if (isHighlighted) ...[
-                        Container(
-                          key: Key('justEncounteredBadge_${item.code}'),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF38151A),
-                            borderRadius: BorderRadius.circular(4),
-                            border: Border.all(color: const Color(0xFF75242C)),
-                          ),
-                          child: const Text(
-                            'JUST ENCOUNTERED',
-                            style: TextStyle(
-                              fontSize: 9.5,
-                              fontWeight: FontWeight.w800,
-                              color: Color(0xFFFF9B9B),
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                      ],
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF2C2C2E),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          item.category,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item.title,
                           style: const TextStyle(
-                            fontSize: 10,
+                            fontSize: 14,
                             fontWeight: FontWeight.w600,
-                            color: _muted,
                           ),
                         ),
-                      ),
-                      Icon(
-                        isExpanded
-                            ? Icons.keyboard_arrow_up_rounded
-                            : Icons.keyboard_arrow_down_rounded,
-                        color: isHighlighted ? const Color(0xFFFF9B9B) : _muted,
-                        size: 20,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    item.title,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
+                        const SizedBox(height: 6),
+                        Text(
+                          '${item.code} · ${item.category}',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: _muted,
+                            height: 1.4,
+                          ),
+                        ),
+                      ],
                     ),
+                  ),
+                  const SizedBox(width: 12),
+                  Icon(
+                    isExpanded
+                        ? Icons.keyboard_arrow_up_rounded
+                        : Icons.keyboard_arrow_down_rounded,
+                    color: _muted,
+                    size: 20,
                   ),
                 ],
               ),
             ),
           ),
-          if (isExpanded) ...[
-            const Divider(height: 1, color: _cardBorder),
-            Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'WHY THIS HAPPENS',
-                    style: TextStyle(
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w800,
-                      color: _muted,
-                      letterSpacing: 0.8,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    item.cause,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: Color(0xFFE5E5EA),
-                      height: 1.45,
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  const Text(
-                    'WHAT TO TRY',
-                    style: TextStyle(
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w800,
-                      color: _activeGreen,
-                      letterSpacing: 0.8,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  ...item.steps.asMap().entries.map((entry) {
-                    final stepIndex = entry.key + 1;
-                    final stepText = entry.value;
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            constraints: const BoxConstraints(
-                              minWidth: 18,
-                              minHeight: 18,
-                            ),
-                            padding: const EdgeInsets.all(3),
-                            margin: const EdgeInsets.only(top: 1, right: 8),
-                            decoration: BoxDecoration(
-                              color: _activeGreenBg,
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: _activeGreenBorder,
-                                width: 1,
-                              ),
-                            ),
-                            alignment: Alignment.center,
-                            child: Text(
-                              '$stepIndex',
-                              style: const TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w800,
-                                color: _activeGreen,
-                              ),
-                            ),
-                          ),
-                          Expanded(
-                            child: Text(
-                              stepText,
-                              style: const TextStyle(
-                                fontSize: 13,
-                                color: Color(0xFFE5E5EA),
-                                height: 1.4,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  }),
-                  const SizedBox(height: 10),
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF161B22),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFF263345)),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Icon(
-                          Icons.lightbulb_outline_rounded,
-                          size: 16,
-                          color: Color(0xFFFFD60A),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            item.proTip,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Color(0xFFC9D1D9),
-                              height: 1.4,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+        ),
+        if (isExpanded) ...[
+          const Divider(height: 1, color: _cardBorder),
+          Padding(
+            padding: const EdgeInsets.all(14),
+            child: _buildGuidance(item),
+          ),
         ],
+      ],
+    ),
+  );
+
+  Widget _buildGuidance(ErrorGuideItem item) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Text(
+        'Why this happens',
+        style: TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          color: _muted,
+        ),
       ),
-    );
-  }
+      const SizedBox(height: 6),
+      Text(
+        item.cause,
+        style: const TextStyle(
+          fontSize: 13,
+          color: Color(0xFFE5E5EA),
+          height: 1.45,
+        ),
+      ),
+      const SizedBox(height: 18),
+      const Text(
+        'What to try',
+        style: TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          color: _accent,
+        ),
+      ),
+      const SizedBox(height: 10),
+      ...item.steps.asMap().entries.map(
+        (entry) => Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 26,
+                child: Text(
+                  '${entry.key + 1}.',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: _muted,
+                    height: 1.45,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Text(
+                  entry.value,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: Color(0xFFE5E5EA),
+                    height: 1.45,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      const SizedBox(height: 8),
+      const Text(
+        'Keep in mind',
+        style: TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          color: _muted,
+        ),
+      ),
+      const SizedBox(height: 6),
+      Text(
+        item.proTip,
+        style: const TextStyle(fontSize: 12, color: _muted, height: 1.45),
+      ),
+    ],
+  );
 }
 
 class _IndentedDivider extends StatelessWidget {

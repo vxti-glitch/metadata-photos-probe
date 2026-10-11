@@ -325,35 +325,39 @@ void main() {
       expect(find.text('Error Codes & Fixes'), findsOneWidget);
       expect(find.byKey(const Key('closeErrorGuideButton')), findsNothing);
       expect(find.byKey(const Key('errorGuideBackButton')), findsOneWidget);
-      expect(
-        find.text(
-          '${kErrorGuideCatalog.length} error codes with diagnostic steps',
-        ),
-        findsOneWidget,
-      );
-      expect(find.text('ERR_DATE_FMT'), findsOneWidget);
-      expect(find.text('ERR_GPS_BOUNDS'), findsOneWidget);
+      expect(find.text('Troubleshooting'), findsNothing);
+      expect(find.byKey(const Key('browseErrorCatalog')), findsOneWidget);
+      expect(find.byKey(const Key('errorTile_ERR_DATE_FMT')), findsOneWidget);
+      expect(find.byKey(const Key('errorTile_ERR_GPS_BOUNDS')), findsOneWidget);
 
       // Search filtering for 'GPS'
       await tester.enterText(find.byKey(const Key('errorSearchInput')), 'GPS');
       await tester.pumpAndSettle();
 
-      expect(find.text('ERR_GPS_BOUNDS'), findsOneWidget);
-      expect(find.text('ERR_DATE_FMT'), findsNothing);
+      expect(find.byKey(const Key('errorTile_ERR_GPS_BOUNDS')), findsOneWidget);
+      expect(find.byKey(const Key('errorTile_ERR_DATE_FMT')), findsNothing);
 
       // Clear search
       await tester.tap(find.byKey(const Key('clearSearchButton')));
       await tester.pumpAndSettle();
-      expect(find.text('ERR_DATE_FMT'), findsOneWidget);
+      expect(find.byKey(const Key('errorTile_ERR_DATE_FMT')), findsOneWidget);
 
       // Category filter for 'Integrity'
+      await tester.ensureVisible(find.byKey(const Key('errorCategoryFilter')));
+      await tester.tap(find.byKey(const Key('errorCategoryFilter')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('categoryPill_Integrity')));
       await tester.pumpAndSettle();
 
-      expect(find.text('ERR_MEDIA_INTEGRITY'), findsOneWidget);
-      expect(find.text('ERR_GPS_BOUNDS'), findsNothing);
+      expect(
+        find.byKey(const Key('errorTile_ERR_MEDIA_INTEGRITY')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('errorTile_ERR_GPS_BOUNDS')), findsNothing);
 
       // Reset category filter to 'All'
+      await tester.tap(find.byKey(const Key('errorCategoryFilter')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('categoryPill_All')));
       await tester.pumpAndSettle();
 
@@ -367,7 +371,10 @@ void main() {
         ),
         findsOneWidget,
       );
-      expect(find.text('WHY THIS HAPPENS'), findsAtLeastNWidgets(1));
+      expect(
+        find.textContaining('Geographic coordinates must fall'),
+        findsOneWidget,
+      );
       // Zero-match search query test
       await tester.enterText(
         find.byKey(const Key('errorSearchInput')),
@@ -383,7 +390,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('No matching error codes found'), findsNothing);
-      expect(find.text('ERR_DATE_FMT'), findsOneWidget);
+      expect(find.byKey(const Key('errorTile_ERR_DATE_FMT')), findsOneWidget);
 
       // Return to Settings with the page back control.
       await tester.tap(find.byKey(const Key('errorGuideBackButton')));
@@ -433,11 +440,9 @@ void main() {
       expect(find.text('Error Codes & Fixes'), findsOneWidget);
       expect(find.byKey(const Key('closeErrorGuideButton')), findsNothing);
       expect(find.byKey(const Key('errorGuideBackButton')), findsOneWidget);
-      expect(
-        find.byKey(const Key('justEncounteredBadge_ERR_GPS_BOUNDS')),
-        findsOneWidget,
-      );
-      expect(find.text('JUST ENCOUNTERED'), findsOneWidget);
+      expect(find.byKey(const Key('latestIssueCard')), findsOneWidget);
+      expect(find.byKey(const Key('errorTile_ERR_GPS_BOUNDS')), findsNothing);
+      expect(find.text('JUST ENCOUNTERED'), findsNothing);
       await tester.tap(find.byKey(const Key('viewLatestSteps')));
       await tester.pumpAndSettle();
       expect(
@@ -565,12 +570,13 @@ void main() {
       // The banner opens the dedicated Settings page.
       expect(find.text('Error Codes & Fixes'), findsOneWidget);
       expect(find.byType(BottomSheet), findsNothing);
-      expect(find.text('ERR_MEDIA_INTEGRITY'), findsWidgets);
+      expect(find.textContaining('ERR_MEDIA_INTEGRITY'), findsOneWidget);
+      expect(find.byKey(const Key('latestIssueCard')), findsOneWidget);
       expect(
-        find.byKey(const Key('justEncounteredBadge_ERR_MEDIA_INTEGRITY')),
-        findsOneWidget,
+        find.byKey(const Key('errorTile_ERR_MEDIA_INTEGRITY')),
+        findsNothing,
       );
-      expect(find.text('JUST ENCOUNTERED'), findsOneWidget);
+      expect(find.text('JUST ENCOUNTERED'), findsNothing);
 
       // Back reveals Settings, including when reached from the editor banner.
       await tester.tap(find.byKey(const Key('errorGuideBackButton')));
