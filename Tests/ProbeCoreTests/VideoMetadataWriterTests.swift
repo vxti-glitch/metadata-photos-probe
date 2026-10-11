@@ -134,9 +134,12 @@ final class VideoMetadataWriterTests: XCTestCase {
         })
 
         let seed = directory.appendingPathComponent("track-metadata-seed.mov")
+        let seedSource = directory.appendingPathComponent("track-metadata-seed-source.mov")
         let duplicateSource = directory.appendingPathComponent("track-metadata-duplicate.mov")
-        try structuralMovie().write(to: source)
-        _ = try await VideoMetadataWriter.write(source: source, output: seed,
+        // Keep the first fixture immutable. Reusing and overwriting `source` here
+        // can leave URL.resourceValues with its earlier, larger cached file size.
+        try structuralMovie().write(to: seedSource)
+        _ = try await VideoMetadataWriter.write(source: seedSource, output: seed,
             patch: MetadataPatch(values: ["lensModel": .string("Existing Lens")]))
         let trackMetadata = try firstTrackMetadataAtom(Data(contentsOf: seed))
         let duplicateBytes = structuralMovie(trackUserData: trackMetadata, trackMeta: trackMetadata)
@@ -149,6 +152,28 @@ final class VideoMetadataWriterTests: XCTestCase {
         } catch ProbeError.unsupported { }
         XCTAssertFalse(FileManager.default.fileExists(atPath: duplicateOutput.path))
         XCTAssertEqual(try Data(contentsOf: duplicateSource), duplicateBytes)
+    }
+
+    func testWriterUsesOpenedFileLengthWhenURLHasStaleCachedSize() async throws {
+        let source = directory.appendingPathComponent("stale-size-source.mov")
+        let output = directory.appendingPathComponent("stale-size-output.mov")
+        let handler = box("hdlr", word(0) + word(0) + Data("mdir".utf8) + Data(repeating: 0, count: 12))
+        let retainedMetadata = box("meta", word(0) + handler + box("free", Data(repeating: 0, count: 128)))
+        let largeFixture = structuralMovie(trackMeta: retainedMetadata)
+        let currentFixture = structuralMovie(userData: Data())
+        try largeFixture.write(to: source)
+        let cachedSize = try XCTUnwrap(source.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+        XCTAssertGreaterThan(cachedSize, currentFixture.count)
+
+        // Deliberately replace the file after priming URL's larger cached size.
+        // This reproduces stale URL.resourceValues without mutating a writer input.
+        try currentFixture.write(to: source)
+        XCTAssertEqual(try Data(contentsOf: source), currentFixture)
+        _ = try await VideoMetadataWriter.write(source: source, output: output,
+            patch: MetadataPatch(values: ["model": .string("Fresh File Size")]))
+
+        XCTAssertEqual(try Data(contentsOf: source), currentFixture)
+        XCTAssertEqual(try VideoMetadataWriter.inspect(output)["model"], "Fresh File Size")
     }
 
     func testExtendedSizeFtypWorksAndInvalidCompatibleBrandPaddingIsRefused() async throws {

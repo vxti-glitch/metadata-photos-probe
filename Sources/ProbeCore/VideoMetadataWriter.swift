@@ -30,13 +30,17 @@ public enum VideoMetadataWriter {
         let trackValues = try VideoMetadataFields.values(patch, existing: existing, track: true)
         guard source.standardizedFileURL.resolvingSymlinksInPath() != output.standardizedFileURL.resolvingSymlinksInPath() else { throw ProbeError.sameFile }
         guard !FileManager.default.fileExists(atPath: output.path) else { throw ProbeError.outputExists }
-        let info = try source.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-        guard source.isFileURL, output.isFileURL, info.isRegularFile == true, let count = info.fileSize, count > 0 else {
+        let info = try source.resourceValues(forKeys: [.isRegularFileKey])
+        guard source.isFileURL, output.isFileURL, info.isRegularFile == true else {
             throw ProbeError.malformed("A nonempty regular movie file is required")
         }
         let input = try FileHandle(forReadingFrom: source)
         defer { try? input.close() }
-        let top = try VideoBMFF.fileAtoms(input, length: UInt64(count))
+        // URL resource values can cache a previous file length. Bound parsing by
+        // the opened file itself, including when an API caller reuses a URL.
+        let count = try input.seekToEnd()
+        guard count > 0 else { throw ProbeError.malformed("A nonempty regular movie file is required") }
+        let top = try VideoBMFF.fileAtoms(input, length: count)
         guard top.allSatisfy({ VideoBMFF.allowedTopAtoms.contains($0.type) }), top.first?.type == VideoBMFF.code("ftyp"),
               top.filter({ $0.type == VideoBMFF.code("ftyp") }).count == 1,
               top.filter({ $0.type == VideoBMFF.code("moov") }).count == 1 else {
@@ -133,7 +137,7 @@ public enum VideoMetadataWriter {
                 try destination.write(contentsOf: bytes)
                 copied += UInt64(bytes.count)
             }
-            guard copied == UInt64(count) else { throw ProbeError.writeFailed("Source changed while being copied") }
+            guard copied == count else { throw ProbeError.writeFailed("Source changed while being copied") }
         }
         defer { try? destination.close() }
         // Retire the old movie atom without moving any media. Zero its retired payload
