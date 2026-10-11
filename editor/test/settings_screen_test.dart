@@ -108,6 +108,14 @@ void main() {
       find.textContaining('Zero Cloud Processing'),
       findsAtLeastNWidgets(1),
     );
+    expect(
+      find.textContaining('read/write authorization on demand'),
+      findsAtLeastNWidgets(1),
+    );
+    expect(
+      find.textContaining('cloud-backed original'),
+      findsAtLeastNWidgets(1),
+    );
     expect(find.textContaining('ProbeCore'), findsAtLeastNWidgets(1));
 
     // Close the sheet
@@ -215,12 +223,14 @@ void main() {
 
     expect(find.text('Swift Media Engine'), findsOneWidget);
     expect(
-      find.text('ProbeCore v0.4 · Sandboxed local engine'),
+      find.text('ProbeCore v0.4 · Ready · Sandboxed local engine'),
       findsOneWidget,
     );
     expect(find.text('Privacy Guarantee'), findsOneWidget);
     expect(
-      find.text('100% on-device · Zero analytics · No cloud pings'),
+      find.text(
+        'On-device processing · No analytics · Cloud-backed imports may download',
+      ),
       findsOneWidget,
     );
     expect(
@@ -411,11 +421,24 @@ void main() {
 
       expect(find.text('SYSTEM HEALTH & DIAGNOSTICS'), findsOneWidget);
       expect(find.text('Photos Access'), findsOneWidget);
-      expect(find.text('GRANTED'), findsOneWidget);
+      expect(find.text('ON IMPORT'), findsOneWidget);
       expect(find.text('Swift Media Engine'), findsOneWidget);
+      expect(find.textContaining('· Ready ·'), findsOneWidget);
       expect(find.text('Storage Sandbox'), findsOneWidget);
       expect(find.text('FILE-BACKED'), findsOneWidget);
       expect(find.text('Privacy Guarantee'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'System Health does not claim the engine is ready without capabilities',
+    (tester) async {
+      controller.capabilities = null;
+      await pumpSettings(tester);
+
+      expect(find.text('ON IMPORT'), findsOneWidget);
+      expect(find.textContaining('· Not ready ·'), findsOneWidget);
+      expect(find.byIcon(Icons.hourglass_empty), findsOneWidget);
     },
   );
 
@@ -486,7 +509,7 @@ void main() {
       expect(find.text('ERR_MEDIA_INTEGRITY'), findsOneWidget);
       expect(find.text('Attention Needed'), findsOneWidget);
       expect(
-        find.textContaining('Video metadata check failed'),
+        find.textContaining('could not confirm that the media'),
         findsOneWidget,
       );
 

@@ -274,7 +274,7 @@ String simplifyUserError(String message) {
 
   // Altitude
   if (trimmed.toLowerCase().contains('altitude')) {
-    return 'Altitude value is out of range. Check that altitude is between -10,000m and 100,000m, or leave it blank.';
+    return 'Altitude value is out of range. Enter a value between -100,000m and 100,000m, or leave it blank.';
   }
 
   // Date format & explicit timezone
@@ -284,6 +284,10 @@ String simplifyUserError(String message) {
       trimmed.contains('ISO 8601') ||
       trimmed.contains('explicit time zone')) {
     return 'Invalid date format. Use YYYY:MM:DD HH:mm:ss for photos or ISO 8601 with time zone (±HH:MM) for videos, or tap the calendar icon to set dates automatically.';
+  }
+
+  if (trimmed.toLowerCase().contains('read back')) {
+    return 'The requested metadata could not be confirmed in the processed copy. No output is available. Keep the original and try a supported field or a different source file.';
   }
 
   // Time zone offset
@@ -345,6 +349,11 @@ String simplifyUserError(String message) {
   }
 
   // Retained / competing metadata integrity conflict
+  if (trimmed.toLowerCase().contains('incomplete') &&
+      trimmed.toLowerCase().contains('integrity')) {
+    return 'Some preservation checks are incomplete, but the processed copy remains available. Review the stated limitations and acknowledge them if you want to export it.';
+  }
+
   if (trimmed.contains('integrity verification failed') ||
       trimmed.contains('retained embedded metadata') ||
       trimmed.contains('Integrity check failed') ||
@@ -352,7 +361,12 @@ String simplifyUserError(String message) {
       trimmed.contains('integrity verification mismatch') ||
       trimmed.contains('unqualified media structure') ||
       trimmed.contains('integrity')) {
-    return 'Video metadata check failed. The file\'s internal track headers or metadata tags conflicted with the requested changes. How to fix: tap "View Solution & Steps" below or select a clean Camera Profile before processing.';
+    return 'The editor could not confirm that the media and unrelated metadata were preserved. No output is available after a failed check. Keep the original, review Details, and retry only if the file and requested fields are supported.';
+  }
+
+  if (trimmed.toLowerCase().contains('processing failed') ||
+      trimmed.toLowerCase().contains('could not finish creating')) {
+    return 'The media engine could not finish this operation. The original is unchanged. Retry with the original file, or review the error code and Details report.';
   }
 
   // Storage / quota
@@ -366,7 +380,7 @@ String simplifyUserError(String message) {
   if (trimmed.contains('Allow Photos access') ||
       trimmed.contains('Photos permission') ||
       trimmed.contains('permission')) {
-    return 'Photos access required. Open iOS Settings > Privacy & Security > Photos and grant Full Access to Metadata Editor.';
+    return 'Allow Metadata Editor to access the selected photos or videos in iOS Settings > Privacy & Security > Photos. Full Library Access is optional.';
   }
 
   // Busy

@@ -63,6 +63,16 @@ public enum HEICMetadataWriter {
         let originalHash = try WholeFileDigest.sha256(source)
         let oldExtent = parsed.exif.extents[0]
         guard oldExtent.length <= UInt64(HEICContainer.metadataLimit) else { throw ProbeError.unsupported("Exif item exceeds 16 MiB") }
+        if scrubRetired {
+            let metaEnd = parsed.metaOffset + UInt64(parsed.meta.count)
+            guard oldExtent.absolute >= metaEnd || oldExtent.absolute + oldExtent.length <= parsed.metaOffset else {
+                // Rewriting the enclosing meta box would restore its original idat
+                // bytes after scrubbing. Its graph verifier also covers those bytes.
+                // Refuse this layout until a targeted idat scrub is independently
+                // qualified; a successful removal must not retain the old values.
+                throw ProbeError.unsupported("Scrubbing Exif stored inside the HEIC metadata box is not qualified")
+            }
+        }
         let original = try parsed.read(offset: oldExtent.absolute, count: Int(oldExtent.length))
         let changed = try transform(original)
         guard changed.count <= HEICContainer.metadataLimit else { throw ProbeError.unsupported("Patched Exif exceeds 16 MiB") }

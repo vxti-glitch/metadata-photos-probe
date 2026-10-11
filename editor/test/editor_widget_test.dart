@@ -622,6 +622,7 @@ void main() {
         (w) => w is TextField && w.decoration?.labelText == 'Name',
       );
       await tester.enterText(name, 'Studio');
+      await tester.pump();
       await tester.tap(find.text('Save').last);
       await tester.pumpAndSettle();
       expect(controller.presets.single.name, 'Studio');
@@ -942,7 +943,12 @@ void main() {
       expect(find.byKey(const Key('shareFiles')), findsOneWidget);
       expect(find.byKey(const Key('openICloud')), findsOneWidget);
       expect(find.text('Process another file'), findsOneWidget);
-      expect(find.textContaining('Processed Media'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'Saved to: On My iPhone/Metadata Editor/Processed Media',
+        ),
+        findsOneWidget,
+      );
 
       await tap(tester, 'shareFiles');
       expect(bridge.shares, 1);
@@ -958,6 +964,20 @@ void main() {
       expect(find.byKey(const Key('exportFiles')), findsNothing);
     },
   );
+
+  testWidgets('incomplete output is not described as already saved to Files', (
+    tester,
+  ) async {
+    final bridge = FakeMediaBridge()
+      ..importResult = fixture(kind: MediaKind.jpeg, status: null)
+      ..nextStatus = IntegrityStatus.incomplete;
+    await launch(tester, bridge);
+    await tap(tester, 'importFiles');
+    await tap(tester, 'process');
+
+    expect(find.textContaining('Held in the app.'), findsOneWidget);
+    expect(find.textContaining('Saved to: On My iPhone'), findsNothing);
+  });
 
   testWidgets(
     'batch panel selection counts, deselect all, and select all work as expected',

@@ -572,7 +572,9 @@ class SettingsScreen extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
             ),
           ),
-          onPressed: () => _confirmResetPresets(context),
+          onPressed: controller.busy
+              ? null
+              : () => _confirmResetPresets(context),
           child: const Text(
             'Reset',
             style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
@@ -588,27 +590,29 @@ class SettingsScreen extends StatelessWidget {
       _buildRow(
         key: const Key('photosAccessHealthRow'),
         icon: Icons.photo_library_outlined,
-        iconColor: _activeGreen,
+        iconColor: _accent,
         title: 'Photos Access',
-        subtitle: 'Apple Photos library read/write authorization',
+        subtitle:
+            'Requested when importing from Photos; limited access is supported',
         trailing: _buildPill(
-          text: 'GRANTED',
-          bgColor: _activeGreenBg,
-          borderColor: _activeGreenBorder,
-          textColor: _activeGreen,
+          text: 'ON IMPORT',
+          bgColor: const Color(0x1F0A84FF),
+          borderColor: const Color(0x660A84FF),
+          textColor: _accent,
         ),
       ),
       const _IndentedDivider(),
       _buildRow(
         key: const Key('engineDiagnosticsRow'),
         icon: Icons.memory_rounded,
-        iconColor: _activeGreen,
+        iconColor: controller.ready ? _activeGreen : _muted,
         title: 'Swift Media Engine',
-        subtitle: '${AppBrand.engineCore} · Sandboxed local engine',
-        trailing: const Icon(
-          Icons.check_rounded,
+        subtitle:
+            '${AppBrand.engineCore} · ${controller.ready ? 'Ready' : 'Not ready'} · Sandboxed local engine',
+        trailing: Icon(
+          controller.ready ? Icons.check_rounded : Icons.hourglass_empty,
           size: 18,
-          color: _activeGreen,
+          color: controller.ready ? _activeGreen : _muted,
         ),
       ),
       const _IndentedDivider(),
@@ -631,7 +635,7 @@ class SettingsScreen extends StatelessWidget {
         icon: Icons.verified_user_outlined,
         iconColor: _activeGreen,
         title: 'Privacy Guarantee',
-        subtitle: '100% on-device · Zero analytics · No cloud pings',
+        subtitle: 'On-device processing · No analytics · Cloud-backed imports may download',
         trailing: const Icon(
           Icons.check_rounded,
           size: 18,
@@ -843,10 +847,13 @@ class SettingsScreen extends StatelessWidget {
               backgroundColor: _cardBorder,
               foregroundColor: _accent,
             ),
-            onPressed: () async {
-              Navigator.of(context).pop();
-              await controller.resetPresets();
-            },
+            onPressed: controller.busy
+                ? null
+                : () async {
+                    if (controller.busy) return;
+                    Navigator.of(context).pop();
+                    await controller.resetPresets();
+                  },
             child: const Text('Reset Presets'),
           ),
         ],
@@ -938,15 +945,27 @@ const List<ErrorGuideItem> kErrorGuideCatalog = [
   ),
   ErrorGuideItem(
     code: 'ERR_MEDIA_INTEGRITY',
-    title: 'Conflicting Legacy Metadata',
+    title: 'Media or Metadata Integrity Check Failed',
     category: 'Integrity',
-    cause: 'The imported file contains non-standard social media tags, Adobe XMP packets, or third-party editing markers that conflict with camera profiles.',
+    cause: 'The editor could not verify that the requested metadata change preserved the media and unrelated metadata. No processed output is available when a required check fails. This can be caused by an unsupported container layout, a readback mismatch, or a failed preservation check.',
     steps: [
-      'Apply a researched Camera Profile (e.g. iPhone 15 Pro) to cleanly override old container tags.',
-      'In the metadata form, toggle conflicting legacy fields to "Remove".',
-      'Tap "Process File" again to write a unified, verified ISO/QuickTime container.',
+      'Keep the original file and retry with only fields supported for its format.',
+      'If the error repeats, use a separate clean copy of the file to check whether its container structure is supported.',
+      'Use the error code and optional Details report when sharing a diagnostic; do not send private media or location data.',
     ],
-    proTip: 'ProbeCore restructures container atoms in-place without re-encoding media streams, guaranteeing 100% video bitstream preservation.',
+    proTip: 'A successful metadata readback alone does not prove media integrity. Incomplete verification remains disclosed and requires your acknowledgment before export.',
+  ),
+  ErrorGuideItem(
+    code: 'ERR_PROCESSING',
+    title: 'Processing Could Not Complete',
+    category: 'Processing',
+    cause: 'The native media engine could not complete the requested operation or the current session/output token is no longer available. A failed operation does not change the imported original.',
+    steps: [
+      'Retry startup if the message asks you to refresh local history.',
+      'Re-import the original and try one supported metadata change.',
+      'If the error repeats, share the error code and safe diagnostic stage without sharing private media or location data.',
+    ],
+    proTip: 'Cancellation can finish after native file work settles. The app reconciles its local history before enabling export again.',
   ),
   ErrorGuideItem(
     code: 'ERR_FIELD_CONFLICT',
@@ -980,10 +999,10 @@ const List<ErrorGuideItem> kErrorGuideCatalog = [
     steps: [
       'Open the iOS Settings app on your device.',
       'Scroll down to "Metadata Editor" (or navigate to Privacy & Security > Photos).',
-      'Select Photos and change access to "Full Access".',
+      'Allow access to the selected items, or choose Full Library Access if you want to browse the whole library.',
       'Return to Metadata Editor and re-import your media.',
     ],
-    proTip: 'Importing media directly from the Files app does not require photo library permissions.',
+    proTip: 'Limited Photos access works for items you have authorized. Importing from Files does not require Photos access.',
   ),
   ErrorGuideItem(
     code: 'ERR_STORAGE_FULL',

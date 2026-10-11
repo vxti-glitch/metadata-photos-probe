@@ -12,6 +12,59 @@ import 'fake_media_bridge.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('batch date offsets preserve ISO zone and instant', () {
+    final cases = {
+      '2026-10-11T23:59:30-04:00': '2026-10-12T00:00:30-04:00',
+      '2026-10-11T23:59:30+05:30': '2026-10-12T00:00:30+05:30',
+      '2026-10-11T23:59:30Z': '2026-10-12T00:00:30Z',
+    };
+    for (final entry in cases.entries) {
+      final shifted = offsetDateStamp(entry.key, const Duration(minutes: 1));
+      expect(shifted, entry.value);
+      expect(
+        DateTime.parse(shifted).difference(DateTime.parse(entry.key)),
+        const Duration(minutes: 1),
+      );
+    }
+    expect(
+      offsetDateStamp('2026-10-12T00:00:30-04:00', const Duration(minutes: -1)),
+      '2026-10-11T23:59:30-04:00',
+    );
+  });
+
+  test('batch generated patches keep a stagger in the original time zone', () {
+    final generated = offsetBatchDatePatches({
+      'first': MetadataPatch(
+        values: {'movieCreateDate': '2026-10-11T23:59:30-04:00'},
+      ),
+      'second': MetadataPatch(
+        values: {'movieCreateDate': '2026-10-11T23:59:30-04:00'},
+      ),
+    }, const Duration(minutes: 1));
+    final first = generated['first']!.values['movieCreateDate'] as String;
+    final second = generated['second']!.values['movieCreateDate'] as String;
+    expect(first, '2026-10-11T23:59:30-04:00');
+    expect(second, '2026-10-12T00:00:30-04:00');
+    expect(
+      DateTime.parse(second).difference(DateTime.parse(first)),
+      const Duration(minutes: 1),
+    );
+  });
+
+  test('preset names use the native UTF-8 byte limit', () {
+    SavedPreset decode(String name) => SavedPreset.decode({
+      'schemaVersion': 1,
+      'id': '00000000-0000-4000-8000-000000000099',
+      'name': name,
+      'patch': MetadataPatch(values: {'make': 'Apple'}).toMap(),
+    });
+
+    expect(decode('a' * 100).name.length, 100);
+    expect(decode('é' * 64).name.length, 64);
+    expect(() => decode('é' * 65), throwsFormatException);
+    expect(() => decode('a' * 129), throwsFormatException);
+  });
+
   test('randomized dates retain their instant across per-photo kept zones', () {
     final generated = MetadataPatch(
       values: {

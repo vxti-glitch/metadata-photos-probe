@@ -43,8 +43,10 @@ final class NativeMediaBridge: NSObject {
         channel = FlutterMethodChannel(name: "com.vxtiglitch.metadataeditor/media_v1", binaryMessenger: messenger)
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         store = NativeSessionStore(root: support.appendingPathComponent("NativeMediaSessions", isDirectory: true),
-            previewRoot: cache.appendingPathComponent("NativeMediaPreviews", isDirectory: true))
+            previewRoot: cache.appendingPathComponent("NativeMediaPreviews", isDirectory: true),
+            autoExportRoot: documents.appendingPathComponent("Processed Media", isDirectory: true))
         super.init()
         channel.setMethodCallHandler { [weak self] call, result in
             guard let self else { result(FlutterError(code: "storage", message: "Native media service is unavailable.", details: nil)); return }
@@ -399,6 +401,9 @@ final class NativeMediaBridge: NSObject {
             }
         }
         let nav = UINavigationController(rootViewController: pickerVC)
+        let delegate = NativePickerDelegate(token: token)
+        delegate.onCancel = { [weak self] token in self?.finish(token, value: nil) }
+        pickerDelegate = delegate
         nav.modalPresentationStyle = .pageSheet
         if let sheet = nav.sheetPresentationController {
             sheet.detents = [.large()]
@@ -406,6 +411,7 @@ final class NativeMediaBridge: NSObject {
         }
         presentedPicker = nav
         controller.present(nav, animated: true)
+        nav.presentationController?.delegate = delegate
     }
 
     static func arguments(_ value: Any?) throws -> [String: Any] {
@@ -416,11 +422,13 @@ final class NativeMediaBridge: NSObject {
     static func metadataPatch(_ arguments: [String: Any]) throws -> MetadataPatch {
         guard let map = arguments["patch"] as? [String: Any],
               Set(map.keys) == Set(["values", "removals"]) else { throw NativeMediaError.invalidArgument }
-        let data = try JSONSerialization.data(withJSONObject: map)
-        guard data.count <= 16_384 else { throw NativeMediaError.invalidArgument }
-        let patch = try JSONDecoder().decode(MetadataPatch.self, from: data)
-        try patch.validate()
-        return patch
+        do {
+            let data = try JSONSerialization.data(withJSONObject: map)
+            guard data.count <= 16_384 else { throw NativeMediaError.invalidArgument }
+            let patch = try JSONDecoder().decode(MetadataPatch.self, from: data)
+            try patch.validate()
+            return patch
+        } catch { throw NativeMediaError.invalidArgument }
     }
 
     static func parseBatchItems(_ arguments: [String: Any]) throws -> [(id: UUID, output: UUID, acknowledged: Bool)] {
@@ -530,6 +538,10 @@ final class NativeMediaBridge: NSObject {
             identifier = simModel
         }
         #endif
+        return hostDevice(identifier: identifier)
+    }
+
+    static func hostDevice(identifier: String) -> [String: String] {
         let mapping: [String: (profileId: String, model: String)] = [
             "iPhone12,1": ("apple-iphone-11", "iPhone 11"),
             "iPhone12,3": ("apple-iphone-11-pro", "iPhone 11 Pro"),
@@ -557,20 +569,10 @@ final class NativeMediaBridge: NSObject {
             "iPhone17,3": ("apple-iphone-16", "iPhone 16"),
             "iPhone17,4": ("apple-iphone-16-plus", "iPhone 16 Plus"),
             "iPhone17,5": ("apple-iphone-16e", "iPhone 16e"),
-            "iPhone18,1": ("apple-iphone-17-pro", "iPhone 17 Pro"),
-            "iPhone18,2": ("apple-iphone-17-pro-max", "iPhone 17 Pro Max"),
-            "iPhone18,3": ("apple-iphone-17", "iPhone 17"),
-            "iPhone18,4": ("apple-iphone-17-plus", "iPhone 17 Plus"),
-            "iPhone18,5": ("apple-iphone-17e", "iPhone 17e"),
-            "iPhone18,6": ("apple-iphone-air", "iPhone Air"),
         ]
-        let matched = mapping[identifier] ?? ("apple-iphone-15-pro-max", "iPhone 15 Pro Max")
-        return [
-            "brand": "Apple",
-            "profileId": matched.profileId,
-            "model": matched.model,
-            "hardware": identifier
-        ]
+        var result = ["brand": "Apple", "model": "iPhone", "hardware": identifier]
+        if let matched = mapping[identifier] { result["profileId"] = matched.profileId; result["model"] = matched.model }
+        return result
     }
 
     static func flutterError(_ error: Error) -> FlutterError {
@@ -580,18 +582,53 @@ final class NativeMediaBridge: NSObject {
         case NativeMediaError.busy: code = "busy"; message = "Wait for the current native operation to finish."
         case NativeMediaError.canceled: code = "canceled"; message = "Operation canceled."
         case NativeMediaError.permission: code = "permission"; message = "Allow Photos access to retrieve the selected original resource."
-        case NativeMediaError.invalidArgument, ProbeError.invalidPatch: code = "invalid_argument"; message = "Check the session, processing token and camera fields."
+        case NativeMediaError.invalidArgument, ProbeError.invalidPatch: code = "invalid_argument"; message = "Check the selected metadata values and current file."
         case NativeMediaError.notFound: code = "not_found"; message = "The selected session or current processed output is unavailable."
         case NativeMediaError.storage: code = "storage"; message = "The local media copy or session journal could not be accessed safely."
-        case NativeMediaError.unsupported(let detail), ProbeError.unsupported(let detail): code = "unsupported"; message = detail
-        case ProbeError.malformed(let detail): code = "unsupported"; message = "The selected file has an invalid or unqualified media structure: \(detail)"
-        case ProbeError.outputExists: code = "storage"; message = "The output copy already exists. Choose a new output path."
+        case NativeMediaError.unsupported(let detail): code = "unsupported"; message = Self.safeUnsupportedMessage(detail)
+        case ProbeError.unsupported(let detail): code = "unsupported"; message = Self.safeUnsupportedMessage(detail)
+        case ProbeError.malformed: code = "malformed"; message = "The file contains damaged or inconsistent media data. Try its original version."
+        case ProbeError.outputExists: code = "storage"; message = "The output copy already exists. Retry processing to create a new copy."
         case ProbeError.sameFile: code = "invalid_argument"; message = "Source and output must be different files."
-        case ProbeError.writeFailed(let detail): code = "processing"; message = detail
-        case ProbeError.readbackFailed(let detail): code = "processing"; message = detail
-        default: code = "processing"; message = "Native metadata processing or independent integrity verification failed. No new output is available."
+        case ProbeError.writeFailed: code = "processing"; message = "The metadata writer could not finish creating the edited copy. No new output is available."
+        case ProbeError.readbackFailed: code = "readback"; message = "The edited metadata could not be read back as requested. No new output is available."
+        case ProbeError.integrityMismatch: code = "integrity"; message = "The edited copy failed media preservation checks. No new output is available."
+        default:
+            let native = error as NSError
+            if native.domain == NSCocoaErrorDomain {
+                code = "storage"; message = "The local file could not be read or written. Check available storage and try again."
+            } else if native.domain == "PHPhotosErrorDomain" {
+                code = "storage"; message = "The selected Photos original could not be retrieved. Check Photos access and its iCloud download."
+            } else {
+                code = "processing"; message = "Native media processing failed. Retry with the original file. No new output is available."
+            }
         }
-        return FlutterError(code: code, message: message, details: nil)
+        // Error descriptions and userInfo may embed filenames, filesystem URLs
+        // and metadata. Expose only fixed stage tokens and known numeric codes.
+        var diagnostics: [String: Any] = ["stage": code]
+        if !(error is NativeMediaError), !(error is ProbeError) {
+            let native = error as NSError
+            let domains = [NSCocoaErrorDomain, NSOSStatusErrorDomain, "AVFoundationErrorDomain", "PHPhotosErrorDomain"]
+            diagnostics["nativeDomain"] = domains.contains(native.domain) ? native.domain : "other"
+            diagnostics["nativeCode"] = native.code
+        }
+        return FlutterError(code: code, message: message, details: diagnostics)
+    }
+
+    private static func safeUnsupportedMessage(_ detail: String) -> String {
+        // Match known causes without returning interpolated file content.
+        if detail.contains("incomplete integrity") { return "Review and acknowledge the incomplete integrity checks before export." }
+        if detail.contains("Live Photos") { return "Choose a still image with Live turned off; Live Photos are unsupported." }
+        if detail.contains("time zone") { return "Video dates require an explicit time zone. Check the date and time settings." }
+        if detail.contains("fragmented") || detail.contains("movie brand") || detail.contains("movie atoms") {
+            return "This video's container layout is not supported for lossless metadata editing. Try another original MP4 or MOV."
+        }
+        if detail.contains("removal") || detail.contains("Removal") || detail.contains("Scrubbing") || detail.contains("location editing") {
+            return "This file contains additional metadata that prevents safe removal of the selected fields. Change the edit selection and retry."
+        }
+        if detail.contains("lens editing") || detail.contains("metadata representation") { return "One or more selected fields are unsupported for this media format." }
+        if detail.contains("budget") || detail.contains("exceeds") { return "This file's metadata exceeds the supported processing limits." }
+        return "The selected file or operation is unsupported. Try another original JPEG, HEIC, PNG, MP4 or MOV."
     }
 }
 

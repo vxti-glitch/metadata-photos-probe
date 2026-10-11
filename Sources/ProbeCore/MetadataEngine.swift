@@ -44,7 +44,7 @@ public enum MetadataEngine {
                     notes.append("Additional XMP/IPTC metadata present; removal restricted to avoid unscrubbed duplicate copies.")
                 }
             } else if kind == .heic {
-                _ = try BoxInventory.read(url); notes.append("HEIC item graph/auxiliary/HDR preservation is not fully qualified.")
+                _ = try BoxInventory.read(url, hashMediaPayload: false); notes.append("HEIC item graph/auxiliary/HDR preservation is not fully qualified.")
             } else {
                 let layout = try StillContainerMetadata.layout(url, kind: .png)
                 if layout.competingMetadata {
@@ -55,7 +55,7 @@ public enum MetadataEngine {
             return MediaInspection(kind: kind, byteCount: size, metadata: metadata, notes: notes, structure: structure,
                 location: EmbeddedLocationEvidence.image(gps: properties[kCGImagePropertyGPSDictionary as String] as? [String: Any]))
         }
-        let inventory = try BoxInventory.read(url)
+        let inventory = try BoxInventory.read(url, hashMediaPayload: false)
         guard inventory.types.contains("ftyp"), inventory.types.contains("moov"), inventory.types.contains("mdat") else {
             throw ProbeError.unsupported("Expected a file-backed MP4 or MOV container")
         }
@@ -95,11 +95,12 @@ public enum MetadataEngine {
         else if before.kind.isImage { try StillContainerMetadata.write(source: source, output: output, kind: before.kind, patch: patch) }
         else { _ = try await VideoMetadataWriter.write(source: source, output: output, patch: patch) }
         let after = try await inspect(output)
+        guard after.kind == before.kind else { throw ProbeError.readbackFailed("Container format changed") }
         try patch.validateReadback(after)
         let integrity = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: patch)
         guard integrity.status != .mismatch else {
             let names = integrity.checks.filter { $0.status == .failed }.map(\.name).joined(separator: ", ")
-            throw ProbeError.writeFailed("Media or non-target metadata integrity check failed: \(names)")
+            throw ProbeError.integrityMismatch(names)
         }
         completed = true
         return ProcessingResult(outputURL: output, sourceInspection: before, outputInspection: after, integrity: integrity)
@@ -117,13 +118,13 @@ public enum MetadataEngine {
         let outputInspection = try await inspect(output)
         guard outputInspection.kind == sourceInspection.kind else { throw ProbeError.readbackFailed("Container format changed") }
         guard outputInspection.metadata["make"] == patch.make, outputInspection.metadata["model"] == patch.model else {
-            throw ProbeError.readbackFailed("Requested make/model are not present exactly. Actual inspected metadata: \(outputInspection.metadata). Metadata formats: \(outputInspection.structure["metadataFormats"] ?? "ImageIO").")
+            throw ProbeError.readbackFailed("Requested make/model are not present exactly")
         }
         if let lens = patch.lens, outputInspection.metadata["lens"] != lens { throw ProbeError.readbackFailed("Requested lens is not present exactly") }
         let integrity = try await MediaIntegrity.compare(source: source, output: output, patch: patch)
         guard integrity.status != .mismatch else {
             let names = integrity.checks.filter { $0.status == .failed }.map(\.name).joined(separator: ", ")
-            throw ProbeError.writeFailed("Media or non-target metadata integrity check failed: \(names)")
+            throw ProbeError.integrityMismatch(names)
         }
         completed = true
         return ProcessingResult(outputURL: output, sourceInspection: sourceInspection, outputInspection: outputInspection, integrity: integrity)
@@ -193,23 +194,30 @@ public enum MetadataEngine {
     }
 
     /// Detect the container brand independently of the filename.
-    private static func videoKind(_ url: URL) throws -> MediaKind {
+    static func videoKind(_ url: URL) throws -> MediaKind {
         let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
-        let data = try handle.read(upToCount: 4096) ?? Data()
-        guard data.count >= 12 else { throw ProbeError.malformed("Missing container brand") }
+        let fileSize = try handle.seekToEnd(); try handle.seek(toOffset: 0)
+        let header = try handle.read(upToCount: 8) ?? Data()
+        guard header.count == 8 else { throw ProbeError.malformed("Missing container brand") }
         // Controlled fixtures require ftyp at the beginning; no extension-based assumption.
-        guard String(decoding: data[4..<8], as: UTF8.self) == "ftyp" else { throw ProbeError.unsupported("Non-leading ftyp is not qualified") }
-        let boxSize = Int(data[0]) << 24 | Int(data[1]) << 16 | Int(data[2]) << 8 | Int(data[3])
-        let brand = String(decoding: data[8..<12], as: UTF8.self)
-        if brand == "qt  " { return .mov }
+        guard String(decoding: header[4..<8], as: UTF8.self) == "ftyp" else { throw ProbeError.unsupported("Non-leading ftyp is not qualified") }
+        var boxSize = header.prefix(4).reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
+        var headerSize: UInt64 = 8
+        if boxSize == 1 {
+            let extended = try handle.read(upToCount: 8) ?? Data()
+            guard extended.count == 8 else { throw ProbeError.malformed("Truncated extended ftyp size") }
+            boxSize = extended.reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }; headerSize = 16
+        }
+        guard boxSize >= headerSize + 8, boxSize <= fileSize else { throw ProbeError.malformed("Invalid ftyp bounds") }
+        guard boxSize <= 16 * 1_048_576 else { throw ProbeError.unsupported("Container brand list exceeds metadata budget") }
+        let data = try handle.read(upToCount: Int(boxSize - headerSize)) ?? Data()
+        guard data.count == Int(boxSize - headerSize), (data.count - 8) % 4 == 0 else { throw ProbeError.malformed("Truncated container brand list") }
+        let brand = String(decoding: data[0..<4], as: UTF8.self)
         var brands = [brand]
-        if data.count >= 16 {
-            let limit = boxSize == 0 ? data.count : min(data.count, boxSize)
-            var offset = 16
-            while offset + 4 <= limit {
-                brands.append(String(decoding: data[offset..<offset + 4], as: UTF8.self))
-                offset += 4
-            }
+        var offset = 8
+        while offset + 4 <= data.count {
+            brands.append(String(decoding: data[offset..<offset + 4], as: UTF8.self))
+            offset += 4
         }
         if brands.contains("qt  ") { return .mov }
         let mp4Brands: Set<String> = [

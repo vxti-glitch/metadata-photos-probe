@@ -74,6 +74,32 @@ void main() {
       );
     },
   );
+  test('malformed optional output labels fail as protocol format errors', () {
+    final processing = <String, Object?>{
+      'id': outputId,
+      'createdAt': '2026-10-08T12:00:00Z',
+      'patch': {'make': 'Test Make', 'model': 'Test Camera'},
+      'outputInspection': inspectionMap(),
+      'integrity': {
+        'status': 'verified',
+        'checks': [
+          {'name': 'Payload', 'status': 'passed', 'detail': 'Matches.'},
+        ],
+        'limitations': <String>[],
+      },
+    };
+    expect(
+      () => Processing.decode({...processing, 'outputDisplayName': 4827}),
+      throwsFormatException,
+    );
+    expect(
+      () => Processing.decode({
+        ...processing,
+        'autoExportFolder': ['Files'],
+      }),
+      throwsFormatException,
+    );
+  });
   test(
     'unknown check status and empty check lists cannot certify integrity',
     () {
@@ -160,7 +186,19 @@ void main() {
         simplifyUserError(
           'Native metadata processing or independent integrity verification failed.',
         ),
-        contains('select a clean Camera Profile'),
+        contains('preserved'),
+      );
+      expect(
+        simplifyUserError('Integrity checks are incomplete.'),
+        contains('processed copy remains available'),
+      );
+      expect(
+        simplifyUserError('altitude is out of range.'),
+        contains('-100,000m and 100,000m'),
+      );
+      expect(
+        simplifyUserError('Photos permission is required.'),
+        contains('Full Library Access is optional'),
       );
     },
   );

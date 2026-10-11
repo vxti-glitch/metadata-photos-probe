@@ -121,7 +121,7 @@ struct BoxInventory {
     let types: [String]
     let payloadHashes: [String]
     /// Top-level ISO BMFF inventory, intentionally not a full HEIF graph verifier.
-    static func read(_ url: URL) throws -> BoxInventory {
+    static func read(_ url: URL, hashMediaPayload: Bool = true) throws -> BoxInventory {
         let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
         let end = try handle.seekToEnd(); try handle.seek(toOffset: 0)
         var offset: UInt64 = 0, types = [String](), hashes = [String]()
@@ -131,6 +131,7 @@ struct BoxInventory {
         }
         func integer(_ bytes: Data) -> UInt64 { bytes.reduce(0) { ($0 << 8) | UInt64($1) } }
         while offset < end {
+            try Task.checkCancellation()
             guard end - offset >= 8 else { throw ProbeError.malformed("Truncated box header") }
             let header = try exact(8)
             var size = integer(header.prefix(4)); var headerSize: UInt64 = 8
@@ -140,7 +141,7 @@ struct BoxInventory {
             guard size >= headerSize, size <= end - offset else { throw ProbeError.malformed("Box exceeds file bounds") }
             types.append(type)
             guard types.count <= 10_000 else { throw ProbeError.malformed("Too many top-level boxes") }
-            if type == "mdat" {
+            if type == "mdat", hashMediaPayload {
                 var digest = SHA256(), remaining = size - headerSize
                 while remaining > 0 {
                     try Task.checkCancellation()

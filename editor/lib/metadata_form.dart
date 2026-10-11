@@ -419,53 +419,6 @@ class _MetadataFormState extends State<MetadataForm>
     });
   }
 
-  MetadataPatch _offsetPatchDates(MetadataPatch patch, Duration offset) {
-    if (offset == Duration.zero) return patch;
-    final values = {...patch.values};
-    for (final key in [
-      ...sharedDateOffsets.keys,
-      ...movieDateKeys,
-      'quickTimeCreationDate',
-    ]) {
-      final val = values[key];
-      if (val is String) {
-        if (RegExp(r'^\d{4}:\d{2}:\d{2} \d{2}:\d{2}:\d{2}$').hasMatch(val)) {
-          try {
-            final dt = DateTime.parse(
-              '${val.substring(0, 10).replaceAll(':', '-')}T${val.substring(11)}',
-            );
-            final shifted = dt.add(offset);
-            values[key] =
-                '${shifted.year.toString().padLeft(4, '0')}:${shifted.month.toString().padLeft(2, '0')}:${shifted.day.toString().padLeft(2, '0')} ${shifted.hour.toString().padLeft(2, '0')}:${shifted.minute.toString().padLeft(2, '0')}:${shifted.second.toString().padLeft(2, '0')}';
-          } catch (_) {}
-        } else {
-          try {
-            final dt = DateTime.parse(val);
-            final shifted = dt.add(offset);
-            final tzMatch = RegExp(r'([+-]\d{2}:\d{2})$').firstMatch(val);
-            if (val.endsWith('Z')) {
-              values[key] =
-                  '${shifted.toUtc().toIso8601String().substring(0, 19)}Z';
-            } else if (tzMatch != null) {
-              String two(int n) => n.toString().padLeft(2, '0');
-              values[key] =
-                  '${shifted.year.toString().padLeft(4, '0')}-${two(shifted.month)}-${two(shifted.day)}T${two(shifted.hour)}:${two(shifted.minute)}:${two(shifted.second)}${tzMatch.group(1)}';
-            } else {
-              String two(int n) => n.toString().padLeft(2, '0');
-              final tz = shifted.timeZoneOffset;
-              final minutes = tz.inMinutes.abs();
-              final tzText =
-                  '${tz.isNegative ? '-' : '+'}${two(minutes ~/ 60)}:${two(minutes % 60)}';
-              values[key] =
-                  '${shifted.year.toString().padLeft(4, '0')}-${two(shifted.month)}-${two(shifted.day)}T${two(shifted.hour)}:${two(shifted.minute)}:${two(shifted.second)}$tzText';
-            }
-          } catch (_) {}
-        }
-      }
-    }
-    return MetadataPatch(values: values, removals: patch.removals);
-  }
-
   Future<void> _process() async {
     try {
       if (widget.batch) {
@@ -556,16 +509,14 @@ class _MetadataFormState extends State<MetadataForm>
           } else {
             itemPatch = _standaloneAutomaticDates(itemManual, source);
           }
-          if (_batchStaggerSeconds > 0 && i > 0) {
-            itemPatch = _offsetPatchDates(
-              itemPatch,
-              Duration(seconds: i * _batchStaggerSeconds),
-            );
-          }
           patches[source.id] = itemPatch;
         }
+        final staggeredPatches = offsetBatchDatePatches(
+          patches,
+          Duration(seconds: _batchStaggerSeconds),
+        );
         final sanitizedPatches = <String, MetadataPatch>{};
-        for (final entry in patches.entries) {
+        for (final entry in staggeredPatches.entries) {
           final source = sources.firstWhere((s) => s.id == entry.key);
           final fields = widget.controller.capabilities!.fieldsFor(
             source.inspection.kind,
@@ -892,18 +843,22 @@ class _MetadataFormState extends State<MetadataForm>
                 const SizedBox(height: 8),
                 const Divider(height: 1, color: Color(0xFF2C2C2E)),
                 const SizedBox(height: 8),
-                const Row(
+                Row(
                   children: [
                     Icon(
-                      Icons.folder_outlined,
+                      output.autoExportFolder == null
+                          ? Icons.phone_iphone_outlined
+                          : Icons.folder_outlined,
                       size: 16,
-                      color: Color(0xFF0A84FF),
+                      color: const Color(0xFF0A84FF),
                     ),
-                    SizedBox(width: 6),
+                    const SizedBox(width: 6),
                     Expanded(
                       child: Text(
-                        'Saved to: On My iPhone › Metadata Editor › Processed Media',
-                        style: TextStyle(
+                        output.autoExportFolder == null
+                            ? 'Held in the app. Export to Files after reviewing the checks.'
+                            : 'Saved to: ${output.autoExportFolder}',
+                        style: const TextStyle(
                           fontSize: 11,
                           color: Color(0xFF8E8E93),
                         ),
@@ -1934,8 +1889,14 @@ class _MetadataFormState extends State<MetadataForm>
               children: [
                 TextField(
                   controller: text,
-                  maxLength: 80,
-                  decoration: const InputDecoration(labelText: 'Name'),
+                  onChanged: (_) => update(() {}),
+                  decoration: InputDecoration(
+                    labelText: 'Name',
+                    helperText: 'Up to 128 UTF-8 bytes',
+                    errorText: text.text.isEmpty
+                        ? null
+                        : validatePresetName(text.text),
+                  ),
                 ),
                 if (profileBaseline != null)
                   CheckboxListTile(
@@ -1952,7 +1913,9 @@ class _MetadataFormState extends State<MetadataForm>
                 child: const Text('Cancel'),
               ),
               TextButton(
-                onPressed: () => Navigator.pop(context, text.text),
+                onPressed: validatePresetName(text.text) == null
+                    ? () => Navigator.pop(context, text.text)
+                    : null,
                 child: const Text('Save'),
               ),
             ],

@@ -21,6 +21,28 @@ final class ProbeCoreTests: XCTestCase {
         XCTAssertEqual(try WholeFileDigest.sha256(url), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
     }
 
+    func testReadOnlyImportedMovieCanBeEditedWithoutChangingSourcePermissions() async throws {
+        for kind in [MediaKind.mp4, .mov] {
+            let source = folder.appendingPathComponent("readonly-source.\(kind.rawValue)")
+            let output = folder.appendingPathComponent("readonly-output.\(kind.rawValue)")
+            try await makeVideo(source, kind: kind)
+            try FileManager.default.setAttributes([.posixPermissions: 0o400], ofItemAtPath: source.path)
+            let sourceHash = try WholeFileDigest.sha256(source)
+            let inherited = folder.appendingPathComponent("unmodified-copy.\(kind.rawValue)")
+            try FileManager.default.copyItem(at: source, to: inherited)
+            let inheritedPermissions = try FileManager.default.attributesOfItem(atPath: inherited.path)[.posixPermissions] as? NSNumber
+            XCTAssertEqual(inheritedPermissions?.intValue, 0o400, "Copying an imported source retains its read-only mode")
+            let result = try await MetadataEngine.processMetadataPatch(source: source, output: output,
+                patch: MetadataPatch(values: ["make": .string("Apple"), "model": .string("Readonly fixture")]))
+            XCTAssertEqual(result.outputInspection.metadata["make"], "Apple")
+            XCTAssertEqual(result.outputInspection.metadata["model"], "Readonly fixture")
+            XCTAssertFalse(result.integrity.checks.contains { $0.status == .failed })
+            XCTAssertEqual(try WholeFileDigest.sha256(source), sourceHash)
+            let permissions = try FileManager.default.attributesOfItem(atPath: source.path)[.posixPermissions] as? NSNumber
+            XCTAssertEqual(permissions?.intValue, 0o400)
+        }
+    }
+
     func testPatchRejectsEmptyControlsAndOversizedInput() {
         for invalid in ["", " \n", "a\0b", String(repeating: "é", count: 129)] {
             XCTAssertThrowsError(try CameraPatch(make: invalid, model: "Valid").validate())
@@ -71,6 +93,27 @@ final class ProbeCoreTests: XCTestCase {
         let inventory = try BoxInventory.read(url)
         XCTAssertEqual(inventory.types, ["mdat"])
         XCTAssertEqual(inventory.payloadHashes, ["ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"])
+        let structure = try BoxInventory.read(url, hashMediaPayload: false)
+        XCTAssertEqual(structure.types, inventory.types)
+        XCTAssertTrue(structure.payloadHashes.isEmpty, "Structural inspection must not scan media payloads")
+    }
+
+    func testVideoBrandDetectionHandlesExtendedFTYPAndFullBrandList() throws {
+        let url = folder.appendingPathComponent("brands.mp4")
+        func size(_ n: UInt64, width: Int) -> Data {
+            Data((0..<width).map { UInt8((n >> ((width - 1 - $0) * 8)) & 255) })
+        }
+        let payload = Data("test".utf8) + Data(repeating: 0, count: 4) + Data("isom".utf8)
+        try (size(1, width: 4) + Data("ftyp".utf8) + size(UInt64(payload.count + 16), width: 8) + payload).write(to: url)
+        XCTAssertEqual(try MetadataEngine.videoKind(url), .mp4)
+        let longPayload = Data("test".utf8) + Data(repeating: 0, count: 4) + Data(String(repeating: "test", count: 1100).utf8) + Data("qt  ".utf8)
+        try (size(UInt64(longPayload.count + 8), width: 4) + Data("ftyp".utf8) + longPayload).write(to: url)
+        XCTAssertEqual(try MetadataEngine.videoKind(url), .mov)
+        for bytes in [size(12, width: 4) + Data("ftypisom".utf8), size(40, width: 4) + Data("ftyp".utf8) + payload,
+                      size(21, width: 4) + Data("ftyp".utf8) + payload + Data([0])] {
+            try bytes.write(to: url)
+            XCTAssertThrowsError(try MetadataEngine.videoKind(url))
+        }
     }
 
     func testTimeComparisonNormalizesRationalTimesWithoutFloatingPoint() {
@@ -196,6 +239,14 @@ final class ProbeCoreTests: XCTestCase {
         XCTAssertEqual(result.status, .verified)
         XCTAssertEqual(result.checks.first { $0.name == "exact complete file bytes" }?.status, .passed)
         XCTAssertTrue(result.limitations.isEmpty)
+
+        let pngSource = folder.appendingPathComponent("source.png"), pngOutput = folder.appendingPathComponent("unchanged.png")
+        try makeImage(pngSource, type: UTType.png.identifier, orientation: 6)
+        try FileManager.default.copyItem(at: pngSource, to: pngOutput)
+        let pngResult = try await MediaIntegrity.compare(source: pngSource, output: pngOutput)
+        XCTAssertEqual(pngResult.status, .verified, "An exact no-op copy proves the complete PNG bytes, including opaque EXIF")
+        XCTAssertEqual(pngResult.checks.first { $0.name == "exact complete file bytes" }?.status, .passed)
+        XCTAssertTrue(pngResult.limitations.isEmpty)
     }
 
     func testKnownTrackLossAndDurationChangeFailBeforeOpaqueSampleQualification() {
@@ -211,6 +262,33 @@ final class ProbeCoreTests: XCTestCase {
         XCTAssertEqual(MediaIntegrity.videoStructureChecks(source: source, output: changedType).first?.status, .failed)
         let shorter = inspection("2", "vide,soun", "1/2@0")
         XCTAssertEqual(MediaIntegrity.videoStructureChecks(source: source, output: shorter).last?.status, .failed)
+    }
+
+    func testVideoFingerprintResiliencePreservesCancellationAndIncompleteDetail() throws {
+        XCTAssertThrowsError(try MediaIntegrity.videoFingerprintFailureDetail(
+            CancellationError(), taskIsCancelled: false
+        )) { XCTAssertTrue($0 is CancellationError) }
+
+        // AVAssetReader can report an underlying framework error after its task
+        // has been canceled. That must also abort instead of becoming exportable
+        // incomplete evidence.
+        XCTAssertThrowsError(try MediaIntegrity.videoFingerprintFailureDetail(
+            ProbeError.malformed("reader stopped"), taskIsCancelled: true
+        )) { XCTAssertTrue($0 is CancellationError) }
+
+        let readerError = ProbeError.unsupported("Compressed reader unavailable")
+        XCTAssertEqual(
+            try MediaIntegrity.videoFingerprintFailureDetail(readerError, taskIsCancelled: false),
+            readerError.localizedDescription
+        )
+    }
+
+    func testTrackScopedMetadataRequiresEveryVideoTrackToReadBack() {
+        XCTAssertEqual(MediaIntegrity.videoTrackReadbackStatus([.passed, .passed], expectedTrackCount: 2), .passed)
+        XCTAssertEqual(MediaIntegrity.videoTrackReadbackStatus([.passed, .failed], expectedTrackCount: 2), .failed)
+        XCTAssertEqual(MediaIntegrity.videoTrackReadbackStatus([.passed, .notChecked], expectedTrackCount: 2), .notChecked)
+        XCTAssertEqual(MediaIntegrity.videoTrackReadbackStatus([.passed], expectedTrackCount: 2), .notChecked)
+        XCTAssertEqual(MediaIntegrity.videoTrackReadbackStatus([], expectedTrackCount: 0), .notChecked)
     }
 
     func testIntegrityExcludesOnlyAnExplicitlyRequestedLensAndChecksItsValue() async throws {
@@ -311,6 +389,10 @@ final class ProbeCoreTests: XCTestCase {
             try patch.validateReadback(result.outputInspection)
             XCTAssertEqual(result.outputInspection.kind, kind); XCTAssertEqual(result.outputInspection.structure, result.sourceInspection.structure)
             XCTAssertFalse(result.integrity.checks.contains { $0.status == .failed }, "\(kind): \(result.integrity.checks)")
+            if kind == .png {
+                XCTAssertEqual(result.integrity.status, .incomplete, "PNG non-eXIf byte equality does not qualify opaque TIFF metadata")
+                XCTAssertTrue(result.integrity.limitations.contains { $0.contains("Opaque PNG eXIf/TIFF") })
+            }
             XCTAssertEqual(try WholeFileDigest.sha256(source), original)
         }
     }

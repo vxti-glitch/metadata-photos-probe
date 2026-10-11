@@ -44,6 +44,7 @@ public enum MediaIntegrity {
             } else if before.kind == .png && after.kind == .png {
                 check("PNG compressed pixels and non-target chunks", try StillContainerMetadata.pngFingerprint(source) == StillContainerMetadata.pngFingerprint(output),
                     "Hash every PNG chunk except the deliberately edited eXIf chunk. IDAT, alpha, palette, profile and presentation bytes remain exact.")
+                limitations.append("Opaque PNG eXIf/TIFF tags, maker notes and SubIFD graphs are not fully qualified; this result cannot certify arbitrary originals.")
             } else {
                 do {
                     let original = try HEICMetadataWriter.inventory(source), edited = try HEICMetadataWriter.inventory(output)
@@ -70,7 +71,12 @@ public enum MediaIntegrity {
                         "Compare encoded samples/timing/format/transform. Source: \(original[index].payloadBytes) encoded bytes, \(original[index].sampleBuffers) buffers, \(original[index].emptyMarkers) empty no-image markers; output: \(edited[index].payloadBytes) encoded bytes, \(edited[index].sampleBuffers) buffers, \(edited[index].emptyMarkers) empty no-image markers. Empty markers have no compressed bytes to verify.")
                 }
             } catch {
-                let detail = (error as? ProbeError)?.localizedDescription ?? error.localizedDescription
+                // The broader catch below is a resilience boundary for cases where
+                // AVAssetReader cannot expose encoded samples. Cancellation is a
+                // control signal, however, and must never be downgraded to an
+                // incomplete-but-exportable comparison. AVFoundation may surface
+                // its own reader error after the task was canceled, so inspect both.
+                let detail = try videoFingerprintFailureDetail(error, taskIsCancelled: Task.isCancelled)
                 checks.append(IntegrityCheck(name: "video compressed samples", status: .notChecked, detail: detail))
                 limitations.append("Compressed verification unsupported for this structure: \(detail)")
             }
@@ -175,14 +181,15 @@ public enum MediaIntegrity {
             }
             trackItems.append(items)
         }
-        let containerInspected = (try? VideoMetadataWriter.inspect(url)) ?? [:]
+        let containerInspected = try? VideoMetadataWriter.inspect(url)
+        let perVideoTrackInspected = try? VideoMetadataWriter.inspectVideoTrackMetadata(url)
         for (key, atom) in VideoMetadataFields.keys.merging(VideoMetadataFields.trackKeys, uniquingKeysWith: { a, _ in a }) where patch.targetedKeys.contains(key) {
             let isTrackKey = VideoMetadataFields.trackKeys[key] != nil
             let collections = isTrackKey ? trackItems : [movieItems]
             guard !collections.isEmpty else { checks.append(IntegrityCheck(name: "AVFoundation target \(key)", status: .failed, detail: "No video track is available for target readback.")); continue }
-            var matches = false
+            var statuses = [CheckStatus]()
             if let target = patch.values[key] {
-                for collection in collections {
+                for (index, collection) in collections.enumerated() {
                     let found = collection.filter {
                         $0.identifier?.rawValue == "mdta/" + atom ||
                         $0.identifier?.rawValue == "quickTimeMetadata/" + atom ||
@@ -193,15 +200,25 @@ public enum MediaIntegrity {
                     if found.isEmpty {
                         // Fallback: If AVFoundation does not deserialize track-level mdta items,
                         // verify directly against the binary container inspector.
-                        if let containerVal = containerInspected[atom] ?? containerInspected[key] {
+                        let binaryMetadata: [String: String]?
+                        if isTrackKey {
+                            if let perVideoTrackInspected, perVideoTrackInspected.indices.contains(index) {
+                                binaryMetadata = perVideoTrackInspected[index]
+                            } else { binaryMetadata = nil }
+                        } else { binaryMetadata = containerInspected }
+                        let containerVal = binaryMetadata?[atom] ?? binaryMetadata?[key]
+                        if let containerVal {
                             if let n = target.number {
                                 let scalar = Double(containerVal.hasPrefix("F") ? String(containerVal.dropFirst()) : containerVal)
-                                if let scalar, abs(scalar - n) <= MetadataPatch.numericTolerance(for: key, value: n) { matches = true; break }
+                                statuses.append(scalar.map { abs($0 - n) <= MetadataPatch.numericTolerance(for: key, value: n) } == true ? .passed : .failed)
                             } else {
                                 let sanitized = MetadataPatch.sanitizeText(target.text)
                                 let trimmed = containerVal.trimmingCharacters(in: CharacterSet(charactersIn: "\0"))
-                                if containerVal == target.text || containerVal == sanitized || trimmed == target.text || trimmed == sanitized { matches = true; break }
+                                let matches = containerVal == target.text || containerVal == sanitized || trimmed == target.text || trimmed == sanitized
+                                statuses.append(matches ? .passed : .failed)
                             }
+                        } else {
+                            statuses.append(binaryMetadata == nil ? .notChecked : .failed)
                         }
                     } else {
                         var allItemsMatch = true
@@ -227,21 +244,47 @@ public enum MediaIntegrity {
                                 if value != target.text && value != sanitized && trimmed != target.text && trimmed != sanitized { allItemsMatch = false; break }
                             }
                         }
-                        if allItemsMatch { matches = true; break }
+                        statuses.append(allItemsMatch ? .passed : .failed)
                     }
                 }
             } else {
-                matches = collections.allSatisfy { collection in
+                let avFoundationShowsTarget = collections.contains { collection in
                     collection.filter {
                         $0.identifier?.rawValue == "mdta/" + atom ||
                         $0.identifier?.rawValue == "quickTimeMetadata/" + atom ||
                         $0.identifier?.rawValue == atom ||
                         $0.identifier?.rawValue.hasSuffix("/" + atom) == true ||
                         ($0.key as? String) == atom
-                    }.isEmpty
+                    }.isEmpty == false
+                }
+                if avFoundationShowsTarget {
+                    statuses = [.failed]
+                } else if isTrackKey {
+                    if let perVideoTrackInspected, perVideoTrackInspected.count == collections.count {
+                        statuses = perVideoTrackInspected.map {
+                            $0[atom] == nil && $0[key] == nil ? .passed : .failed
+                        }
+                    } else {
+                        if let perVideoTrackInspected,
+                           perVideoTrackInspected.contains(where: { $0[atom] != nil || $0[key] != nil }) {
+                            statuses = [.failed]
+                        } else {
+                            statuses = [.notChecked]
+                        }
+                    }
+                } else {
+                    if let containerInspected {
+                        statuses = [containerInspected[atom] == nil && containerInspected[key] == nil ? .passed : .failed]
+                    } else {
+                        statuses = [.notChecked]
+                    }
                 }
             }
-            checks.append(IntegrityCheck(name: "AVFoundation target \(key)", status: matches ? .passed : .failed, detail: "Read selected UTF-8 camera values from the correct movie/video-track key space with AVFoundation."))
+            let status = isTrackKey
+                ? videoTrackReadbackStatus(statuses, expectedTrackCount: collections.count)
+                : (statuses.contains(.failed) ? .failed : (statuses.contains(.notChecked) ? .notChecked : .passed))
+            checks.append(IntegrityCheck(name: "AVFoundation target \(key)", status: status,
+                detail: "Verify each selected value in its movie/video-track key space; use bounded container readback only when AVFoundation omits that value."))
         }
         return checks
     }
@@ -320,6 +363,18 @@ public enum MediaIntegrity {
             IntegrityCheck(name: "video exposed duration", status: durationMatches ? .passed : .failed,
                 detail: "Source \(source.structure["duration"] ?? "missing"), output \(output.structure["duration"] ?? "missing"). Independent of compressed sample support.")
         ]
+    }
+
+    static func videoTrackReadbackStatus(_ perTrackResults: [CheckStatus], expectedTrackCount: Int) -> CheckStatus {
+        if perTrackResults.contains(.failed) { return .failed }
+        guard expectedTrackCount > 0, perTrackResults.count == expectedTrackCount,
+              perTrackResults.allSatisfy({ $0 == .passed }) else { return .notChecked }
+        return .passed
+    }
+
+    static func videoFingerprintFailureDetail(_ error: Error, taskIsCancelled: Bool) throws -> String {
+        guard !taskIsCancelled, !(error is CancellationError) else { throw CancellationError() }
+        return (error as? ProbeError)?.localizedDescription ?? error.localizedDescription
     }
 
     private static func markerLabels(_ signatures: [String]) -> String {

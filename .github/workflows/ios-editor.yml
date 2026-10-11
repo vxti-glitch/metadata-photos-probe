@@ -8,8 +8,7 @@ on:
       - 'Sources/**'
       - 'Tests/**'
       - 'Package.swift'
-      - 'scripts/editor-*'
-      - 'scripts/build-editor-macos.sh'
+      - 'scripts/**'
       - '.github/workflows/ios-editor.yml'
   pull_request:
     paths:
@@ -17,8 +16,7 @@ on:
       - 'Sources/**'
       - 'Tests/**'
       - 'Package.swift'
-      - 'scripts/editor-*'
-      - 'scripts/build-editor-macos.sh'
+      - 'scripts/**'
       - '.github/workflows/ios-editor.yml'
   workflow_dispatch:
 

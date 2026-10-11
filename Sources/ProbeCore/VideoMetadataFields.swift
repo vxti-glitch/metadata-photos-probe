@@ -27,6 +27,17 @@ enum VideoMetadataFields {
     static let supported = Set(keys.keys).union(trackKeys.keys).union(dateKeys).union(gpsKeys)
     static let locationKey = "com.apple.quicktime.location.ISO6709"
     static func values(_ patch: MetadataPatch, existing: [String: String], track: Bool) throws -> [String: String?] {
+        let removesLatitude = patch.removals.contains("latitude")
+        let removesLongitude = patch.removals.contains("longitude")
+        guard removesLatitude == removesLongitude else {
+            throw ProbeError.unsupported("Movie location is stored as a latitude/longitude pair; remove both coordinates together")
+        }
+        if removesLatitude, existing["altitude"] != nil, !patch.removals.contains("altitude") {
+            throw ProbeError.unsupported("Removing a movie location also removes its altitude; explicitly remove altitude too")
+        }
+        if removesLatitude, !patch.values.keys.isDisjoint(with: gpsKeys) {
+            throw ProbeError.unsupported("A movie location pair cannot be removed while setting another coordinate")
+        }
         for key in dateKeys.union(["dateTimeOriginal"]) {
             guard let value = patch.values[key] else { continue }
             let iso = ISO8601DateFormatter()

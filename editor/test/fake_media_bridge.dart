@@ -48,7 +48,9 @@ MediaSession fixture({
             createdAt: DateTime.utc(2026, 10, 8),
             patch: patch,
             outputDisplayName: 'IMG_4827.${kind.name}',
-            autoExportFolder: 'Processed Media',
+            autoExportFolder: status == IntegrityStatus.verified && !failedCheck
+                ? 'On My iPhone/Metadata Editor/Processed Media'
+                : null,
             inspection: inspection({
               'make': patch.make,
               'model': patch.model,
@@ -257,7 +259,9 @@ class FakeMediaBridge implements MediaBridge {
         patch: const CameraPatch(make: '', model: ''),
         metadataPatch: patch,
         outputDisplayName: 'IMG_4827.${source.inspection.kind.name}',
-        autoExportFolder: 'Processed Media',
+        autoExportFolder: nextStatus == IntegrityStatus.verified
+            ? 'On My iPhone/Metadata Editor/Processed Media'
+            : null,
         inspection: MediaInspection(
           kind: source.inspection.kind,
           byteCount: source.inspection.byteCount,

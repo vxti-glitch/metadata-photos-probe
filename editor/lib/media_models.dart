@@ -210,6 +210,12 @@ class Processing {
     if (lens != null && lens is! String) {
       throw const FormatException('Invalid lens.');
     }
+    final outputDisplayName = value['outputDisplayName'];
+    final autoExportFolder = value['autoExportFolder'];
+    if ((outputDisplayName != null && outputDisplayName is! String) ||
+        (autoExportFolder != null && autoExportFolder is! String)) {
+      throw const FormatException('Invalid output display information.');
+    }
     return Processing(
       id: identifier(value, 'id'),
       createdAt: timestamp(value, 'createdAt'),
@@ -223,8 +229,8 @@ class Processing {
         lens: lens as String?,
       ),
       metadataPatch: fullPatch,
-      outputDisplayName: value['outputDisplayName'] as String?,
-      autoExportFolder: value['autoExportFolder'] as String?,
+      outputDisplayName: outputDisplayName as String?,
+      autoExportFolder: autoExportFolder as String?,
       inspection: MediaInspection.decode(value['outputInspection']),
       integrity: IntegrityReport.decode(value['integrity']),
     );

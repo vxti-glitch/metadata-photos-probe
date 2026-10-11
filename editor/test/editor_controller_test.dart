@@ -117,6 +117,34 @@ void main() {
     },
   );
   test(
+    'failed history refresh after cancellation disables stale cached exports',
+    () async {
+      await import();
+      bridge.nextStatus = IntegrityStatus.verified;
+      await controller.process(patch);
+      expect(controller.canExport, isTrue);
+
+      bridge.pendingProcess = Completer<MediaSession>();
+      final processing = controller.process(patch);
+      await controller.cancel();
+      bridge.pendingProcess!.complete(
+        fixture(status: IntegrityStatus.verified, processingId: nextOutputId),
+      );
+      bridge.historyError = PlatformException(
+        code: 'storage',
+        message: 'History unavailable.',
+      );
+      await processing;
+
+      expect(controller.ready, isFalse);
+      expect(controller.canExport, isFalse);
+      expect(controller.error, 'History unavailable.');
+      expect(controller.lastErrorCode, 'ERR_STORAGE_FULL');
+      expect(controller.notice, contains('Retry startup'));
+      expect(bridge.exports, 0);
+    },
+  );
+  test(
     'failure clears stale processing output and leaves the original selected',
     () async {
       await import();
@@ -443,6 +471,70 @@ void main() {
       expect(thirdController.selectedCameraId, isNull);
     },
   );
+  test('profile preference persistence failures are reported without escaping UI callbacks', () async {
+    await controller.initialize();
+    bridge.stateSaveError = PlatformException(
+      code: 'storage',
+      message: 'Preferences could not be saved.',
+    );
+
+    await expectLater(
+      controller.rememberSelectedProfile(
+        brand: 'Apple',
+        profileId: 'iphone-test',
+        cameraId: 'main',
+      ),
+      completes,
+    );
+    expect(controller.selectedProfileId, 'iphone-test');
+    expect(controller.lastErrorMessage, 'Preferences could not be saved.');
+  });
+
+  test('resetPresets reports storage failure and rolls state back', () async {
+    await controller.initialize();
+    await controller.savePreset(
+      'Keep this preset',
+      MetadataPatch(values: {'make': 'Apple'}),
+    );
+    bridge.stateSaveError = PlatformException(
+      code: 'storage',
+      message: 'Preset storage is unavailable.',
+    );
+
+    await expectLater(controller.resetPresets(), completes);
+    expect(controller.presets.map((preset) => preset.name), [
+      'Keep this preset',
+    ]);
+    expect(controller.lastErrorMessage, 'Preset storage is unavailable.');
+    expect(controller.busy, isFalse);
+  });
+
+  test('resetPresets cannot run while media processing is active', () async {
+    await controller.initialize();
+    await controller.savePreset(
+      'Keep this preset',
+      MetadataPatch(values: {'make': 'Apple'}),
+    );
+    bridge.sessions = [fixture()];
+    await controller.initialize();
+    controller.select(controller.sessions.single);
+    bridge.metadataLease = Completer<void>();
+    final processing = controller.processMetadata(
+      MetadataPatch(values: {'iso': 200}),
+    );
+    for (var i = 0; i < 5 && bridge.processes == 0; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(controller.busy, isTrue);
+
+    await controller.resetPresets();
+    expect(controller.presets.map((preset) => preset.name), [
+      'Keep this preset',
+    ]);
+
+    bridge.metadataLease!.complete();
+    await processing;
+  });
 
   test(
     'exportSelectedBatch sets clear qualification message when copies unready',
@@ -515,6 +607,40 @@ void main() {
     expect(
       EditorController.classifyErrorCode('Unsupported container or codec'),
       'ERR_UNSUPPORTED_MEDIA',
+    );
+    expect(
+      EditorController.classifyErrorCode('Unexpected internal failure.'),
+      'ERR_PROCESSING',
+    );
+  });
+  test('native diagnostic codes map to the matching user guide category', () {
+    expect(
+      EditorController.classifyFailureCode(
+        PlatformException(code: 'readback', message: 'Fixed safe message.'),
+        'Fixed safe message.',
+      ),
+      'ERR_MEDIA_INTEGRITY',
+    );
+    expect(
+      EditorController.classifyFailureCode(
+        PlatformException(code: 'unsupported', message: 'Fixed safe message.'),
+        'Fixed safe message.',
+      ),
+      'ERR_UNSUPPORTED_MEDIA',
+    );
+    expect(
+      EditorController.classifyFailureCode(
+        PlatformException(code: 'storage', message: 'Fixed safe message.'),
+        'Fixed safe message.',
+      ),
+      'ERR_STORAGE_FULL',
+    );
+    expect(
+      EditorController.classifyFailureCode(
+        PlatformException(code: 'processing', message: 'Fixed safe message.'),
+        'Fixed safe message.',
+      ),
+      'ERR_PROCESSING',
     );
   });
 

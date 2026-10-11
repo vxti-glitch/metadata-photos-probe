@@ -30,8 +30,8 @@ When you select an image or video file using the system document picker (UIDocum
 • Processing Location: All parsing, rewriting, and cryptographic checksum validations occur entirely in-memory and in local sandboxed storage within your iOS device. Your media is never uploaded to external servers or cloud endpoints.
 
 B. Device & Photo Library Permissions
-• Files & Storage Access: Metadata Editor requests access strictly to the individual files or folders you explicitly select through the standard iOS document picker.
-• Apple Photos Access: Metadata Editor does not require or request broad PHPhotoLibrary background read/write permissions. To preserve source attribution independence, media transfers to Apple Photos follow the user-directed manual workflow (saving to the local Files app and importing via iCloud Photos or Safari).
+• Files & Storage Access: Metadata Editor requests access to the individual files or folders you explicitly select through the standard iOS document picker.
+• Apple Photos Access: When you choose Photos import, the app requests iOS Photos read/write authorization on demand and supports both full and limited library access. The app reads the selected original resource to make a sandboxed working copy; it does not modify the source Photos asset. iCloud Photos may download a cloud-backed original when selected.
 • Camera & Microphone: Metadata Editor does not access your physical device camera or microphone.
 
 C. Saved Presets & Local Settings

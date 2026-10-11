@@ -224,6 +224,35 @@ final class HEICMetadataWriterTests: XCTestCase {
         }
     }
 
+    func testRemovalRefusesExifInsideMetaIDATInsteadOfRestoringRetiredValues() throws {
+        let exif = Data([0,0,0,6]) + Data("Exif\0\0".utf8) + makeTIFF(little: false)
+        let ftyp = box("ftyp", Data("heic".utf8) + Data(repeating: 0, count: 4) + Data("mif1heic".utf8))
+        let info = Data(repeating: 0, count: 4) + encoded(2, 2)
+            + box("infe", Data([2,0,0,0]) + encoded(1, 2) + encoded(0, 2) + Data("hvc1\0".utf8))
+            + box("infe", Data([2,0,0,0]) + encoded(2, 2) + encoded(0, 2) + Data("Exif\0".utf8))
+        let prefix = Data(repeating: 0, count: 4)
+            + box("pitm", Data(repeating: 0, count: 4) + encoded(1, 2))
+            + box("iinf", info)
+            + box("iref", Data(repeating: 0, count: 4) + box("cdsc", encoded(2, 2) + encoded(1, 2) + encoded(1, 2)))
+        func location(_ primaryOffset: UInt64) -> Data {
+            Data([1,0,0,0,0x44,0]) + encoded(2, 2)
+                + encoded(1, 2) + encoded(0, 2) + encoded(0, 2) + encoded(1, 2) + encoded(primaryOffset, 4) + encoded(3, 4)
+                + encoded(2, 2) + encoded(1, 2) + encoded(0, 2) + encoded(1, 2) + encoded(0, 4) + encoded(UInt64(exif.count), 4)
+        }
+        let initialMeta = box("meta", prefix + box("iloc", location(0)) + box("idat", exif))
+        let meta = box("meta", prefix + box("iloc", location(UInt64(ftyp.count + initialMeta.count + 8))) + box("idat", exif))
+        let bytes = ftyp + meta + box("mdat", Data([1,2,3]))
+        let source = folder.appendingPathComponent("idat-exif.heic"), output = folder.appendingPathComponent("idat-removed.heic")
+        try bytes.write(to: source)
+        XCTAssertNoThrow(try HEICMetadataWriter.inventory(source), "A legal idat-based Exif locator must be recognized")
+        XCTAssertThrowsError(try HEICMetadataWriter.write(source: source, output: output, patch: MetadataPatch(removals: ["model"]))) { error in
+            guard case ProbeError.unsupported(let reason) = error else { return XCTFail("Unexpected failure: \(error)") }
+            XCTAssertTrue(reason.contains("Scrubbing Exif"))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
+        XCTAssertEqual(try Data(contentsOf: source), bytes)
+    }
+
     private func assertRejected(_ data: Data, name: String) throws {
         let source = folder.appendingPathComponent("\(name).heic"), output = folder.appendingPathComponent("\(name)-output.heic")
         try data.write(to: source)

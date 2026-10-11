@@ -96,6 +96,63 @@ final class VideoMetadataWriterTests: XCTestCase {
         XCTAssertEqual(stblData.subdata(in: csgmChildren[1].payload), word(0) + Data([5, 6, 7, 8]))
     }
 
+    func testTrackMetadataInspectorKeepsValuesSeparateAcrossVideoTracks() async throws {
+        let source = directory.appendingPathComponent("two-video-track-source.mov")
+        let output = directory.appendingPathComponent("two-video-track-output.mov")
+        let removed = directory.appendingPathComponent("two-video-track-removed.mov")
+        try structuralMovie(videoTrackCount: 2).write(to: source)
+        _ = try await VideoMetadataWriter.write(source: source, output: output,
+            patch: MetadataPatch(values: ["lensModel": .string("Requested Lens")]))
+
+        let tracks = try VideoMetadataWriter.inspectVideoTrackMetadata(output)
+        XCTAssertEqual(tracks.count, 2)
+        XCTAssertEqual(tracks[0]["com.apple.quicktime.camera.lens_model"], "Requested Lens")
+        XCTAssertEqual(tracks[1]["com.apple.quicktime.camera.lens_model"], "Requested Lens")
+
+        _ = try await VideoMetadataWriter.write(source: output, output: removed,
+            patch: MetadataPatch(removals: ["lensModel"]))
+        let removedTracks = try VideoMetadataWriter.inspectVideoTrackMetadata(removed)
+        XCTAssertEqual(removedTracks.count, 2)
+        let removalStatuses = removedTracks.map {
+            $0["com.apple.quicktime.camera.lens_model"] == nil && $0["lensModel"] == nil ? CheckStatus.passed : .failed
+        }
+        XCTAssertEqual(MediaIntegrity.videoTrackReadbackStatus(removalStatuses, expectedTrackCount: 2), .passed)
+    }
+
+    func testTrackEditPreservesNonMdtaMetaAndRefusesDuplicateMdtaContainers() async throws {
+        let nonMdta = box("meta", word(0) + box("hdlr", word(0) + word(0) + Data("mdir".utf8) + Data(repeating: 0, count: 12)) + box("free", Data([1, 2, 3, 4])))
+        let source = directory.appendingPathComponent("track-non-mdta.mov")
+        let output = directory.appendingPathComponent("track-non-mdta-edited.mov")
+        try structuralMovie(trackMeta: nonMdta).write(to: source)
+        _ = try await VideoMetadataWriter.write(source: source, output: output,
+            patch: MetadataPatch(values: ["lensModel": .string("Requested Lens")]))
+        let edited = try Data(contentsOf: output)
+        let movie = try XCTUnwrap(boxes(edited).last { $0.type == "moov" })
+        let track = try XCTUnwrap(boxes(edited.subdata(in: movie.payload)).first { $0.type == "trak" })
+        XCTAssertTrue(boxes(edited.subdata(in: movie.payload).subdata(in: track.payload)).contains {
+            $0.type == "meta" && edited.subdata(in: movie.payload).subdata(in: track.payload).subdata(in: $0.range) == nonMdta
+        })
+
+        let seed = directory.appendingPathComponent("track-metadata-seed.mov")
+        let duplicateSource = directory.appendingPathComponent("track-metadata-duplicate.mov")
+        try structuralMovie().write(to: source)
+        _ = try await VideoMetadataWriter.write(source: source, output: seed,
+            patch: MetadataPatch(values: ["lensModel": .string("Existing Lens")]))
+        try duplicateFirstTrackMetadataAsUdta(Data(contentsOf: seed)).write(to: duplicateSource)
+        try await assertRefused(Data(contentsOf: duplicateSource))
+    }
+
+    func testExtendedSizeFtypWorksAndInvalidCompatibleBrandPaddingIsRefused() async throws {
+        let extended = directory.appendingPathComponent("extended-ftyp.mov")
+        let output = directory.appendingPathComponent("extended-ftyp-edited.mov")
+        try structuralMovie(extendedFtyp: true).write(to: extended)
+        _ = try await VideoMetadataWriter.write(source: extended, output: output, patch: CameraPatch())
+        XCTAssertTrue(FileManager.default.fileExists(atPath: output.path))
+
+        let malformed = structuralMovie(ftypPayload: Data("qt  ".utf8) + word(0) + Data([0x71]))
+        try await assertRefused(malformed)
+    }
+
     func testMovieWithUnqualifiedSampleTableAtomIsStrictlyRefused() async throws {
         let unqualifiedBox = box("unkn", Data([1, 2, 3, 4]))
         let bytes = structuralMovie(sampleTableExtra: unqualifiedBox)
@@ -164,6 +221,31 @@ final class VideoMetadataWriterTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: source), original)
     }
 
+    func testRemovingCoordinatesMustExplicitlyRemoveExistingAltitude() async throws {
+        let source = directory.appendingPathComponent("gps-tuple-source.mov")
+        let seeded = directory.appendingPathComponent("gps-tuple-seeded.mov")
+        let partial = directory.appendingPathComponent("gps-tuple-partial-removal.mov")
+        let complete = directory.appendingPathComponent("gps-tuple-complete-removal.mov")
+        try structuralMovie().write(to: source)
+        _ = try await VideoMetadataWriter.write(source: source, output: seeded,
+            patch: MetadataPatch(values: ["latitude": .number(12.5), "longitude": .number(44.25), "altitude": .number(10)]))
+
+        do {
+            _ = try await VideoMetadataWriter.write(source: seeded, output: partial,
+                patch: MetadataPatch(removals: ["latitude", "longitude"]))
+            XCTFail("Removing the coordinate pair must not silently erase an untargeted altitude")
+        } catch ProbeError.unsupported { }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: partial.path))
+        XCTAssertEqual(try VideoMetadataWriter.inspect(seeded)["altitude"], "10")
+
+        _ = try await VideoMetadataWriter.write(source: seeded, output: complete,
+            patch: MetadataPatch(removals: ["latitude", "longitude", "altitude"]))
+        let readback = try VideoMetadataWriter.inspect(complete)
+        XCTAssertNil(readback["latitude"])
+        XCTAssertNil(readback["longitude"])
+        XCTAssertNil(readback["altitude"])
+    }
+
     func testGPSChangesRefuseTimedMetadataTrackWithoutDeletingSamples() async throws {
         let source = directory.appendingPathComponent("timed-source.mov"), output = directory.appendingPathComponent("timed-refused.mov")
         let original = structuralMovie(userData: Data(), mediaHandler: "meta")
@@ -174,6 +256,26 @@ final class VideoMetadataWriterTests: XCTestCase {
         } catch ProbeError.unsupported { }
         XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
         XCTAssertEqual(try Data(contentsOf: source), original)
+    }
+
+    func testOpaqueLegacyLocationRequiresExplicitActionForAllGPSComponents() async throws {
+        let source = directory.appendingPathComponent("opaque-location-source.mov")
+        let partial = directory.appendingPathComponent("opaque-location-partial.mov")
+        let full = directory.appendingPathComponent("opaque-location-full.mov")
+        let original = structuralMovie(userData: box("loci", Data("opaque ISO location with unknown altitude".utf8)))
+        try original.write(to: source)
+
+        do {
+            _ = try await VideoMetadataWriter.write(source: source, output: partial,
+                patch: MetadataPatch(removals: ["latitude", "longitude"]))
+            XCTFail("An opaque ISO location may contain an altitude that must not be silently erased")
+        } catch ProbeError.unsupported { }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: partial.path))
+        XCTAssertEqual(try Data(contentsOf: source), original)
+
+        _ = try await VideoMetadataWriter.write(source: source, output: full,
+            patch: MetadataPatch(removals: ["latitude", "longitude", "altitude"]))
+        XCTAssertNil(try VideoMetadataWriter.inspect(full)["latitude"])
     }
 
     func testAltitudeOnlyISOLocationAndOpaqueXMPRemovalRemainRefused() async throws {
@@ -343,6 +445,9 @@ final class VideoMetadataWriterTests: XCTestCase {
     private func word(_ value: UInt32) -> Data {
         Data([UInt8(value >> 24), UInt8((value >> 16) & 255), UInt8((value >> 8) & 255), UInt8(value & 255)])
     }
+    private func qword(_ value: UInt64) -> Data {
+        Data((0..<8).map { UInt8((value >> ((7 - $0) * 8)) & 255) })
+    }
     private func box(_ type: String, _ payload: Data) -> Data { word(UInt32(payload.count + 8)) + Data(type.utf8) + payload }
 
     private func movieUserData(_ data: Data) throws -> Data {
@@ -352,11 +457,33 @@ final class VideoMetadataWriterTests: XCTestCase {
         return children.subdata(in: userData.payload)
     }
 
+    private func duplicateFirstTrackMetadataAsUdta(_ data: Data) throws -> Data {
+        let movie = try XCTUnwrap(boxes(data).last { $0.type == "moov" })
+        let moviePayload = data.subdata(in: movie.payload)
+        let movieChildren = try boxes(moviePayload)
+        guard let track = movieChildren.first(where: { $0.type == "trak" }) else { throw ProbeError.malformed("No test track") }
+        let trackPayload = moviePayload.subdata(in: track.payload)
+        guard let metadata = try boxes(trackPayload).first(where: { $0.type == "meta" }) else { throw ProbeError.malformed("No test track metadata") }
+        let duplicate = box("udta", trackPayload.subdata(in: metadata.range))
+        let changedTrack = box("trak", trackPayload + duplicate)
+        var changedMoviePayload = Data()
+        for child in movieChildren {
+            changedMoviePayload.append(child.type == "trak" ? changedTrack : moviePayload.subdata(in: child.range))
+        }
+        var changedFile = data
+        changedFile.replaceSubrange(movie.range, with: box("moov", changedMoviePayload))
+        return changedFile
+    }
+
     private func structuralMovie(referenceType: String = "url ", referencePayload: Data? = nil,
                                  chunkOffset: UInt32 = 32, sampleSize: UInt32 = 4, sampleCount: UInt32 = 1,
                                  userData: Data? = nil, trackUserData: Data? = nil, mediaUserData: Data? = nil,
-                                 mediaHandler: String = "vide", sampleTableExtra: Data = Data()) -> Data {
-        let ftyp = box("ftyp", Data("qt  ".utf8) + word(0) + Data("qt  ".utf8) + word(0))
+                                 mediaHandler: String = "vide", sampleTableExtra: Data = Data(), videoTrackCount: Int = 1,
+                                 trackMeta: Data? = nil, ftypPayload: Data? = nil, extendedFtyp: Bool = false) -> Data {
+        let brands = ftypPayload ?? (Data("qt  ".utf8) + word(0) + Data("qt  ".utf8) + word(0))
+        let ftyp = extendedFtyp
+            ? word(1) + Data("ftyp".utf8) + qword(UInt64(brands.count + 16)) + brands
+            : box("ftyp", brands)
         let mdat = box("mdat", Data([1,2,3,4]))
         let dref = box("dref", word(0) + word(1) + box(referenceType, referencePayload ?? word(1)))
         let sample = box("avc1", Data(repeating: 0, count: 6) + Data([0,1]))
@@ -370,9 +497,10 @@ final class VideoMetadataWriterTests: XCTestCase {
         // metadata reader. These remain structural controls, not playable media.
         let hasMetadata = userData != nil || trackUserData != nil || mediaUserData != nil
         let dates = hasMetadata ? Data(repeating: 0, count: 12) : Data()
-        let handler = hasMetadata ? box("hdlr", word(0) + word(0) + Data(mediaHandler.utf8) + Data(repeating: 0, count: 12)) : Data()
+        let handler = box("hdlr", word(0) + word(0) + Data(mediaHandler.utf8) + Data(repeating: 0, count: 12))
         let media = minf + handler + (mediaUserData.map { box("udta", $0) } ?? Data())
-        let track = box("trak", box("tkhd", dates) + box("mdia", media) + (trackUserData.map { box("udta", $0) } ?? Data()))
-        return ftyp + mdat + box("moov", box("mvhd", dates) + track + (userData.map { box("udta", $0) } ?? Data()))
+        let track = box("trak", box("tkhd", dates) + box("mdia", media) + (trackUserData.map { box("udta", $0) } ?? Data()) + (trackMeta ?? Data()))
+        let tracks = (0..<max(1, videoTrackCount)).reduce(into: Data()) { $0.append(track) }
+        return ftyp + mdat + box("moov", box("mvhd", dates) + tracks + (userData.map { box("udta", $0) } ?? Data()))
     }
 }

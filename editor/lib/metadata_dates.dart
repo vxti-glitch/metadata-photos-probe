@@ -14,6 +14,82 @@ const movieDateKeys = {
   'mediaModifyDate',
 };
 
+/// Shift a supported date stamp while preserving its interpretation.
+///
+/// EXIF dates are wall times without a zone. ISO dates include a `Z` or an
+/// explicit offset; arithmetic happens on the represented instant, then the
+/// result is formatted in the same original offset.
+String offsetDateStamp(String value, Duration amount) {
+  final exif = RegExp(r'^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})$')
+      .firstMatch(value);
+  if (exif != null) {
+    final parts = List.generate(6, (i) => int.parse(exif.group(i + 1)!));
+    final shifted = DateTime.utc(
+      parts[0],
+      parts[1],
+      parts[2],
+      parts[3],
+      parts[4],
+      parts[5],
+    ).add(amount);
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${shifted.year.toString().padLeft(4, '0')}:${two(shifted.month)}:${two(shifted.day)} ${two(shifted.hour)}:${two(shifted.minute)}:${two(shifted.second)}';
+  }
+
+  final iso = RegExp(
+    r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?(Z|[+-]\d{2}:\d{2})$',
+  ).firstMatch(value);
+  if (iso == null || !isStrictISODate(value)) {
+    throw const FormatException('Video dates require strict ISO 8601.');
+  }
+  final shiftedInstant = DateTime.parse(value).toUtc().add(amount);
+  final zone = iso.group(3)!;
+  var shiftedWall = shiftedInstant;
+  if (zone != 'Z') {
+    final hours = int.parse(zone.substring(1, 3));
+    final minutes = int.parse(zone.substring(4, 6));
+    final direction = zone.startsWith('-') ? -1 : 1;
+    shiftedWall = shiftedWall.add(
+      Duration(minutes: direction * (hours * 60 + minutes)),
+    );
+  }
+  String two(int v) => v.toString().padLeft(2, '0');
+  final wall =
+      '${shiftedWall.year.toString().padLeft(4, '0')}-${two(shiftedWall.month)}-${two(shiftedWall.day)}T${two(shiftedWall.hour)}:${two(shiftedWall.minute)}:${two(shiftedWall.second)}';
+  return '$wall${iso.group(2) ?? ''}$zone';
+}
+
+/// Apply the batch timestamp spacing to generated patches in selection order.
+Map<String, MetadataPatch> offsetBatchDatePatches(
+  Map<String, MetadataPatch> patches,
+  Duration spacing,
+) {
+  if (spacing == Duration.zero) return patches;
+  return {
+    for (final entry in patches.entries.indexed)
+      entry.$2.key: entry.$1 == 0
+          ? entry.$2.value
+          : MetadataPatch(
+              values: {
+                for (final field in entry.$2.value.values.entries)
+                  field.key:
+                      (field.value is String &&
+                          (sharedDateOffsets.containsKey(field.key) ||
+                              movieDateKeys.contains(field.key) ||
+                              field.key == 'quickTimeCreationDate'))
+                      ? offsetDateStamp(
+                          field.value as String,
+                          Duration(
+                            microseconds: spacing.inMicroseconds * entry.$1,
+                          ),
+                        )
+                      : field.value,
+              },
+              removals: entry.$2.value.removals,
+            ),
+  };
+}
+
 /// Preserve each destination photo's kept zone and a randomized instant.
 /// Explicit wall-time edits retain their own deliberate timezone semantics.
 MetadataPatch randomDatesWithKeptZones(

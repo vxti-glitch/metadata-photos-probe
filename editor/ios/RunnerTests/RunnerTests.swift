@@ -4,6 +4,8 @@ import XCTest
 import ProbeCore
 import ImageIO
 import UniformTypeIdentifiers
+import AVFoundation
+import CoreVideo
 @testable import Runner
 
 @MainActor
@@ -440,6 +442,64 @@ class RunnerTests: XCTestCase {
     XCTAssertThrowsError(try NativeSessionStore.validateEditorState(nested))
   }
 
+  func testImportedReadOnlyMP4ProcessesThroughNativeStore() async throws {
+    let provider = folder.appendingPathComponent("synthetic-provider.mp4")
+    try await syntheticMP4(provider)
+    let providerHash = try WholeFileDigest.sha256(provider)
+    let root = folder.appendingPathComponent("video-sessions", isDirectory: true)
+    let store = NativeSessionStore(root: root)
+    let imported = try await store.importFile(provider)
+    let source = root.appendingPathComponent(imported.id.uuidString).appendingPathComponent(imported.sourceName)
+    let originalPermissions = try FileManager.default.attributesOfItem(atPath: source.path)[.posixPermissions] as? NSNumber
+    XCTAssertEqual(originalPermissions?.intValue, 0o400)
+    let changed = try await store.processMetadata(sessionID: imported.id,
+      patch: MetadataPatch(values: ["make": .string("Apple"), "model": .string("Synthetic camera")]))
+    let output = try XCTUnwrap(changed.processing)
+    XCTAssertEqual(output.outputInspection.kind, .mp4)
+    XCTAssertEqual(output.outputInspection.metadata["model"], "Synthetic camera")
+    XCTAssertFalse(output.integrity.checks.contains { $0.status == .failed })
+    XCTAssertEqual(try WholeFileDigest.sha256(source), imported.sourceSHA256)
+    XCTAssertEqual(try WholeFileDigest.sha256(provider), providerHash)
+    let sourcePermissions = try FileManager.default.attributesOfItem(atPath: source.path)[.posixPermissions] as? NSNumber
+    XCTAssertEqual(sourcePermissions?.intValue, 0o400)
+  }
+
+  private func syntheticMP4(_ url: URL) async throws {
+    let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+    var finished = false
+    defer { if !finished { writer.cancelWriting() } }
+    let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264,
+      AVVideoWidthKey: 32, AVVideoHeightKey: 32])
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input,
+      sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferWidthKey as String: 32, kCVPixelBufferHeightKey as String: 32])
+    guard writer.canAdd(input) else { throw ProbeError.writeFailed("Synthetic MP4 input unavailable") }
+    writer.add(input)
+    guard writer.startWriting() else { throw writer.error ?? ProbeError.writeFailed("Synthetic MP4 writer failed") }
+    writer.startSession(atSourceTime: .zero)
+    for frame in 0..<3 {
+      let deadline = Date().addingTimeInterval(10)
+      while !input.isReadyForMoreMediaData {
+        guard Date() < deadline, writer.status == .writing else { throw ProbeError.writeFailed("Synthetic MP4 writer stalled") }
+        try await Task.sleep(nanoseconds: 10_000_000)
+      }
+      var pixelBuffer: CVPixelBuffer?
+      guard CVPixelBufferCreate(kCFAllocatorDefault, 32, 32, kCVPixelFormatType_32BGRA, nil, &pixelBuffer) == kCVReturnSuccess,
+        let pixelBuffer else { throw ProbeError.writeFailed("Synthetic MP4 buffer unavailable") }
+      CVPixelBufferLockBaseAddress(pixelBuffer, [])
+      if let base = CVPixelBufferGetBaseAddress(pixelBuffer) {
+        memset(base, Int32(frame * 50), CVPixelBufferGetBytesPerRow(pixelBuffer) * 32)
+      }
+      CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
+      guard adaptor.append(pixelBuffer, withPresentationTime: CMTime(value: Int64(frame), timescale: 30)) else {
+        throw writer.error ?? ProbeError.writeFailed("Synthetic MP4 append failed")
+      }
+    }
+    input.markAsFinished(); await writer.finishWriting()
+    guard writer.status == .completed else { throw writer.error ?? ProbeError.writeFailed("Synthetic MP4 unfinished") }
+    finished = true
+  }
+
   func testEditorStateAndPresetExportPersistWithoutChangingSource() async throws {
     let root = folder.appendingPathComponent("state", isDirectory: true)
     let store = NativeSessionStore(root: root)
@@ -453,6 +513,15 @@ class RunnerTests: XCTestCase {
     XCTAssertEqual(exported.lastPathComponent, "Metadata-Preset.json")
     let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: exported)) as? [String: Any])
     XCTAssertNoThrow(try NativeSessionStore.validatePreset(object))
+    let originalPresetBytes = try Data(contentsOf: exported)
+    var oversized = preset
+    oversized["extra"] = Array(repeating: String(repeating: "x", count: 8192), count: 4)
+    XCTAssertNoThrow(try NativeSessionStore.validatePreset(oversized), "Individual JSON fields stay within their bounds")
+    do {
+      _ = try await store.presetExportURL(oversized)
+      XCTFail("Exported a preset that exceeds the import file size limit")
+    } catch NativeMediaError.invalidArgument { }
+    XCTAssertEqual(try Data(contentsOf: exported), originalPresetBytes, "Oversized export must retain the previous valid preset")
     try await store.clear()
     XCTAssertFalse(FileManager.default.fileExists(atPath: exported.path))
     let afterClear = try await store.loadEditorState()
@@ -527,20 +596,24 @@ class RunnerTests: XCTestCase {
     let provider = folder.appendingPathComponent("auto-folder-source.jpg")
     try jpeg().write(to: provider)
     let root = folder.appendingPathComponent("auto-folder-sessions", isDirectory: true)
-    let store = NativeSessionStore(root: root)
+    let autoFolder = folder.appendingPathComponent("Processed Media", isDirectory: true)
+    let store = NativeSessionStore(root: root, autoExportRoot: autoFolder, processOperation: Self.verifiedCopy)
     let imported = try await store.importFile(provider)
     let patch = CameraPatch(make: "Auto maker", model: "Auto model")
     let changed = try await store.process(sessionID: imported.id, patch: patch)
     let output = try XCTUnwrap(changed.processing)
     let displayName = try XCTUnwrap(output.outputDisplayName)
 
-    let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-    let autoFolder = documents.appendingPathComponent("Processed Media", isDirectory: true)
     let autoFile = autoFolder.appendingPathComponent(displayName)
-    addTeardownBlock { try? FileManager.default.removeItem(at: autoFile) }
 
     XCTAssertTrue(FileManager.default.fileExists(atPath: autoFile.path), "Output was not saved to Processed Media folder")
     XCTAssertEqual(try WholeFileDigest.sha256(autoFile), output.outputSHA256)
+    XCTAssertNotNil(output.autoExportFolder)
+    // Files users may edit their exported copy. This must never change the
+    // private frozen output, as an automatic public hard link would do.
+    let privateOutput = try await store.exportURL(sessionID: imported.id, processingID: output.id, acknowledgeIncomplete: false)
+    try Data("Changed public copy".utf8).write(to: autoFile)
+    XCTAssertEqual(try WholeFileDigest.sha256(privateOutput), output.outputSHA256)
 
     // Process again with different patch to verify collision-safe distinct naming
     let patch2 = CameraPatch(make: "Auto maker 2", model: "Auto model 2")
@@ -550,7 +623,6 @@ class RunnerTests: XCTestCase {
 
     XCTAssertNotEqual(displayName, displayName2)
     let autoFile2 = autoFolder.appendingPathComponent(displayName2)
-    addTeardownBlock { try? FileManager.default.removeItem(at: autoFile2) }
     XCTAssertTrue(FileManager.default.fileExists(atPath: autoFile2.path))
     XCTAssertTrue(FileManager.default.fileExists(atPath: autoFile.path), "Previous processed file in Processed Media was overwritten")
 
@@ -586,7 +658,8 @@ class RunnerTests: XCTestCase {
 
   func testBatchProcessingAcrossMultipleFilesAndFormats() async throws {
     let root = folder.appendingPathComponent("batch-multi-format-sessions", isDirectory: true)
-    let store = NativeSessionStore(root: root)
+    let autoFolder = folder.appendingPathComponent("batch-processed-media", isDirectory: true)
+    let store = NativeSessionStore(root: root, autoExportRoot: autoFolder)
     let f1 = folder.appendingPathComponent("batch-photo1.jpg")
     let f2 = folder.appendingPathComponent("batch-photo2.jpg")
     let f3 = folder.appendingPathComponent("batch-graphic.png")
@@ -602,38 +675,189 @@ class RunnerTests: XCTestCase {
     XCTAssertEqual(s2.inspection.kind, .jpeg)
     XCTAssertEqual(s3.inspection.kind, .png)
 
-    let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-    let autoFolder = documents.appendingPathComponent("Processed Media", isDirectory: true)
 
     let p1 = try await store.process(sessionID: s1.id, patch: CameraPatch(make: "Batch Make 1", model: "Batch Model 1"))
     let out1 = try XCTUnwrap(p1.processing)
     let name1 = try XCTUnwrap(out1.outputDisplayName)
     let auto1 = autoFolder.appendingPathComponent(name1)
-    addTeardownBlock { try? FileManager.default.removeItem(at: auto1) }
 
     let p2 = try await store.process(sessionID: s2.id, patch: CameraPatch(make: "Batch Make 2", model: "Batch Model 2"))
     let out2 = try XCTUnwrap(p2.processing)
     let name2 = try XCTUnwrap(out2.outputDisplayName)
     let auto2 = autoFolder.appendingPathComponent(name2)
-    addTeardownBlock { try? FileManager.default.removeItem(at: auto2) }
 
     let p3 = try await store.process(sessionID: s3.id, patch: CameraPatch(make: "Batch Make 3", model: "Batch Model 3"))
     let out3 = try XCTUnwrap(p3.processing)
     let name3 = try XCTUnwrap(out3.outputDisplayName)
     let auto3 = autoFolder.appendingPathComponent(name3)
-    addTeardownBlock { try? FileManager.default.removeItem(at: auto3) }
 
     XCTAssertNotEqual(name1, name2)
     XCTAssertNotEqual(name1, name3)
     XCTAssertNotEqual(name2, name3)
 
-    XCTAssertTrue(FileManager.default.fileExists(atPath: auto1.path))
-    XCTAssertTrue(FileManager.default.fileExists(atPath: auto2.path))
-    XCTAssertTrue(FileManager.default.fileExists(atPath: auto3.path))
+    for (url, output) in [(auto1, out1), (auto2, out2), (auto3, out3)] {
+      let qualified = NativeSessionStore.isFullyVerified(output.integrity)
+      XCTAssertEqual(FileManager.default.fileExists(atPath: url.path), qualified)
+      XCTAssertEqual(output.autoExportFolder != nil, qualified)
+      if qualified { XCTAssertEqual(try WholeFileDigest.sha256(url), output.outputSHA256) }
+    }
+  }
 
-    XCTAssertEqual(try WholeFileDigest.sha256(auto1), out1.outputSHA256)
-    XCTAssertEqual(try WholeFileDigest.sha256(auto2), out2.outputSHA256)
-    XCTAssertEqual(try WholeFileDigest.sha256(auto3), out3.outputSHA256)
+  func testIncompleteProcessingCannotAutomaticallyPublishOrClaimFilesSaving() async throws {
+    let provider = folder.appendingPathComponent("incomplete-source.jpg")
+    try jpeg().write(to: provider)
+    let autoFolder = folder.appendingPathComponent("incomplete-public", isDirectory: true)
+    let store = NativeSessionStore(root: folder.appendingPathComponent("incomplete-sessions"), autoExportRoot: autoFolder,
+      processOperation: { source, output, patch in
+        let result = try await Self.verifiedCopy(source, output, patch)
+        return ProcessingResult(outputURL: output, sourceInspection: result.sourceInspection, outputInspection: result.outputInspection,
+          integrity: IntegrityComparison(status: .incomplete,
+            checks: [IntegrityCheck(name: "synthetic unfinished check", status: .notChecked, detail: "Boundary fixture")],
+            limitations: ["Synthetic incomplete verifier"]))
+      })
+    let imported = try await store.importFile(provider)
+    let changed = try await store.process(sessionID: imported.id, patch: CameraPatch(make: "Synthetic", model: "Synthetic"))
+    let processing = try XCTUnwrap(changed.processing)
+    XCTAssertNil(processing.autoExportFolder)
+    let map = try changed.bridgeMap()
+    XCTAssertNil((map["processing"] as? [String: Any])?["autoExportFolder"])
+    XCTAssertFalse(FileManager.default.fileExists(atPath: autoFolder.path))
+    do {
+      _ = try await store.exportCopyURL(sessionID: imported.id, processingID: processing.id, acknowledgeIncomplete: false)
+      XCTFail("Unacknowledged incomplete output was exported")
+    } catch NativeMediaError.unsupported { }
+    _ = try await store.exportCopyURL(sessionID: imported.id, processingID: processing.id, acknowledgeIncomplete: true)
+  }
+
+  func testFailedOrInconsistentProcessingReportsCannotBecomeActiveOutputs() async throws {
+    let failed = IntegrityCheck(name: "synthetic preservation mismatch", status: .failed, detail: "Fixture")
+    let unchecked = IntegrityCheck(name: "synthetic omitted check", status: .notChecked, detail: "Fixture")
+    let reports = [
+      IntegrityComparison(status: .verified, checks: [failed], limitations: []),
+      IntegrityComparison(status: .incomplete, checks: [failed], limitations: []),
+      IntegrityComparison(status: .verified, checks: [unchecked], limitations: []),
+      IntegrityComparison(status: .verified, checks: [], limitations: [])
+    ]
+    let provider = folder.appendingPathComponent("inconsistent-source.jpg")
+    try jpeg().write(to: provider)
+    for (index, report) in reports.enumerated() {
+      let autoFolder = folder.appendingPathComponent("inconsistent-public-\(index)")
+      let store = NativeSessionStore(root: folder.appendingPathComponent("inconsistent-session-\(index)"), autoExportRoot: autoFolder,
+        processOperation: { source, output, patch in
+          let result = try await Self.verifiedCopy(source, output, patch)
+          return ProcessingResult(outputURL: output, sourceInspection: result.sourceInspection,
+            outputInspection: result.outputInspection, integrity: report)
+        })
+      let imported = try await store.importFile(provider)
+      do {
+        _ = try await store.process(sessionID: imported.id, patch: CameraPatch(make: "Synthetic", model: "Synthetic"))
+        XCTFail("Failed or inconsistent report became a frozen output")
+      } catch ProbeError.integrityMismatch { }
+      let sessions = try await store.list()
+      XCTAssertNil(sessions.first?.processing)
+      XCTAssertFalse(FileManager.default.fileExists(atPath: autoFolder.path))
+    }
+  }
+
+  func testFailedAutomaticSavingKeepsPrivateOutputAndDoesNotClaimSuccess() async throws {
+    let provider = folder.appendingPathComponent("unavailable-auto-source.jpg")
+    try jpeg().write(to: provider)
+    let root = folder.appendingPathComponent("auto-failure-sessions")
+    let outside = folder.appendingPathComponent("outside-auto", isDirectory: true)
+    try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: false)
+    let linkedFolder = folder.appendingPathComponent("linked-auto", isDirectory: true)
+    try FileManager.default.createSymbolicLink(at: linkedFolder, withDestinationURL: outside)
+    let store = NativeSessionStore(root: root, autoExportRoot: linkedFolder, processOperation: Self.verifiedCopy)
+    let imported = try await store.importFile(provider)
+    let changed = try await store.process(sessionID: imported.id, patch: CameraPatch(make: "Synthetic", model: "Synthetic"))
+    let output = try XCTUnwrap(changed.processing)
+    XCTAssertNil(output.autoExportFolder)
+    XCTAssertTrue(changed.notes.contains { $0.contains("Automatic Files saving could not finish") })
+    XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: outside.path).isEmpty)
+    _ = try await store.exportURL(sessionID: imported.id, processingID: output.id, acknowledgeIncomplete: false)
+  }
+
+  func testFailedJournalCommitCannotPublishAProcessedCopy() async throws {
+    let provider = folder.appendingPathComponent("commit-failure-source.jpg")
+    try jpeg().write(to: provider)
+    let root = folder.appendingPathComponent("commit-failure-sessions")
+    let autoFolder = folder.appendingPathComponent("commit-failure-public")
+    let outsideJournal = folder.appendingPathComponent("outside-journal.json")
+    let sentinel = Data("Untouched external journal".utf8)
+    try sentinel.write(to: outsideJournal)
+    let store = NativeSessionStore(root: root, autoExportRoot: autoFolder,
+      processOperation: { source, output, patch in
+        let result = try await Self.verifiedCopy(source, output, patch)
+        let manifest = root.appendingPathComponent("manifest.json")
+        try FileManager.default.removeItem(at: manifest)
+        try FileManager.default.createSymbolicLink(at: manifest, withDestinationURL: outsideJournal)
+        return result
+      })
+    let imported = try await store.importFile(provider)
+    do {
+      _ = try await store.process(sessionID: imported.id, patch: CameraPatch(make: "Synthetic", model: "Synthetic"))
+      XCTFail("An unsafe journal destination accepted a processing commit")
+    } catch NativeMediaError.storage { }
+    XCTAssertFalse(FileManager.default.fileExists(atPath: autoFolder.path))
+    XCTAssertEqual(try Data(contentsOf: outsideJournal), sentinel)
+    let files = try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent(imported.id.uuidString).path)
+    XCTAssertEqual(files, [imported.sourceName], "Failed output staging was retained")
+  }
+
+  func testErrorTaxonomyDoesNotExposePrivateErrorContent() throws {
+    let privateDetail = "file:///private/media/Private Clip.mp4 GPS=10.123,20.456"
+    let failures: [(Error, String)] = [
+      (ProbeError.unsupported(privateDetail), "unsupported"),
+      (ProbeError.malformed(privateDetail), "malformed"),
+      (ProbeError.writeFailed(privateDetail), "processing"),
+      (ProbeError.readbackFailed(privateDetail), "readback"),
+      (ProbeError.integrityMismatch(privateDetail), "integrity"),
+      (NSError(domain: NSCocoaErrorDomain, code: 640, userInfo: [NSLocalizedDescriptionKey: privateDetail]), "storage"),
+      (NSError(domain: privateDetail, code: -1, userInfo: [NSLocalizedDescriptionKey: privateDetail]), "processing")
+    ]
+    for (failure, code) in failures {
+      let mapped = NativeMediaBridge.flutterError(failure)
+      XCTAssertEqual(mapped.code, code)
+      XCTAssertFalse((mapped.message ?? "").contains(privateDetail))
+      let details = try XCTUnwrap(mapped.details as? [String: Any])
+      XCTAssertEqual(details["stage"] as? String, code)
+      XCTAssertFalse(String(describing: details).contains(privateDetail))
+    }
+    do {
+      _ = try NativeMediaBridge.metadataPatch(["patch": ["values": ["make": 123], "removals": []]])
+      XCTFail("Malformed field payload was accepted")
+    } catch NativeMediaError.invalidArgument { }
+  }
+
+  func testPhotoStreamPreservesSafeNativeErrorCodeForDiagnostics() throws {
+    let stream = try NativePhotoStream(target: folder.appendingPathComponent("photo-error.jpg"), maximumBytes: 8)
+    let managerError = NSError(domain: "PHPhotosErrorDomain", code: 3302,
+      userInfo: [NSLocalizedDescriptionKey: "Private Photos resource name"])
+    let failure = try XCTUnwrap(stream.finish(managerError))
+    let mapped = NativeMediaBridge.flutterError(failure)
+    XCTAssertEqual(mapped.code, "storage")
+    let details = try XCTUnwrap(mapped.details as? [String: Any])
+    XCTAssertEqual(details["nativeDomain"] as? String, "PHPhotosErrorDomain")
+    XCTAssertEqual(details["nativeCode"] as? Int, 3302)
+    XCTAssertFalse((mapped.message ?? "").contains("Private Photos resource name"))
+  }
+
+  func testUnknownHostDeviceDoesNotInventCameraProfile() {
+    let unknown = NativeMediaBridge.hostDevice(identifier: "iPhone99,99")
+    XCTAssertNil(unknown["profileId"])
+    XCTAssertEqual(unknown["model"], "iPhone")
+    let known = NativeMediaBridge.hostDevice(identifier: "iPhone16,2")
+    XCTAssertEqual(known["profileId"], "apple-iphone-15-pro-max")
+  }
+
+  // A controlled journal/publication boundary fixture. This does not assert
+  // that arbitrary JPEG metadata edits qualify as fully verified media.
+  nonisolated private static func verifiedCopy(_ source: URL, _ output: URL, _ patch: CameraPatch) async throws -> ProcessingResult {
+    try FileManager.default.copyItem(at: source, to: output)
+    let inspection = try await MetadataEngine.inspect(source)
+    return ProcessingResult(outputURL: output, sourceInspection: inspection, outputInspection: inspection,
+      integrity: IntegrityComparison(status: .verified,
+        checks: [IntegrityCheck(name: "synthetic exact copy", status: .passed, detail: "Controlled fixture")], limitations: []))
   }
 
   private func persistedSession(root: URL, status: IntegrityStatus) throws -> NativeSession {

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
 import 'app_brand.dart';
 import 'camera_profiles.dart';
@@ -185,7 +186,25 @@ class EditorController extends ChangeNotifier {
         text.contains('err_unsupported_media')) {
       return 'ERR_UNSUPPORTED_MEDIA';
     }
-    return 'ERR_MEDIA_INTEGRITY';
+    return 'ERR_PROCESSING';
+  }
+
+  static String classifyFailureCode(Object failure, String message) {
+    if (failure is PlatformException) {
+      return switch (failure.code) {
+        'permission' => 'ERR_PHOTOS_ACCESS',
+        'storage' => 'ERR_STORAGE_FULL',
+        'unsupported' || 'malformed' => 'ERR_UNSUPPORTED_MEDIA',
+        'readback' || 'integrity' => 'ERR_MEDIA_INTEGRITY',
+        'not_found' ||
+        'processing' ||
+        'invalid_argument' ||
+        'busy' ||
+        'canceled' => 'ERR_PROCESSING',
+        _ => classifyErrorCode(message),
+      };
+    }
+    return classifyErrorCode(message);
   }
 
   void recordError(String message, {String? code}) {
@@ -271,7 +290,7 @@ class EditorController extends ChangeNotifier {
     } catch (failure) {
       if (!_disposed && generation == _generation) {
         error = readableError(failure);
-        recordError(error!);
+        recordError(error!, code: classifyFailureCode(failure, error!));
         if (reconcileOnFailure) {
           acknowledgedProcessingId = null;
           try {
@@ -304,7 +323,16 @@ class EditorController extends ChangeNotifier {
               notice = 'Operation finished after cancellation was requested. Review any recovered copy before exporting.';
             }
           } catch (failure) {
-            if (!_disposed) error = readableError(failure);
+            if (!_disposed) {
+              // Native work may have committed after cancellation. Without a
+              // fresh history snapshot, the cached session can point at an
+              // output token that no longer matches native state. Disable all
+              // editing/export actions until startup reconciles the journal.
+              capabilities = null;
+              error = readableError(failure);
+              recordError(error!, code: classifyFailureCode(failure, error!));
+              notice = 'Local history could not be refreshed after cancellation. Retry startup before editing or exporting.';
+            }
           }
         }
         operation = null;
@@ -906,7 +934,14 @@ class EditorController extends ChangeNotifier {
     selectedProfileId = profileId;
     selectedCameraId = cameraId;
     notifyListeners();
-    await _persist();
+    try {
+      await _persist();
+    } catch (failure) {
+      // Profile selection is also invoked from UI callbacks that intentionally
+      // do not await persistence. Surface storage failures here so they cannot
+      // become unhandled async errors or silently look like a saved preference.
+      recordError(readableError(failure));
+    }
   }
 
   Future<Map<String, String>?> getHostDevice() => bridge.getHostDevice();
@@ -925,7 +960,7 @@ class EditorController extends ChangeNotifier {
     } catch (_) {}
   }
 
-  Future<void> resetPresets() async {
+  Future<void> resetPresets() => _run(EditorOperation.deleting, (_) async {
     final before = List<SavedPreset>.of(presets);
     final beforeBrand = selectedBrand;
     final beforeProfileId = selectedProfileId;
@@ -937,7 +972,6 @@ class EditorController extends ChangeNotifier {
     try {
       await _persist();
       notice = 'Saved camera presets reset.';
-      notifyListeners();
     } catch (error) {
       presets = before;
       selectedBrand = beforeBrand;
@@ -945,7 +979,7 @@ class EditorController extends ChangeNotifier {
       selectedCameraId = beforeCameraId;
       rethrow;
     }
-  }
+  });
 
   @override
   void dispose() {
