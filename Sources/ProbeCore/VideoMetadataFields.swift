@@ -35,7 +35,7 @@ enum VideoMetadataFields {
         if removesLatitude, existing["altitude"] != nil, !patch.removals.contains("altitude") {
             throw ProbeError.unsupported("Removing a movie location also removes its altitude; explicitly remove altitude too")
         }
-        if removesLatitude, !patch.values.keys.isDisjoint(with: gpsKeys) {
+        if removesLatitude, !Set(patch.values.keys).isDisjoint(with: gpsKeys) {
             throw ProbeError.unsupported("A movie location pair cannot be removed while setting another coordinate")
         }
         for key in dateKeys.union(["dateTimeOriginal"]) {
