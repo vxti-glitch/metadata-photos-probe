@@ -138,14 +138,17 @@ final class VideoMetadataWriterTests: XCTestCase {
         try structuralMovie().write(to: source)
         _ = try await VideoMetadataWriter.write(source: source, output: seed,
             patch: MetadataPatch(values: ["lensModel": .string("Existing Lens")]))
-        try duplicateFirstTrackMetadataAsUdta(Data(contentsOf: seed)).write(to: duplicateSource)
+        let trackMetadata = try firstTrackMetadataAtom(Data(contentsOf: seed))
+        try structuralMovie(trackMeta: trackMetadata, trackUserData: trackMetadata).write(to: duplicateSource)
         try await assertRefused(Data(contentsOf: duplicateSource))
     }
 
     func testExtendedSizeFtypWorksAndInvalidCompatibleBrandPaddingIsRefused() async throws {
         let extended = directory.appendingPathComponent("extended-ftyp.mov")
         let output = directory.appendingPathComponent("extended-ftyp-edited.mov")
-        try structuralMovie(extendedFtyp: true).write(to: extended)
+        // Extended ftyp adds eight bytes before mdat, so the chunk must point to
+        // the mdat payload at byte 40 rather than the ordinary fixture's byte 32.
+        try structuralMovie(extendedFtyp: true, chunkOffset: 40).write(to: extended)
         _ = try await VideoMetadataWriter.write(source: extended, output: output, patch: CameraPatch())
         XCTAssertTrue(FileManager.default.fileExists(atPath: output.path))
 
@@ -226,7 +229,9 @@ final class VideoMetadataWriterTests: XCTestCase {
         let seeded = directory.appendingPathComponent("gps-tuple-seeded.mov")
         let partial = directory.appendingPathComponent("gps-tuple-partial-removal.mov")
         let complete = directory.appendingPathComponent("gps-tuple-complete-removal.mov")
-        try structuralMovie().write(to: source)
+        // GPS write/readback inspects movie and track dates as well; include valid
+        // version-0 date headers even though this fixture starts without metadata.
+        try structuralMovie(userData: Data()).write(to: source)
         _ = try await VideoMetadataWriter.write(source: source, output: seeded,
             patch: MetadataPatch(values: ["latitude": .number(12.5), "longitude": .number(44.25), "altitude": .number(10)]))
 
@@ -457,22 +462,14 @@ final class VideoMetadataWriterTests: XCTestCase {
         return children.subdata(in: userData.payload)
     }
 
-    private func duplicateFirstTrackMetadataAsUdta(_ data: Data) throws -> Data {
+    private func firstTrackMetadataAtom(_ data: Data) throws -> Data {
         let movie = try XCTUnwrap(boxes(data).last { $0.type == "moov" })
         let moviePayload = data.subdata(in: movie.payload)
         let movieChildren = try boxes(moviePayload)
         guard let track = movieChildren.first(where: { $0.type == "trak" }) else { throw ProbeError.malformed("No test track") }
         let trackPayload = moviePayload.subdata(in: track.payload)
         guard let metadata = try boxes(trackPayload).first(where: { $0.type == "meta" }) else { throw ProbeError.malformed("No test track metadata") }
-        let duplicate = box("udta", trackPayload.subdata(in: metadata.range))
-        let changedTrack = box("trak", trackPayload + duplicate)
-        var changedMoviePayload = Data()
-        for child in movieChildren {
-            changedMoviePayload.append(child.type == "trak" ? changedTrack : moviePayload.subdata(in: child.range))
-        }
-        var changedFile = data
-        changedFile.replaceSubrange(movie.range, with: box("moov", changedMoviePayload))
-        return changedFile
+        return trackPayload.subdata(in: metadata.range)
     }
 
     private func structuralMovie(referenceType: String = "url ", referencePayload: Data? = nil,
