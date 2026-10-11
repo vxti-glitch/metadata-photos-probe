@@ -139,7 +139,7 @@ final class VideoMetadataWriterTests: XCTestCase {
         _ = try await VideoMetadataWriter.write(source: source, output: seed,
             patch: MetadataPatch(values: ["lensModel": .string("Existing Lens")]))
         let trackMetadata = try firstTrackMetadataAtom(Data(contentsOf: seed))
-        try structuralMovie(trackMeta: trackMetadata, trackUserData: trackMetadata).write(to: duplicateSource)
+        try structuralMovie(trackUserData: trackMetadata, trackMeta: trackMetadata).write(to: duplicateSource)
         try await assertRefused(Data(contentsOf: duplicateSource))
     }
 
@@ -148,7 +148,7 @@ final class VideoMetadataWriterTests: XCTestCase {
         let output = directory.appendingPathComponent("extended-ftyp-edited.mov")
         // Extended ftyp adds eight bytes before mdat, so the chunk must point to
         // the mdat payload at byte 40 rather than the ordinary fixture's byte 32.
-        try structuralMovie(extendedFtyp: true, chunkOffset: 40).write(to: extended)
+        try structuralMovie(chunkOffset: 40, extendedFtyp: true).write(to: extended)
         _ = try await VideoMetadataWriter.write(source: extended, output: output, patch: CameraPatch())
         XCTAssertTrue(FileManager.default.fileExists(atPath: output.path))
 
