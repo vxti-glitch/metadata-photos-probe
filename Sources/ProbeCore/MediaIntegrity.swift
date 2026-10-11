@@ -187,7 +187,7 @@ public enum MediaIntegrity {
                         $0.identifier?.rawValue == "mdta/" + atom ||
                         $0.identifier?.rawValue == "quickTimeMetadata/" + atom ||
                         $0.identifier?.rawValue == atom ||
-                        $0.identifier?.rawValue?.hasSuffix("/" + atom) == true ||
+                        $0.identifier?.rawValue.hasSuffix("/" + atom) == true ||
                         ($0.key as? String) == atom
                     }
                     if found.isEmpty {
@@ -206,7 +206,7 @@ public enum MediaIntegrity {
                     } else {
                         var allItemsMatch = true
                         for item in found {
-                            guard let value = try await item.load(.stringValue) else { allItemsMatch = false; break }
+                            guard let value = (item.stringValue ?? (try? await item.load(.value) as? String)) else { allItemsMatch = false; break }
                             if let n = target.number {
                                 let scalar = Double(value.hasPrefix("F") ? String(value.dropFirst()) : value)
                                 if scalar == nil || abs(scalar! - n) > MetadataPatch.numericTolerance(for: key, value: n) { allItemsMatch = false; break }
@@ -235,7 +235,7 @@ public enum MediaIntegrity {
                         $0.identifier?.rawValue == "mdta/" + atom ||
                         $0.identifier?.rawValue == "quickTimeMetadata/" + atom ||
                         $0.identifier?.rawValue == atom ||
-                        $0.identifier?.rawValue?.hasSuffix("/" + atom) == true ||
+                        $0.identifier?.rawValue.hasSuffix("/" + atom) == true ||
                         ($0.key as? String) == atom
                     }.isEmpty
                 }
