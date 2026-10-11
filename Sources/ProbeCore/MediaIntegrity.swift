@@ -374,7 +374,13 @@ public enum MediaIntegrity {
 
     static func videoFingerprintFailureDetail(_ error: Error, taskIsCancelled: Bool) throws -> String {
         guard !taskIsCancelled, !(error is CancellationError) else { throw CancellationError() }
-        return (error as? ProbeError)?.localizedDescription ?? error.localizedDescription
+        if let probe = error as? ProbeError { return probe.localizedDescription }
+        // Framework descriptions can contain sandbox paths or resource names.
+        // These reports cross the Flutter channel, so retain only safe codes.
+        let native = error as NSError
+        let domains = [NSCocoaErrorDomain, NSOSStatusErrorDomain, "AVFoundationErrorDomain"]
+        let domain = domains.contains(native.domain) ? native.domain : "other"
+        return "Compressed sample inspection unavailable (\(domain), code \(native.code))"
     }
 
     private static func markerLabels(_ signatures: [String]) -> String {

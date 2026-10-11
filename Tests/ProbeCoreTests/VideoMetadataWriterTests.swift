@@ -129,7 +129,7 @@ final class VideoMetadataWriterTests: XCTestCase {
         let edited = try Data(contentsOf: output)
         let movie = try XCTUnwrap(boxes(edited).last { $0.type == "moov" })
         let track = try XCTUnwrap(boxes(edited.subdata(in: movie.payload)).first { $0.type == "trak" })
-        XCTAssertTrue(boxes(edited.subdata(in: movie.payload).subdata(in: track.payload)).contains {
+        XCTAssertTrue(try boxes(edited.subdata(in: movie.payload).subdata(in: track.payload)).contains {
             $0.type == "meta" && edited.subdata(in: movie.payload).subdata(in: track.payload).subdata(in: $0.range) == nonMdta
         })
 
@@ -500,7 +500,7 @@ final class VideoMetadataWriterTests: XCTestCase {
         let handler = box("hdlr", word(0) + word(0) + Data(mediaHandler.utf8) + Data(repeating: 0, count: 12))
         let media = minf + handler + (mediaUserData.map { box("udta", $0) } ?? Data())
         let track = box("trak", box("tkhd", dates) + box("mdia", media) + (trackUserData.map { box("udta", $0) } ?? Data()) + (trackMeta ?? Data()))
-        let tracks = (0..<max(1, videoTrackCount)).reduce(into: Data()) { $0.append(track) }
+        let tracks = (0..<max(1, videoTrackCount)).reduce(into: Data()) { result, _ in result.append(track) }
         return ftyp + mdat + box("moov", box("mvhd", dates) + tracks + (userData.map { box("udta", $0) } ?? Data()))
     }
 }

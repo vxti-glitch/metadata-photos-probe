@@ -235,9 +235,13 @@ final class HEICMetadataWriterTests: XCTestCase {
             + box("iinf", info)
             + box("iref", Data(repeating: 0, count: 4) + box("cdsc", encoded(2, 2) + encoded(1, 2) + encoded(1, 2)))
         func location(_ primaryOffset: UInt64) -> Data {
-            Data([1,0,0,0,0x44,0]) + encoded(2, 2)
-                + encoded(1, 2) + encoded(0, 2) + encoded(0, 2) + encoded(1, 2) + encoded(primaryOffset, 4) + encoded(3, 4)
-                + encoded(2, 2) + encoded(1, 2) + encoded(0, 2) + encoded(1, 2) + encoded(0, 4) + encoded(UInt64(exif.count), 4)
+            var data = Data([1,0,0,0,0x44,0]) + encoded(2, 2)
+            let entries: [(UInt64, UInt64, UInt64, UInt64)] = [(1, 0, primaryOffset, 3), (2, 1, 0, UInt64(exif.count))]
+            for (id, method, offset, length) in entries {
+                for value in [id, method, 0, 1] { data.append(encoded(value, 2)) }
+                data.append(encoded(offset, 4)); data.append(encoded(length, 4))
+            }
+            return data
         }
         let initialMeta = box("meta", prefix + box("iloc", location(0)) + box("idat", exif))
         let meta = box("meta", prefix + box("iloc", location(UInt64(ftyp.count + initialMeta.count + 8))) + box("idat", exif))

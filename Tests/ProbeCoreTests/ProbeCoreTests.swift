@@ -281,6 +281,13 @@ final class ProbeCoreTests: XCTestCase {
             try MediaIntegrity.videoFingerprintFailureDetail(readerError, taskIsCancelled: false),
             readerError.localizedDescription
         )
+        let privateError = NSError(domain: NSCocoaErrorDomain, code: 257,
+            userInfo: [NSLocalizedDescriptionKey: "Cannot read /private/synthetic/source.mp4 at +12.34-056.78/"])
+        let safeDetail = try MediaIntegrity.videoFingerprintFailureDetail(privateError, taskIsCancelled: false)
+        XCTAssertTrue(safeDetail.contains(NSCocoaErrorDomain))
+        XCTAssertTrue(safeDetail.contains("257"))
+        XCTAssertFalse(safeDetail.contains("/private"))
+        XCTAssertFalse(safeDetail.contains("+12.34"))
     }
 
     func testTrackScopedMetadataRequiresEveryVideoTrackToReadBack() {
