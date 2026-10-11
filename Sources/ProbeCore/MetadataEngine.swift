@@ -70,7 +70,7 @@ public enum MetadataEngine {
         let metadataFormats = try await asset.load(.availableMetadataFormats)
         var metadata = [String: String]()
         for item in try await containerMetadata(asset) {
-            if let value = item.stringValue ?? (try? await item.load(.value) as? String) {
+            if let value = try await item.load(.stringValue) {
                 metadata[item.identifier?.rawValue ?? String(describing: item.key)] = value
                 if item.identifier == .quickTimeMetadataMake { metadata["make"] = value }
                 if item.identifier == .quickTimeMetadataModel { metadata["model"] = value }

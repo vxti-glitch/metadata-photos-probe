@@ -206,7 +206,8 @@ public enum MediaIntegrity {
                     } else {
                         var allItemsMatch = true
                         for item in found {
-                            guard let value = (item.stringValue ?? (try? await item.load(.value) as? String)) else { allItemsMatch = false; break }
+                            let asyncVal: String? = try? await item.load(.stringValue)
+                            guard let value = item.stringValue ?? asyncVal else { allItemsMatch = false; break }
                             if let n = target.number {
                                 let scalar = Double(value.hasPrefix("F") ? String(value.dropFirst()) : value)
                                 if scalar == nil || abs(scalar! - n) > MetadataPatch.numericTolerance(for: key, value: n) { allItemsMatch = false; break }
