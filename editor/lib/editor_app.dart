@@ -114,6 +114,15 @@ class _EditorHomeState extends State<EditorHome> {
     super.dispose();
   }
 
+  void _openErrorCodes() {
+    setState(() => _selectedTabIndex = 1);
+    openErrorGuidePage(
+      context,
+      controller: controller,
+      onOpenEditor: () => setState(() => _selectedTabIndex = 0),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final session = controller.selected;
@@ -157,60 +166,10 @@ class _EditorHomeState extends State<EditorHome> {
         ),
         actions: [
           IconButton(
-            key: const Key('openErrorGuideFromBar'),
-            tooltip: 'Error Codes & Fixes',
-            icon: Badge(
-              isLabelVisible: controller.lastErrorCode != null,
-              backgroundColor: const Color(0xFFFF453A),
-              child: const Icon(Icons.help_outline_rounded),
-            ),
+            key: const Key('openSettings'),
+            tooltip: 'Settings',
+            icon: const Icon(Icons.settings_outlined),
             onPressed: () => setState(() => _selectedTabIndex = 1),
-          ),
-          IconButton(
-            key: const Key('openSettings'),
-            tooltip: 'Settings',
-            icon: const Icon(Icons.settings_outlined),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => SettingsScreen(controller: controller),
-              ),
-            ),
-          ),
-        ],
-      );
-    } else if (_selectedTabIndex == 1) {
-      appBar = AppBar(
-        title: const Row(
-          children: [
-            Icon(Icons.menu_book_rounded, color: _accent, size: 20),
-            SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'Error codes',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          if (controller.lastErrorCode != null)
-            IconButton(
-              key: const Key('clearLastErrorBarButton'),
-              tooltip: 'Clear error history',
-              icon: const Icon(Icons.history_rounded),
-              onPressed: controller.clearLastError,
-            ),
-          IconButton(
-            key: const Key('openSettings'),
-            tooltip: 'Settings',
-            icon: const Icon(Icons.settings_outlined),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => SettingsScreen(controller: controller),
-              ),
-            ),
           ),
         ],
       );
@@ -239,8 +198,7 @@ class _EditorHomeState extends State<EditorHome> {
                             _DiagnosticErrorBanner(
                               rawError: controller.error!,
                               errorCode: controller.lastErrorCode,
-                              onViewFix: () =>
-                                  setState(() => _selectedTabIndex = 1),
+                              onViewFix: _openErrorCodes,
                               onDismiss: controller.dismissMessage,
                             ),
                           if (controller.notice != null)
@@ -325,13 +283,11 @@ class _EditorHomeState extends State<EditorHome> {
         index: _selectedTabIndex,
         children: [
           editorBody,
-          ErrorGuideSheet(
-            highlightedCode: controller.lastErrorCode,
-            isModal: false,
+          SettingsScreen(
             controller: controller,
+            isTab: true,
             onOpenEditor: () => setState(() => _selectedTabIndex = 0),
           ),
-          SettingsScreen(controller: controller, isTab: true),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -346,15 +302,6 @@ class _EditorHomeState extends State<EditorHome> {
             key: Key('tabEditor'),
             icon: Icon(Icons.tune_rounded),
             label: 'Editor',
-          ),
-          NavigationDestination(
-            key: const Key('tabErrorCodes'),
-            icon: Badge(
-              isLabelVisible: controller.lastErrorCode != null,
-              backgroundColor: const Color(0xFFFF453A),
-              child: const Icon(Icons.menu_book_rounded),
-            ),
-            label: 'Error Codes',
           ),
           const NavigationDestination(
             key: Key('tabSettings'),

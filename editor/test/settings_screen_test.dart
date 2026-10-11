@@ -67,7 +67,14 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(SettingsScreen), findsOneWidget);
-      expect(find.text('Settings'), findsOneWidget);
+      expect(find.text('Settings'), findsWidgets);
+      expect(find.byKey(const Key('settingsBackButton')), findsNothing);
+      expect(
+        tester
+            .widget<NavigationBar>(find.byKey(const Key('mainNavigationBar')))
+            .selectedIndex,
+        1,
+      );
     },
   );
 
@@ -261,7 +268,14 @@ void main() {
 
       expect(find.text('HELP'), findsOneWidget);
       expect(find.text('Error Codes & Fixes'), findsOneWidget);
-      expect(find.text('${kErrorGuideCatalog.length} CODES'), findsOneWidget);
+      expect(find.text('${kErrorGuideCatalog.length} CODES'), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('errorGuideRow')),
+          matching: find.byIcon(Icons.chevron_right_rounded),
+        ),
+        findsOneWidget,
+      );
       expect(find.text('Photos Attribution Guide'), findsOneWidget);
     },
   );
@@ -301,14 +315,16 @@ void main() {
   );
 
   testWidgets(
-    'Error Codes & Fixes row opens Troubleshooting modal sheet with search and filtering',
+    'Error Codes & Fixes row opens a separate Settings page with search and filtering',
     (tester) async {
       await pumpSettings(tester);
 
       await tester.tap(find.byKey(const Key('errorGuideRow')));
       await tester.pumpAndSettle();
 
-      expect(find.text('Troubleshooting'), findsOneWidget);
+      expect(find.text('Error Codes & Fixes'), findsOneWidget);
+      expect(find.byKey(const Key('closeErrorGuideButton')), findsNothing);
+      expect(find.byKey(const Key('errorGuideBackButton')), findsOneWidget);
       expect(
         find.text(
           '${kErrorGuideCatalog.length} error codes with diagnostic steps',
@@ -369,37 +385,36 @@ void main() {
       expect(find.text('No matching error codes found'), findsNothing);
       expect(find.text('ERR_DATE_FMT'), findsOneWidget);
 
-      // Close sheet
-      await tester.tap(find.byKey(const Key('closeErrorGuideButton')));
+      // Return to Settings with the page back control.
+      await tester.tap(find.byKey(const Key('errorGuideBackButton')));
       await tester.pumpAndSettle();
 
-      expect(find.text('Troubleshooting'), findsNothing);
+      expect(find.byKey(const Key('errorGuideBackButton')), findsNothing);
+      expect(find.text('Settings'), findsOneWidget);
     },
   );
 
   testWidgets(
-    'Recent Error Detected banner displays when lastErrorCode is set, and dismiss button clears it',
+    'Compact recent issue displays its code and dismiss clears history',
     (tester) async {
       controller.recordError(
         'Native metadata processing or independent integrity verification failed',
       );
       await pumpSettings(tester);
 
-      expect(find.text('RECENT ERROR'), findsOneWidget);
       expect(find.byKey(const Key('recentErrorBanner')), findsOneWidget);
       expect(find.byKey(const Key('recentErrorCodeBadge')), findsOneWidget);
       expect(find.text('ERR_MEDIA_INTEGRITY'), findsOneWidget);
       expect(find.text('DIAGNOSTIC STEPS'), findsOneWidget);
-      expect(find.text('RECENT ERROR'), findsOneWidget);
       expect(find.byKey(const Key('dismissRecentErrorButton')), findsOneWidget);
 
       // Tap dismiss button
       await tester.tap(find.byKey(const Key('dismissRecentErrorButton')));
       await tester.pumpAndSettle();
 
-      expect(find.text('RECENT ERROR'), findsNothing);
+      expect(find.text('Find an error and its next steps'), findsOneWidget);
       expect(find.byKey(const Key('recentErrorBanner')), findsNothing);
-      expect(find.text('${kErrorGuideCatalog.length} CODES'), findsOneWidget);
+      expect(find.text('${kErrorGuideCatalog.length} CODES'), findsNothing);
       expect(controller.lastErrorCode, isNull);
     },
   );
@@ -415,7 +430,9 @@ void main() {
       await tester.tap(find.byKey(const Key('viewRecentErrorFixButton')));
       await tester.pumpAndSettle();
 
-      expect(find.text('Troubleshooting'), findsOneWidget);
+      expect(find.text('Error Codes & Fixes'), findsOneWidget);
+      expect(find.byKey(const Key('closeErrorGuideButton')), findsNothing);
+      expect(find.byKey(const Key('errorGuideBackButton')), findsOneWidget);
       expect(
         find.byKey(const Key('justEncounteredBadge_ERR_GPS_BOUNDS')),
         findsOneWidget,
@@ -430,11 +447,12 @@ void main() {
         findsOneWidget,
       );
 
-      // Close sheet
-      await tester.tap(find.byKey(const Key('closeErrorGuideButton')));
+      // Return to Settings with the page back control.
+      await tester.tap(find.byKey(const Key('errorGuideBackButton')));
       await tester.pumpAndSettle();
 
-      expect(find.text('Troubleshooting'), findsNothing);
+      expect(find.byKey(const Key('errorGuideBackButton')), findsNothing);
+      expect(find.text('Settings'), findsOneWidget);
     },
   );
 
@@ -469,7 +487,7 @@ void main() {
   );
 
   testWidgets(
-    'Main navigation bar switches between Editor, Error Codes, and Settings tabs',
+    'Main navigation keeps two destinations with Error Codes inside Settings',
     (tester) async {
       tester.view.physicalSize = const Size(800, 1600);
       tester.view.devicePixelRatio = 1.0;
@@ -477,46 +495,42 @@ void main() {
         tester.view.resetPhysicalSize();
         tester.view.resetDevicePixelRatio();
       });
-
-      await tester.pumpWidget(
-        MaterialApp(home: MetadataEditorApp(controller: controller)),
-      );
+      await tester.pumpWidget(MetadataEditorApp(controller: controller));
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const Key('mainNavigationBar')), findsOneWidget);
+      final bar = find.byKey(const Key('mainNavigationBar'));
+      expect(tester.widget<NavigationBar>(bar).destinations, hasLength(2));
       expect(find.byKey(const Key('tabEditor')), findsOneWidget);
-      expect(find.byKey(const Key('tabErrorCodes')), findsOneWidget);
       expect(find.byKey(const Key('tabSettings')), findsOneWidget);
+      expect(find.byKey(const Key('tabErrorCodes')), findsNothing);
+      expect(find.byKey(const Key('openErrorGuideFromBar')), findsNothing);
 
-      // Tap Error Codes tab
-      await tester.tap(find.byKey(const Key('tabErrorCodes')));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Error codes'), findsOneWidget);
-      expect(find.text('Troubleshooting'), findsOneWidget);
-      expect(
-        find.text(
-          '${kErrorGuideCatalog.length} error codes with diagnostic steps',
-        ),
-        findsOneWidget,
-      );
-
-      // Tap Settings tab
       await tester.tap(find.byKey(const Key('tabSettings')));
       await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('errorGuideRow')));
+      await tester.pumpAndSettle();
+      expect(find.text('Error Codes & Fixes'), findsOneWidget);
+      expect(find.byKey(const Key('mainNavigationBar')), findsNothing);
+      expect(find.byType(BottomSheet), findsNothing);
 
-      expect(find.text('Engine & diagnostics'), findsOneWidget);
-
-      // Tap Editor tab
+      await tester.tap(find.byKey(const Key('errorGuideBackButton')));
+      await tester.pumpAndSettle();
+      expect(find.text('Settings'), findsWidgets);
+      expect(tester.widget<NavigationBar>(bar).selectedIndex, 1);
+      await tester.tap(find.byKey(const Key('errorGuideRow')));
+      await tester.pumpAndSettle();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('errorGuideBackButton')), findsNothing);
+      expect(tester.widget<NavigationBar>(bar).selectedIndex, 1);
       await tester.tap(find.byKey(const Key('tabEditor')));
       await tester.pumpAndSettle();
-
-      expect(find.byKey(const Key('tabEditor')), findsOneWidget);
+      expect(tester.widget<NavigationBar>(bar).selectedIndex, 0);
     },
   );
 
   testWidgets(
-    'DiagnosticErrorBanner displays simplified text, error code pill, and View Solution switches to Error Codes tab',
+    'DiagnosticErrorBanner opens Settings Error Codes page and returns to editing',
     (tester) async {
       tester.view.physicalSize = const Size(800, 1600);
       tester.view.devicePixelRatio = 1.0;
@@ -548,8 +562,9 @@ void main() {
       await tester.tap(find.byKey(const Key('viewSolutionButton')));
       await tester.pumpAndSettle();
 
-      // Should have switched to Error Codes tab
-      expect(find.text('Error codes'), findsOneWidget);
+      // The banner opens the dedicated Settings page.
+      expect(find.text('Error Codes & Fixes'), findsOneWidget);
+      expect(find.byType(BottomSheet), findsNothing);
       expect(find.text('ERR_MEDIA_INTEGRITY'), findsWidgets);
       expect(
         find.byKey(const Key('justEncounteredBadge_ERR_MEDIA_INTEGRITY')),
@@ -557,8 +572,19 @@ void main() {
       );
       expect(find.text('JUST ENCOUNTERED'), findsOneWidget);
 
-      // Switch back to Editor and dismiss banner
-      await tester.tap(find.byKey(const Key('tabEditor')));
+      // Back reveals Settings, including when reached from the editor banner.
+      await tester.tap(find.byKey(const Key('errorGuideBackButton')));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<NavigationBar>(find.byKey(const Key('mainNavigationBar')))
+            .selectedIndex,
+        1,
+      );
+      await tester.tap(find.byKey(const Key('errorGuideRow')));
+      await tester.pumpAndSettle();
+      // Return to the same editor and dismiss the banner.
+      await tester.tap(find.byKey(const Key('returnToEditorFromGuide')));
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('diagnosticErrorBanner')), findsOneWidget);

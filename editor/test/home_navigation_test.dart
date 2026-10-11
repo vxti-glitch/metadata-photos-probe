@@ -31,6 +31,9 @@ void main() {
 
   Future<void> tap(WidgetTester tester, String key) async {
     final finder = find.byKey(Key(key));
+    if (finder.evaluate().isEmpty) {
+      await tester.scrollUntilVisible(finder, 180);
+    }
     await tester.ensureVisible(finder);
     await tester.pumpAndSettle();
     await tester.tap(finder);
@@ -43,21 +46,30 @@ void main() {
     await launch(tester, scale: 2);
     expect(find.text('Edit your metadata'), findsOneWidget);
     expect(tester.takeException(), isNull);
-    await tap(tester, 'tabErrorCodes');
-    expect(find.text('Error codes'), findsOneWidget);
-    expect(tester.takeException(), isNull);
+    expect(find.byKey(const Key('tabErrorCodes')), findsNothing);
+    expect(find.byKey(const Key('openErrorGuideFromBar')), findsNothing);
+    expect(
+      tester
+          .widget<NavigationBar>(find.byKey(const Key('mainNavigationBar')))
+          .destinations,
+      hasLength(2),
+    );
     await tap(tester, 'tabSettings');
+    await tap(tester, 'errorGuideRow');
+    expect(find.text('Error Codes & Fixes'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tap(tester, 'errorGuideBackButton');
     expect(find.text('Settings'), findsWidgets);
     expect(tester.takeException(), isNull);
     await tap(tester, 'tabEditor');
     expect(find.text('Edit your metadata'), findsOneWidget);
   });
 
-  testWidgets('editing draft survives visits to both other tabs', (
+  testWidgets('editing draft survives nested guide back and return to editor', (
     tester,
   ) async {
     final bridge = FakeMediaBridge();
-    await launch(tester, bridge: bridge);
+    final controller = await launch(tester, bridge: bridge);
     await tap(tester, 'importFiles');
     await tester.ensureVisible(find.text('Advanced metadata'));
     await tester.tap(find.text('Advanced metadata'));
@@ -70,9 +82,22 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('model')), 'Draft model');
     await tester.pumpAndSettle();
-    await tap(tester, 'tabErrorCodes');
+    controller.recordError('Latitude must be between -90 and 90');
+    await tester.pumpAndSettle();
     await tap(tester, 'tabSettings');
-    await tap(tester, 'tabEditor');
+    await tap(tester, 'errorGuideRow');
+    await tap(tester, 'viewLatestSteps');
+    await tap(tester, 'errorGuideBackButton');
+    expect(find.text('Settings'), findsWidgets);
+    await tap(tester, 'errorGuideRow');
+    await tap(tester, 'returnToEditorFromGuide');
+    expect(find.byKey(const Key('errorGuideBackButton')), findsNothing);
+    expect(
+      tester
+          .widget<NavigationBar>(find.byKey(const Key('mainNavigationBar')))
+          .selectedIndex,
+      0,
+    );
     expect(
       tester.widget<TextField>(find.byKey(const Key('model'))).controller!.text,
       'Draft model',
@@ -94,7 +119,7 @@ void main() {
     expect(find.byKey(const Key('diagnosticErrorBanner')), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tap(tester, 'viewSolutionButton');
-    expect(find.text('Error codes'), findsOneWidget);
+    expect(find.text('Error Codes & Fixes'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

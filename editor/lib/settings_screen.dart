@@ -22,10 +22,12 @@ class SettingsScreen extends StatelessWidget {
     super.key,
     required this.controller,
     this.isTab = false,
+    this.onOpenEditor,
   });
 
   final EditorController controller;
   final bool isTab;
+  final VoidCallback? onOpenEditor;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -351,7 +353,7 @@ class SettingsScreen extends StatelessWidget {
                 TextButton(
                   key: const Key('viewRecentErrorFixButton'),
                   onPressed: () =>
-                      _openErrorGuideSheet(context, highlightedCode: code),
+                      _openErrorGuidePage(context, highlightedCode: code),
                   child: const Text('View diagnostic steps'),
                 ),
               ],
@@ -378,22 +380,14 @@ class SettingsScreen extends StatelessWidget {
           iconColor: _accent,
           title: 'Error Codes & Fixes',
           subtitle: hasActiveError
-              ? 'Diagnostic steps for ${controller.lastErrorCode}'
-              : 'Browse ${kErrorGuideCatalog.length} codes and diagnostic steps',
-          trailing: hasActiveError
-              ? _buildPill(
-                  text: 'RECENT ERROR',
-                  bgColor: const Color(0xFF38151A),
-                  borderColor: const Color(0xFF75242C),
-                  textColor: const Color(0xFFFF9B9B),
-                )
-              : _buildPill(
-                  text: '${kErrorGuideCatalog.length} CODES',
-                  bgColor: const Color(0xFF1E2838),
-                  borderColor: const Color(0xFF334A6E),
-                  textColor: const Color(0xFF9CB5FF),
-                ),
-          onTap: () => _openErrorGuideSheet(
+              ? 'View steps for your latest issue'
+              : 'Find an error and its next steps',
+          trailing: const Icon(
+            Icons.chevron_right_rounded,
+            size: 20,
+            color: _muted,
+          ),
+          onTap: () => _openErrorGuidePage(
             context,
             highlightedCode: controller.lastErrorCode,
           ),
@@ -876,13 +870,69 @@ class SettingsScreen extends StatelessWidget {
     );
   }
 
-  void _openErrorGuideSheet(BuildContext context, {String? highlightedCode}) {
-    openErrorGuideSheet(
+  void _openErrorGuidePage(BuildContext context, {String? highlightedCode}) {
+    openErrorGuidePage(
       context,
       highlightedCode: highlightedCode,
       controller: controller,
+      onOpenEditor: onOpenEditor,
     );
   }
+}
+
+void openErrorGuidePage(
+  BuildContext context, {
+  String? highlightedCode,
+  required EditorController controller,
+  VoidCallback? onOpenEditor,
+}) {
+  Navigator.of(context).push<void>(
+    MaterialPageRoute<void>(
+      builder: (_) => ErrorGuidePage(
+        controller: controller,
+        highlightedCode: highlightedCode,
+        onOpenEditor: onOpenEditor,
+      ),
+    ),
+  );
+}
+
+/// A Settings subpage; the editor remains mounted beneath the route.
+class ErrorGuidePage extends StatelessWidget {
+  const ErrorGuidePage({
+    super.key,
+    required this.controller,
+    this.highlightedCode,
+    this.onOpenEditor,
+  });
+
+  final EditorController controller;
+  final String? highlightedCode;
+  final VoidCallback? onOpenEditor;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(
+      leading: IconButton(
+        key: const Key('errorGuideBackButton'),
+        tooltip: 'Back to Settings',
+        icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
+        onPressed: () => Navigator.of(context).pop(),
+      ),
+      title: const Text('Error Codes & Fixes', style: TextStyle(fontSize: 18)),
+    ),
+    body: ErrorGuideSheet(
+      controller: controller,
+      highlightedCode: highlightedCode,
+      isModal: false,
+      onOpenEditor: onOpenEditor == null
+          ? null
+          : () {
+              Navigator.of(context).pop();
+              onOpenEditor!();
+            },
+    ),
+  );
 }
 
 void openErrorGuideSheet(
