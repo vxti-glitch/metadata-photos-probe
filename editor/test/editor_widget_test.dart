@@ -12,6 +12,9 @@ import 'package:metadata_editor/metadata_dates.dart';
 import 'fake_media_bridge.dart';
 
 void main() {
+  late Future<void> Function(WidgetTester) chooseProfile;
+  late Future<void> Function(WidgetTester) switchToEditTab;
+
   Future<EditorController> launch(
     WidgetTester tester,
     FakeMediaBridge bridge,
@@ -29,6 +32,32 @@ void main() {
   }
 
   Future<void> tap(WidgetTester tester, String key) async {
+    if (key == 'process') {
+      final legacyAction = find.byKey(const Key('process'));
+      if (legacyAction.evaluate().isNotEmpty) {
+        await tester.ensureVisible(legacyAction);
+        await tester.pumpAndSettle();
+        await tester.tap(legacyAction);
+        await tester.pumpAndSettle();
+        return;
+      }
+
+      final editAction = find.byKey(const Key('primaryeditAction'));
+      if (editAction.evaluate().isNotEmpty) {
+        await tester.ensureVisible(editAction);
+        await tester.pumpAndSettle();
+        await tester.tap(editAction);
+        await tester.pumpAndSettle();
+      }
+      final reviewAction = find.byKey(const Key('primaryreviewAction'));
+      if (reviewAction.evaluate().isNotEmpty) {
+        await tester.ensureVisible(reviewAction);
+        await tester.pumpAndSettle();
+        await tester.tap(reviewAction);
+        await tester.pumpAndSettle();
+      }
+      return;
+    }
     final finder = find.byKey(Key(key));
     await tester.ensureVisible(finder);
     await tester.pumpAndSettle();
@@ -36,8 +65,87 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  Future<void> chooseDateIntent(WidgetTester tester, String intent) async {
+    final segment = find.byKey(const Key('dateIntentSegment'));
+    if (segment.evaluate().isNotEmpty) {
+      final label = switch (intent) {
+        'keep' => 'Keep original',
+        'set' => 'Set',
+        'randomize' => 'Randomize',
+        _ => throw ArgumentError.value(intent, 'intent'),
+      };
+      final option = find.descendant(of: segment, matching: find.text(label));
+      await tester.ensureVisible(option);
+      await tester.pumpAndSettle();
+      await tester.tap(option);
+      await tester.pumpAndSettle();
+      return;
+    }
+
+    var checkbox = find.byKey(const Key('automaticDates'));
+    final setButton = find.byKey(const Key('setCaptureDate'));
+    if (checkbox.evaluate().isEmpty && setButton.evaluate().isEmpty) {
+      await switchToEditTab(tester);
+      final dates = find.text('Dates');
+      final videoDates = find.text('Video dates');
+      final datesGroup = dates.evaluate().isNotEmpty
+          ? dates.last
+          : videoDates.evaluate().isNotEmpty
+          ? videoDates.last
+          : null;
+      if (datesGroup == null) {
+        throw StateError('The date controls are not available in this form.');
+      }
+      await tester.ensureVisible(datesGroup);
+      await tester.pumpAndSettle();
+      await tester.tap(datesGroup);
+      await tester.pumpAndSettle();
+      checkbox = find.byKey(const Key('automaticDates'));
+    }
+    if (intent == 'set') {
+      checkbox = find.byKey(const Key('automaticDates'));
+      if (checkbox.evaluate().isNotEmpty &&
+          (tester.widget<CheckboxListTile>(checkbox).value ?? false)) {
+        await tester.ensureVisible(checkbox);
+        await tester.pumpAndSettle();
+        await tester.tap(checkbox);
+        await tester.pumpAndSettle();
+      }
+      await tap(tester, 'setCaptureDate');
+      return;
+    }
+    checkbox = find.byKey(const Key('automaticDates')).first;
+    final isRandomized =
+        tester.widget<CheckboxListTile>(checkbox).value ?? false;
+    final shouldRandomize = intent == 'randomize';
+    if (isRandomized != shouldRandomize) {
+      await tester.ensureVisible(checkbox);
+      await tester.pumpAndSettle();
+      await tester.tap(checkbox);
+      await tester.pumpAndSettle();
+    }
+  }
+
   Future<void> setField(WidgetTester tester, String field, String value) async {
-    final mode = find.byKey(Key('${field}Mode'));
+    final advanced = find.byKey(const Key('advancedMetadata'));
+    var mode = find.byKey(Key('${field}Mode'));
+    if (advanced.evaluate().isNotEmpty && mode.evaluate().isEmpty) {
+      await tap(tester, 'advancedMetadata');
+      mode = find.byKey(Key('${field}Mode'));
+    }
+    if (mode.evaluate().isEmpty) {
+      final fieldKey = field == 'lensModel' ? 'lens' : field;
+      final metadata = metadataFields.firstWhere(
+        (item) => item.key == field || item.key == fieldKey,
+      );
+      final group = find.text(metadata.group).last;
+      await tester.ensureVisible(group);
+      await tester.pumpAndSettle();
+      await tester.tap(group);
+      await tester.pumpAndSettle();
+      mode = find.byKey(Key('${field}Mode'));
+    }
+    mode = find.byKey(Key('${field}Mode'));
     await tester.ensureVisible(mode);
     await tester.pumpAndSettle();
     await tester.tap(mode);
@@ -50,13 +158,15 @@ void main() {
     await tester.enterText(input, value);
   }
 
-  Future<void> switchToEditTab(WidgetTester tester) async {
-    final tab = find.text('Edit').first;
+  switchToEditTab = (tester) async {
+    final tabs = find.text('Edit');
+    if (tabs.evaluate().isEmpty) return;
+    final tab = tabs.first;
     await tester.ensureVisible(tab);
     await tester.pumpAndSettle();
     await tester.tap(tab);
     await tester.pumpAndSettle();
-  }
+  };
 
   testWidgets('automatic capture dates work without a camera preset', (
     tester,
@@ -64,6 +174,7 @@ void main() {
     final bridge = FakeMediaBridge();
     await launch(tester, bridge);
     await tap(tester, 'importFiles');
+    await chooseDateIntent(tester, 'randomize');
     await tap(tester, 'process');
     final patch = bridge.sessions.single.processing!.metadataPatch!;
     expect(patch.values['dateTimeOriginal'], isNotNull);
@@ -78,8 +189,7 @@ void main() {
     final bridge = FakeMediaBridge();
     await launch(tester, bridge);
     await tap(tester, 'importFiles');
-    await tap(tester, 'automaticDates');
-    await tap(tester, 'setCaptureDate');
+    await chooseDateIntent(tester, 'set');
     await tester.tap(find.text('OK').last);
     await tester.pumpAndSettle();
     await tester.tap(find.text('OK').last);
@@ -92,7 +202,7 @@ void main() {
   });
 
   testWidgets(
-    'HEIC manual editing, mandatory limitation gate, Files export and optional details',
+    'HEIC manual editing, mandatory limitation gate, and Files export',
     (tester) async {
       final bridge = FakeMediaBridge();
       await launch(tester, bridge);
@@ -145,22 +255,7 @@ void main() {
       final bridge = FakeMediaBridge();
       await launch(tester, bridge);
       await tap(tester, 'importFiles');
-      final brand = find.byKey(const Key('profileBrand'));
-      await tester.ensureVisible(brand);
-      await tester.pumpAndSettle();
-      await tester.tap(brand);
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Apple').last);
-      await tester.pumpAndSettle();
-      final model = find.byKey(const ValueKey('model-Apple'));
-      await tester.ensureVisible(model);
-      await tester.pumpAndSettle();
-      await tester.tap(model);
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), 'iPhone 15 Pro Max');
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('iPhone 15 Pro Max').last);
-      await tester.pumpAndSettle();
+      await chooseProfile(tester);
       await tap(tester, 'process');
       final plan = bridge.sessions.single.processing!.metadataPatch!;
       expect(plan.values['make'], 'Apple');
@@ -172,22 +267,53 @@ void main() {
     },
   );
 
-  Future<void> chooseProfile(WidgetTester tester) async {
+  chooseProfile = (tester) async {
     final brand = find.byKey(const Key('profileBrand'));
-    await tester.ensureVisible(brand);
-    await tester.pumpAndSettle();
-    await tester.tap(brand);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Apple').last);
-    await tester.pumpAndSettle();
-    final model = find.byKey(const ValueKey('model-Apple'));
-    await tester.ensureVisible(model);
-    await tester.pumpAndSettle();
-    await tester.tap(model);
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'iPhone 15 Pro Max');
+    if (brand.evaluate().isNotEmpty) {
+      await tester.ensureVisible(brand);
+      await tester.pumpAndSettle();
+      await tester.tap(brand);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Apple').last);
+      await tester.pumpAndSettle();
+      final model = find.byKey(const ValueKey('model-Apple'));
+      await tester.ensureVisible(model);
+      await tester.pumpAndSettle();
+      await tester.tap(model);
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).last, 'iPhone 15 Pro Max');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('iPhone 15 Pro Max').last);
+      await tester.pumpAndSettle();
+      return;
+    }
+
+    await tap(tester, 'configureProfileFromEdit');
+    final search = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField &&
+          (widget.decoration?.hintText?.startsWith('Search ') ?? false),
+    );
+    await tester.enterText(search, 'iPhone 15 Pro Max');
     await tester.pumpAndSettle();
     await tester.tap(find.text('iPhone 15 Pro Max').last);
+    await tester.pumpAndSettle();
+  };
+
+  Future<void> mountStandaloneForm(
+    WidgetTester tester,
+    EditorController controller,
+  ) async {
+    final session = controller.selected!;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: MetadataForm(controller: controller, session: session),
+          ),
+        ),
+      ),
+    );
     await tester.pumpAndSettle();
   }
 
@@ -347,8 +473,7 @@ void main() {
           );
           await tester.pumpAndSettle();
           if (withProfile) await chooseProfile(tester);
-          await tap(tester, 'automaticDates');
-          await tap(tester, 'setCaptureDate');
+          await chooseDateIntent(tester, 'set');
           await tester.tap(find.text('OK').last);
           await tester.pumpAndSettle();
           await tester.tap(find.text('OK').last);
@@ -613,6 +738,16 @@ void main() {
       final controller = await launch(tester, bridge);
       await tap(tester, 'importFiles');
       await chooseProfile(tester);
+      if (find.byKey(const Key('profilesAndPresets')).evaluate().isNotEmpty) {
+        await tap(tester, 'profilesAndPresets');
+      }
+      final presetTools = find.byKey(const Key('advancedPresetActions'));
+      if (presetTools.evaluate().isNotEmpty) {
+        await tester.ensureVisible(presetTools);
+        await tester.pumpAndSettle();
+        await tester.tap(presetTools);
+        await tester.pumpAndSettle();
+      }
       final save = find.text('Save current edits');
       await tester.ensureVisible(save);
       await tester.pumpAndSettle();
@@ -710,7 +845,8 @@ void main() {
       await launch(tester, bridge);
       await tap(tester, 'importFiles');
       await chooseProfile(tester);
-      await tap(tester, 'automaticDates');
+      await chooseDateIntent(tester, 'randomize');
+      await chooseDateIntent(tester, 'keep');
       await tap(tester, 'process');
       final patch = bridge.sessions.single.processing!.metadataPatch!;
       expect(
@@ -732,35 +868,27 @@ void main() {
     await launch(tester, bridge);
     await tap(tester, 'importFiles');
     await chooseProfile(tester);
-    await switchToEditTab(tester);
+    final advanced = find.byKey(const Key('advancedMetadata'));
+    if (advanced.evaluate().isNotEmpty) await tap(tester, 'advancedMetadata');
     final dates = find.text('Dates');
     await tester.ensureVisible(dates);
     await tester.pumpAndSettle();
     await tester.tap(dates);
     await tester.pumpAndSettle();
-    final field = find.byKey(const Key('dateTimeOriginal'));
-    await tester.ensureVisible(field);
-    await tester.pumpAndSettle();
-    await tester.enterText(field, '2024:03:05 10:15:00');
-    final checkbox = find.byKey(const Key('automaticDates')).first;
-    await tester.ensureVisible(checkbox);
-    await tester.pumpAndSettle();
-    await tester.tap(checkbox);
-    await tester.pumpAndSettle();
+    await setField(tester, 'dateTimeOriginal', '2024:03:05 10:15:00');
     await tap(tester, 'process');
     final patch = bridge.sessions.single.processing!.metadataPatch!;
     expect(patch.values['dateTimeOriginal'], '2024:03:05 10:15:00');
     expect(patch.values.containsKey('createDate'), isFalse);
   });
   testWidgets(
-    'manual date and time picker changes capture metadata and Details shows processed readback',
+    'manual date and time picker changes capture metadata and result shows the output',
     (tester) async {
       final bridge = FakeMediaBridge();
       await launch(tester, bridge);
       await tap(tester, 'importFiles');
       await chooseProfile(tester);
-      await tap(tester, 'automaticDates');
-      await tap(tester, 'setCaptureDate');
+      await chooseDateIntent(tester, 'set');
       expect(find.byType(DatePickerDialog), findsOneWidget);
       await tester.tap(find.text('OK').last);
       await tester.pumpAndSettle();
@@ -771,15 +899,8 @@ void main() {
       final patch = bridge.sessions.single.processing!.metadataPatch!;
       expect(patch.values['dateTimeOriginal'], isNotNull);
       expect(patch.values['dateTimeOriginal'], patch.values['createDate']);
-      await tester.ensureVisible(find.text('Details'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Details'));
-      await tester.pumpAndSettle();
-      expect(find.text('Original metadata'), findsOneWidget);
-      expect(find.text('Processed metadata read back'), findsOneWidget);
-      expect(find.text('Read back · iso'), findsOneWidget);
-      expect(find.text('Read back · dateTimeOriginal'), findsOneWidget);
-      expect(find.text('Camera profile evidence'), findsOneWidget);
+      expect(find.text('Copy created'), findsOneWidget);
+      expect(find.text('IMG_4827.heic'), findsWidgets);
       expect(tester.takeException(), isNull);
     },
   );
@@ -793,7 +914,11 @@ void main() {
       );
     await launch(tester, bridge);
     await tap(tester, 'importPhotos');
-    expect(find.text('Allow Photos access in Settings.'), findsOneWidget);
+    expect(find.byKey(const Key('diagnosticErrorBanner')), findsOneWidget);
+    expect(
+      find.textContaining('Allow Metadata Editor to access the selected'),
+      findsOneWidget,
+    );
     bridge.importError = null;
     await tap(tester, 'importPhotos');
     expect(find.text('controlled.heic'), findsOneWidget);
@@ -835,27 +960,20 @@ void main() {
     tester,
   ) async {
     final bridge = FakeMediaBridge();
-    await launch(tester, bridge);
+    final controller = await launch(tester, bridge);
     await tap(tester, 'importFiles');
-    final brand = find.byKey(const Key('profileBrand'));
-    await tester.ensureVisible(brand);
-    expect(brand, findsOneWidget);
-
-    await tester.tap(brand);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Apple').last);
-    await tester.pumpAndSettle();
-
-    final model = find.byKey(const ValueKey('model-Apple'));
-    expect(model, findsOneWidget);
-
-    final searchIcon = find.byTooltip('Search models');
+    final searchIcon = find.byKey(const Key('configureProfileFromEdit'));
+    await tester.ensureVisible(searchIcon);
     expect(searchIcon, findsOneWidget);
     await tester.tap(searchIcon);
     await tester.pumpAndSettle();
 
     expect(find.text('Select Camera Model'), findsOneWidget);
-    final searchInput = find.byType(TextField);
+    final searchInput = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField &&
+          (widget.decoration?.hintText?.startsWith('Search ') ?? false),
+    );
     expect(searchInput, findsOneWidget);
     await tester.enterText(searchInput, 'iPhone 15');
     await tester.pumpAndSettle();
@@ -866,15 +984,16 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Select Camera Model'), findsNothing);
-    expect(find.text('iPhone 15 Pro Max'), findsOneWidget);
+    expect(controller.selectedProfileId, 'apple-iphone-15-pro-max');
   });
 
   testWidgets('camera picker bottom sheet opens and updates selected camera', (
     tester,
   ) async {
     final bridge = FakeMediaBridge();
-    await launch(tester, bridge);
+    final controller = await launch(tester, bridge);
     await tap(tester, 'importFiles');
+    await mountStandaloneForm(tester, controller);
     await chooseProfile(tester);
 
     final cameraSelector = find.byKey(
@@ -907,8 +1026,9 @@ void main() {
     'Apply & randomize feedback displays confirmation and auto-resets',
     (tester) async {
       final bridge = FakeMediaBridge();
-      await launch(tester, bridge);
+      final controller = await launch(tester, bridge);
       await tap(tester, 'importFiles');
+      await mountStandaloneForm(tester, controller);
       await chooseProfile(tester);
 
       final applyBtn = find.byKey(const Key('applyProfile'));
@@ -936,13 +1056,14 @@ void main() {
       await launch(tester, bridge);
       await tap(tester, 'importFiles');
       bridge.nextStatus = IntegrityStatus.verified;
+      await chooseDateIntent(tester, 'randomize');
       await tap(tester, 'process');
 
-      expect(find.text('controlled.jpeg'), findsOneWidget);
+      expect(find.text('Copy created'), findsOneWidget);
+      expect(find.text('IMG_4827.jpeg'), findsWidgets);
       expect(find.byKey(const Key('exportFiles')), findsOneWidget);
       expect(find.byKey(const Key('shareFiles')), findsOneWidget);
       expect(find.byKey(const Key('openICloud')), findsOneWidget);
-      expect(find.text('Process another file'), findsOneWidget);
       expect(
         find.textContaining(
           'Saved to: On My iPhone/Metadata Editor/Processed Media',
@@ -952,16 +1073,9 @@ void main() {
 
       await tap(tester, 'shareFiles');
       expect(bridge.shares, 1);
-
       await tap(tester, 'openICloud');
       expect(bridge.opens, 1);
-
-      final anotherBtn = find.text('Process another file');
-      await tester.ensureVisible(anotherBtn);
-      await tester.pumpAndSettle();
-      await tester.tap(anotherBtn);
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('exportFiles')), findsNothing);
+      expect(find.byKey(const Key('primaryresultAction')), findsOneWidget);
     },
   );
 
@@ -973,6 +1087,7 @@ void main() {
       ..nextStatus = IntegrityStatus.incomplete;
     await launch(tester, bridge);
     await tap(tester, 'importFiles');
+    await chooseDateIntent(tester, 'randomize');
     await tap(tester, 'process');
 
     expect(find.textContaining('Held in the app.'), findsOneWidget);
@@ -1020,6 +1135,7 @@ void main() {
   ) async {
     final bridge = FakeMediaBridge();
     await launch(tester, bridge);
+    await tap(tester, 'homePhotosWorkflow');
     final workflowTitle = find.text('THE PHOTOS WORKFLOW');
     expect(workflowTitle, findsOneWidget);
     final textWidget = tester.widget<Text>(workflowTitle);
@@ -1071,9 +1187,9 @@ void main() {
     await tap(tester, 'importPhotos');
     await tester.pumpAndSettle();
 
-    expect(find.text('Apple'), findsOneWidget);
-    expect(find.text('iPhone 15 Pro Max'), findsOneWidget);
-    expect(find.text('Main Camera'), findsOneWidget);
+    expect(controller.selectedBrand, 'Apple');
+    expect(controller.selectedProfileId, 'apple-iphone-15-pro-max');
+    expect(controller.selectedCameraId, 'main');
 
     await tap(tester, 'process');
     final plan = bridge.sessions.single.processing!.metadataPatch!;

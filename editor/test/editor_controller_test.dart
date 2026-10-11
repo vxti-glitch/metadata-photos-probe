@@ -8,6 +8,115 @@ import 'package:metadata_editor/metadata_patch.dart';
 
 import 'fake_media_bridge.dart';
 
+class _GatedSaveMediaBridge extends FakeMediaBridge {
+  final firstSaveStarted = Completer<void>();
+  final allowFirstSaveToFinish = Completer<void>();
+  final secondSaveCompleted = Completer<void>();
+  final writes = <Map<String, Object?>>[];
+
+  @override
+  Future<void> saveEditorState(Map<String, Object?> state) async {
+    final writeNumber = writes.length + 1;
+    writes.add(Map<String, Object?>.from(state));
+    if (writeNumber == 1) {
+      firstSaveStarted.complete();
+      await allowFirstSaveToFinish.future;
+    }
+    editorState = Map<String, Object?>.from(state);
+    if (writeNumber == 2) secondSaveCompleted.complete();
+  }
+}
+
+class _GatedOperationMediaBridge extends FakeMediaBridge {
+  final processStarted = Completer<void>();
+  final allowProcessToFinish = Completer<void>();
+  final historySaveCompleted = Completer<void>();
+  bool processing = false;
+  int saves = 0;
+  bool saveOverlappedProcessing = false;
+
+  @override
+  Future<void> saveEditorState(Map<String, Object?> state) async {
+    saves++;
+    saveOverlappedProcessing |= processing;
+    await super.saveEditorState(state);
+    if (saves > 0 && !historySaveCompleted.isCompleted) {
+      historySaveCompleted.complete();
+    }
+  }
+
+  @override
+  Future<MediaSession> processMetadata(
+    String sessionId,
+    MetadataPatch patch,
+  ) async {
+    processing = true;
+    processStarted.complete();
+    await allowProcessToFinish.future;
+    final result = await super.processMetadata(sessionId, patch);
+    processing = false;
+    return result;
+  }
+}
+
+class _DeleteDuringMetadataFailureBridge extends FakeMediaBridge {
+  @override
+  Future<MediaSession> processMetadata(
+    String sessionId,
+    MetadataPatch patch,
+  ) async {
+    processes++;
+    sessions.removeWhere((session) => session.id == sessionId);
+    throw PlatformException(
+      code: 'not_found',
+      message: 'The source session was removed during processing.',
+    );
+  }
+}
+
+class _CapturingBatchBridge extends FakeMediaBridge {
+  List<Map<String, Object?>> exportedBatch = [];
+
+  @override
+  Future<bool> exportBatch(List<Map<String, Object?>> items) async {
+    exportedBatch = items;
+    return super.exportBatch(items);
+  }
+}
+
+class _FailingSaveMediaBridge extends FakeMediaBridge {
+  final saveStarted = Completer<void>();
+
+  @override
+  Future<void> saveEditorState(Map<String, Object?> state) async {
+    if (!saveStarted.isCompleted) saveStarted.complete();
+    throw PlatformException(
+      code: 'processing',
+      message: 'Local editor state could not be saved.',
+    );
+  }
+}
+
+class _RecoveringSaveMediaBridge extends FakeMediaBridge {
+  final firstSaveStarted = Completer<void>();
+  final secondSaveCompleted = Completer<void>();
+  int saveCount = 0;
+
+  @override
+  Future<void> saveEditorState(Map<String, Object?> state) async {
+    saveCount++;
+    if (saveCount == 1) {
+      firstSaveStarted.complete();
+      throw PlatformException(
+        code: 'processing',
+        message: 'Local editor state could not be saved.',
+      );
+    }
+    editorState = Map<String, Object?>.from(state);
+    if (saveCount == 2) secondSaveCompleted.complete();
+  }
+}
+
 void main() {
   late FakeMediaBridge bridge;
   late EditorController controller;
@@ -252,6 +361,36 @@ void main() {
       expect(controller.busy, isFalse);
     },
   );
+  test('failed batch delete removes stale selection and queue entries after commit', () async {
+    final items = [
+      fixture(id: 's-delete', kind: MediaKind.jpeg),
+      fixture(id: 's-keep', kind: MediaKind.jpeg),
+    ];
+    bridge.sessions = items;
+    await controller.initialize();
+    for (final item in items) {
+      controller.toggleBatch(item, true);
+    }
+    controller.queue = [
+      QueueItem('s-delete', MetadataPatch(values: {'make': 'Brand'})),
+      QueueItem('s-keep', MetadataPatch(values: {'make': 'Brand'})),
+    ];
+    controller.startBatchEditing();
+    expect(controller.isBatchMode, isTrue);
+
+    bridge.deleteAfterCommitError = PlatformException(
+      code: 'storage',
+      message: 'Local cleanup is incomplete.',
+    );
+    await controller.delete(items.first);
+
+    expect(controller.sessions.map((item) => item.id), ['s-keep']);
+    expect(controller.batchSelection, {'s-keep'});
+    expect(controller.queue.map((item) => item.sessionId), ['s-keep']);
+    expect(controller.isBatchMode, isTrue);
+    expect(controller.selected?.id, 's-keep');
+    expect(controller.error, 'Local cleanup is incomplete.');
+  });
   test(
     'failed clear reconciles native history and retains the cleanup error',
     () async {
@@ -264,6 +403,75 @@ void main() {
       expect(controller.sessions, isEmpty);
       expect(controller.selected, isNull);
       expect(controller.error, 'Local cleanup is incomplete.');
+    },
+  );
+  test(
+    'failed batch clear after commit clears stale batch mode and queue',
+    () async {
+      final items = [
+        fixture(id: 's-clear-1', kind: MediaKind.jpeg),
+        fixture(id: 's-clear-2', kind: MediaKind.png),
+      ];
+      bridge.sessions = items;
+      await controller.initialize();
+      for (final item in items) {
+        controller.toggleBatch(item, true);
+      }
+      controller.queue = [
+        QueueItem('s-clear-1', MetadataPatch(values: {'make': 'Brand'})),
+        QueueItem('s-clear-2', MetadataPatch(values: {'make': 'Brand'})),
+      ];
+      controller.startBatchEditing();
+      expect(controller.isBatchMode, isTrue);
+
+      bridge.clearAfterCommitError = PlatformException(
+        code: 'storage',
+        message: 'Local cleanup is incomplete.',
+      );
+      await controller.clear();
+
+      expect(controller.sessions, isEmpty);
+      expect(controller.selected, isNull);
+      expect(controller.batchSelection, isEmpty);
+      expect(controller.queue, isEmpty);
+      expect(controller.isBatchMode, isFalse);
+      expect(controller.error, 'Local cleanup is incomplete.');
+    },
+  );
+  test('starting batch editing safely drops stale selection IDs', () async {
+    await controller.initialize();
+    controller.batchSelection.add('missing-session');
+    controller.isBatchMode = true;
+
+    controller.startBatchEditing();
+
+    expect(controller.batchSelection, isEmpty);
+    expect(controller.isBatchMode, isFalse);
+    expect(controller.selected, isNull);
+  });
+  test(
+    'batch processing safely handles a session removed during failed recovery',
+    () async {
+      final deletingBridge = _DeleteDuringMetadataFailureBridge()
+        ..sessions = [fixture(id: 's-removed', kind: MediaKind.jpeg)];
+      final deletingController = EditorController(deletingBridge);
+      addTearDown(deletingController.dispose);
+      await deletingController.initialize();
+      final source = deletingController.sessions.single;
+      deletingController.toggleBatch(source, true);
+      deletingController.startBatchEditing();
+
+      await deletingController.processBatch({
+        source.id: MetadataPatch(values: {'make': 'Brand'}),
+      });
+
+      expect(deletingBridge.processes, 1);
+      expect(deletingController.sessions, isEmpty);
+      expect(deletingController.selected, isNull);
+      expect(deletingController.batchSelection, isEmpty);
+      expect(deletingController.queue, isEmpty);
+      expect(deletingController.isBatchMode, isFalse);
+      expect(deletingController.canExport, isFalse);
     },
   );
   test(
@@ -361,6 +569,9 @@ void main() {
       controller.toggleBatch(item, true);
     }
     expect(controller.batchSelection.length, 5);
+    controller.startBatchEditing();
+    expect(controller.isBatchMode, isTrue);
+    expect(controller.selected?.id, items.first.id);
 
     final batchMap = {
       for (final s in items)
@@ -372,6 +583,12 @@ void main() {
     expect(controller.queueTotal, 5);
     expect(controller.queueCompletedCount, 5);
     expect(controller.queueFailedCount, 0);
+    expect(controller.isBatchMode, isTrue);
+    expect(controller.selected?.id, items.first.id);
+    expect(
+      controller.sessions.every((session) => session.processing != null),
+      isTrue,
+    );
 
     controller.queue.first.status = 'failed';
     controller.queue.first.message = 'Verification mismatch';
@@ -385,6 +602,8 @@ void main() {
 
     await controller.retryBatch();
     expect(controller.queue.first.status, 'completed');
+    expect(controller.isBatchMode, isTrue);
+    expect(controller.selected?.id, items.first.id);
   });
 
   test('batch queue cancellation stops pending items', () async {
@@ -398,6 +617,7 @@ void main() {
     for (final item in items) {
       controller.toggleBatch(item, true);
     }
+    controller.startBatchEditing();
     final batchMap = {
       's-1': MetadataPatch(values: {'make': 'Brand'}),
       's-2': MetadataPatch(values: {'make': 'Brand'}),
@@ -414,6 +634,86 @@ void main() {
       ),
       isTrue,
     );
+    expect(controller.isBatchMode, isTrue);
+    expect(controller.selected?.id, items.first.id);
+  });
+
+  test('single-file replacement invalidates the old completed batch plan before export', () async {
+    final batchBridge = _CapturingBatchBridge()
+      ..sessions = [
+        fixture(id: 's-batch-a', kind: MediaKind.jpeg),
+        fixture(id: 's-batch-b', kind: MediaKind.jpeg),
+      ]
+      ..nextStatus = IntegrityStatus.verified;
+    final batchController = EditorController(batchBridge);
+    addTearDown(batchController.dispose);
+    await batchController.initialize();
+    for (final source in batchController.sessions) {
+      batchController.toggleBatch(source, true);
+    }
+    batchController.startBatchEditing();
+    final originalPlan = MetadataPatch(values: {'make': 'Batch Brand'});
+    await batchController.processBatch({
+      's-batch-a': originalPlan,
+      's-batch-b': originalPlan,
+    });
+    expect(
+      batchController.queue.every((item) => item.status == 'completed'),
+      isTrue,
+    );
+
+    final changedSource = batchController.sessions.firstWhere(
+      (source) => source.id == 's-batch-a',
+    );
+    batchController.select(changedSource);
+    await batchController.processMetadata(
+      MetadataPatch(values: {'make': 'Single-file Brand'}),
+    );
+
+    final changedQueueItem = batchController.queue.firstWhere(
+      (item) => item.sessionId == 's-batch-a',
+    );
+    expect(changedQueueItem.status, 'interrupted');
+    expect(
+      batchController.sessions
+          .firstWhere((source) => source.id == 's-batch-a')
+          .processing!
+          .metadataPatch!
+          .equivalent(originalPlan),
+      isFalse,
+    );
+
+    await batchController.exportSelectedBatch(onlyReady: true);
+    expect(batchBridge.exportedBatch, hasLength(1));
+    expect(batchBridge.exportedBatch.single['sessionId'], 's-batch-b');
+  });
+
+  test('failed single-file replacement clears its completed batch output qualification', () async {
+    final batchBridge = FakeMediaBridge()
+      ..sessions = [fixture(id: 's-batch-failed', kind: MediaKind.jpeg)]
+      ..nextStatus = IntegrityStatus.verified;
+    final batchController = EditorController(batchBridge);
+    addTearDown(batchController.dispose);
+    await batchController.initialize();
+    final source = batchController.sessions.single;
+    batchController.toggleBatch(source, true);
+    batchController.startBatchEditing();
+    final batchPlan = MetadataPatch(values: {'make': 'Batch Brand'});
+    await batchController.processBatch({source.id: batchPlan});
+    expect(batchController.queue.single.status, 'completed');
+
+    batchController.select(batchController.sessions.single);
+    batchBridge.processError = PlatformException(
+      code: 'processing',
+      message: 'Single-file edit failed.',
+    );
+    await batchController.processMetadata(
+      MetadataPatch(values: {'make': 'Replacement Brand'}),
+    );
+
+    expect(batchController.queue.single.status, 'interrupted');
+    expect(batchController.selected?.processing, isNull);
+    expect(batchController.canExport, isFalse);
   });
 
   test('importBatch with multiple files enters batch mode directly', () async {
@@ -669,14 +969,157 @@ void main() {
     expect(restored.lastErrorTime, isNotNull);
 
     // Clear error and verify persistence
+    restored.error = 'The current operation still needs attention.';
     restored.clearLastError();
     expect(restored.lastErrorCode, isNull);
     expect(restored.lastErrorMessage, isNull);
     expect(restored.lastErrorTime, isNull);
+    expect(
+      restored.error,
+      'The current operation still needs attention.',
+      reason: 'Clearing persisted history must not imply the current issue is fixed.',
+    );
 
     final third = EditorController(bridge);
     await third.initialize();
     expect(third.lastErrorCode, isNull);
     expect(third.lastErrorMessage, isNull);
   });
+
+  test('error history writes are serialized so a clear cannot be overwritten', () async {
+    final orderedBridge = _GatedSaveMediaBridge();
+    final orderedController = EditorController(orderedBridge);
+    addTearDown(orderedController.dispose);
+    await orderedController.initialize();
+
+    orderedController.recordError('A recent processing error');
+    await orderedBridge.firstSaveStarted.future;
+    orderedController.clearLastError();
+    await Future<void>.delayed(Duration.zero);
+
+    // The clear is queued until the first write finishes, instead of racing it.
+    expect(orderedBridge.writes, hasLength(1));
+    orderedBridge.allowFirstSaveToFinish.complete();
+    await orderedBridge.secondSaveCompleted.future;
+
+    expect(orderedBridge.editorState.containsKey('lastErrorCode'), isFalse);
+    expect(orderedBridge.editorState.containsKey('lastErrorMessage'), isFalse);
+    expect(orderedController.statePersistenceError, isNull);
+  });
+
+  test(
+    'an idle history save finishes before media processing starts',
+    () async {
+      final gatedBridge = _GatedSaveMediaBridge();
+      gatedBridge.sessions = [fixture()];
+      final gatedController = EditorController(gatedBridge);
+      addTearDown(gatedController.dispose);
+      await gatedController.initialize();
+      gatedController.select(gatedController.sessions.single);
+
+      gatedController.recordError('A recent processing error');
+      await gatedBridge.firstSaveStarted.future;
+      final processing = gatedController.processMetadata(
+        MetadataPatch(values: {'make': 'Updated'}),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(gatedBridge.processes, 0);
+
+      gatedBridge.allowFirstSaveToFinish.complete();
+      await processing;
+      expect(gatedBridge.processes, 1);
+    },
+  );
+
+  test(
+    'error history changes during processing are deferred until it finishes',
+    () async {
+      final gatedBridge = _GatedOperationMediaBridge();
+      gatedBridge.sessions = [fixture()];
+      final gatedController = EditorController(gatedBridge);
+      addTearDown(gatedController.dispose);
+      await gatedController.initialize();
+      gatedController.select(gatedController.sessions.single);
+
+      final processing = gatedController.processMetadata(
+        MetadataPatch(values: {'make': 'Updated'}),
+      );
+      await gatedBridge.processStarted.future;
+      gatedController.recordError('A transient processing error');
+      gatedController.clearLastError();
+      await Future<void>.delayed(Duration.zero);
+      expect(gatedBridge.saves, 0);
+      expect(gatedBridge.saveOverlappedProcessing, isFalse);
+
+      gatedBridge.allowProcessToFinish.complete();
+      await processing;
+      await gatedBridge.historySaveCompleted.future;
+      expect(gatedBridge.saves, 1);
+      expect(gatedBridge.saveOverlappedProcessing, isFalse);
+      expect(gatedBridge.editorState.containsKey('lastErrorCode'), isFalse);
+    },
+  );
+
+  test(
+    'failed error-history persistence is exposed without losing the live error',
+    () async {
+      final failingBridge = _FailingSaveMediaBridge();
+      final failingController = EditorController(failingBridge);
+      addTearDown(failingController.dispose);
+      await failingController.initialize();
+
+      failingController.recordError('A recent processing error');
+      await failingBridge.saveStarted.future;
+      await Future<void>.delayed(Duration.zero);
+
+      expect(failingController.lastErrorCode, 'ERR_PROCESSING');
+      expect(
+        failingController.statePersistenceError,
+        contains('Local editor state could not be saved'),
+      );
+    },
+  );
+
+  test(
+    'listeners are notified when error-history persistence recovers',
+    () async {
+      final recoveringBridge = _RecoveringSaveMediaBridge();
+      final recoveringController = EditorController(recoveringBridge);
+      addTearDown(recoveringController.dispose);
+      await recoveringController.initialize();
+
+      recoveringController.recordError('A recent processing error');
+      await recoveringBridge.firstSaveStarted.future;
+      await Future<void>.delayed(Duration.zero);
+      expect(recoveringController.statePersistenceError, isNotNull);
+
+      final warningCleared = Completer<void>();
+      recoveringController.addListener(() {
+        if (recoveringController.statePersistenceError == null &&
+            !warningCleared.isCompleted) {
+          warningCleared.complete();
+        }
+      });
+      recoveringController.clearLastError();
+      await recoveringBridge.secondSaveCompleted.future;
+      await warningCleared.future;
+
+      expect(recoveringController.statePersistenceError, isNull);
+    },
+  );
+
+  test(
+    'progress labels describe general metadata writes and website navigation',
+    () {
+      controller.operation = EditorOperation.processing;
+      expect(
+        controller.progressLabel,
+        'Writing metadata and checking media integrity…',
+      );
+      controller.operation = EditorOperation.openingWebsite;
+      expect(controller.progressLabel, 'Opening the Zlarp website…');
+      controller.operation = EditorOperation.openingBrowser;
+      expect(controller.progressLabel, 'Opening iCloud Photos…');
+    },
+  );
 }

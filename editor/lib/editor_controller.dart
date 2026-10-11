@@ -18,6 +18,7 @@ enum EditorOperation {
   exporting,
   deleting,
   openingBrowser,
+  openingWebsite,
 }
 
 class EditorController extends ChangeNotifier {
@@ -32,8 +33,30 @@ class EditorController extends ChangeNotifier {
   String? lastErrorCode;
   String? lastErrorMessage;
   DateTime? lastErrorTime;
+  String? statePersistenceError;
   Map<String, Object?> _editorState = {};
   int queueCompleted = 0;
+  Future<void> _persistenceTail = Future<void>.value();
+  int _persistenceRevision = 0;
+  int _pendingPersistenceWrites = 0;
+  bool _deferredErrorHistoryPersistence = false;
+
+  static const _errorHistoryKeys = [
+    'lastErrorCode',
+    'lastErrorMessage',
+    'lastErrorTime',
+  ];
+
+  void _restorePersistedErrorHistory(Map<String, Object?> state) {
+    for (final key in _errorHistoryKeys) {
+      if (_editorState.containsKey(key)) {
+        state[key] = _editorState[key];
+      } else {
+        state.remove(key);
+      }
+    }
+  }
+
   Future<void> _persist() async {
     final state = <String, Object?>{
       ..._editorState,
@@ -72,8 +95,38 @@ class EditorController extends ChangeNotifier {
     } else {
       state.remove('lastErrorTime');
     }
-    await bridge.saveEditorState(state);
-    _editorState = state;
+    // NativeMediaBridge serializes state saves with media operations. History
+    // changes made while busy are deferred until the operation releases that
+    // gate. Internal queue checkpoints can still persist, but must not sneak
+    // the deferred history update into the native channel.
+    if (busy && _deferredErrorHistoryPersistence) {
+      _restorePersistedErrorHistory(state);
+    }
+    final revision = ++_persistenceRevision;
+    _pendingPersistenceWrites++;
+    final write = _persistenceTail.then((_) async {
+      try {
+        await bridge.saveEditorState(state);
+        _editorState = state;
+        if (revision == _persistenceRevision && statePersistenceError != null) {
+          statePersistenceError = null;
+          if (!_disposed) _emit();
+        }
+      } finally {
+        _pendingPersistenceWrites--;
+      }
+    });
+    // Keep later writes runnable after a failed save, while returning the
+    // original failure to callers that await this persistence operation.
+    _persistenceTail = write.then<void>((_) {}, onError: (Object _) {});
+    try {
+      await write;
+    } catch (failure) {
+      if (revision == _persistenceRevision) {
+        statePersistenceError = readableError(failure);
+      }
+      rethrow;
+    }
   }
 
   List<MediaSession> _sessions = const [];
@@ -109,10 +162,11 @@ class EditorController extends ChangeNotifier {
       EditorOperation.loading => 'Recovering your local projects…',
       EditorOperation.importing => 'Importing and inspecting the original…',
       EditorOperation.processing =>
-        'Writing camera metadata and checking media integrity…',
+        'Writing metadata and checking media integrity…',
       EditorOperation.exporting => 'Choose where to save the processed copy…',
       EditorOperation.deleting => 'Removing app-owned copies…',
       EditorOperation.openingBrowser => 'Opening iCloud Photos…',
+      EditorOperation.openingWebsite => 'Opening the Zlarp website…',
       null => '',
     };
   }
@@ -211,7 +265,7 @@ class EditorController extends ChangeNotifier {
     lastErrorCode = code ?? classifyErrorCode(message);
     lastErrorMessage = message;
     lastErrorTime = DateTime.now();
-    unawaited(_persist().catchError((_) {}));
+    _scheduleErrorHistoryPersistence();
     _emit();
   }
 
@@ -219,8 +273,30 @@ class EditorController extends ChangeNotifier {
     lastErrorCode = null;
     lastErrorMessage = null;
     lastErrorTime = null;
-    unawaited(_persist().catchError((_) {}));
+    _scheduleErrorHistoryPersistence();
     _emit();
+  }
+
+  void _scheduleErrorHistoryPersistence() {
+    if (busy) {
+      _deferredErrorHistoryPersistence = true;
+      return;
+    }
+    unawaited(
+      _persist().catchError((_) {
+        if (!_disposed) _emit();
+      }),
+    );
+  }
+
+  void _flushDeferredErrorHistoryPersistence() {
+    if (!_deferredErrorHistoryPersistence || busy || _disposed) return;
+    _deferredErrorHistoryPersistence = false;
+    unawaited(
+      _persist().catchError((_) {
+        if (!_disposed) _emit();
+      }),
+    );
   }
 
   bool isBatchMode = false;
@@ -235,17 +311,41 @@ class EditorController extends ChangeNotifier {
     _emit();
   }
 
+  void _normalizeBatchState() {
+    final validIds = sessions.map((session) => session.id).toSet();
+    batchSelection.removeWhere((id) => !validIds.contains(id));
+    queue.removeWhere((item) => !validIds.contains(item.sessionId));
+
+    if (selected != null && !validIds.contains(selected!.id)) {
+      selected = null;
+    }
+    if (batchSelection.isEmpty) {
+      isBatchMode = false;
+      _reconcileCompletedQueueRows();
+      return;
+    }
+    if (isBatchMode &&
+        (selected == null || !batchSelection.contains(selected!.id))) {
+      selected = sessions
+          .where((session) => batchSelection.contains(session.id))
+          .firstOrNull;
+      if (selected == null) isBatchMode = false;
+    }
+    _reconcileCompletedQueueRows();
+  }
+
   void startBatchEditing() {
-    if (busy || !ready || batchSelection.isEmpty) return;
+    if (busy || !ready) return;
+    _normalizeBatchState();
+    if (batchSelection.isEmpty) return;
     isBatchMode = true;
-    final targetId = batchSelection.first;
-    selected = sessions.firstWhere(
-      (s) => s.id == targetId,
-      orElse: () => sessions.firstWhere(
-        (s) => batchSelection.contains(s.id),
-        orElse: () => sessions.first,
-      ),
-    );
+    selected = sessions
+        .where((session) => batchSelection.contains(session.id))
+        .firstOrNull;
+    if (selected == null) {
+      isBatchMode = false;
+      return;
+    }
     acknowledgedProcessingId = null;
     error = null;
     notice = null;
@@ -269,6 +369,27 @@ class EditorController extends ChangeNotifier {
   void _upsert(MediaSession session) {
     _sessions = [session, ..._sessions.where((item) => item.id != session.id)];
     selected = session;
+    _normalizeBatchState();
+  }
+
+  bool _reconcileCompletedQueueRows() {
+    var changed = false;
+    for (final item in queue.where((row) => row.status == 'completed')) {
+      final session = sessions
+          .where((candidate) => candidate.id == item.sessionId)
+          .firstOrNull;
+      final output = session?.processing;
+      if (output == null ||
+          output.metadataPatch == null ||
+          !output.metadataPatch!.equivalent(item.patch) ||
+          output.integrity.hasMismatch) {
+        item.status = 'interrupted';
+        item.message =
+            'The saved output no longer matches this batch plan. Retry.';
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   Future<void> _run(
@@ -286,6 +407,10 @@ class EditorController extends ChangeNotifier {
     cancellationRequested = false;
     _emit();
     try {
+      // Complete idle state writes before entering the native bridge. Its
+      // state-save and media-operation methods share a serialized channel.
+      if (_pendingPersistenceWrites > 0) await _persistenceTail;
+      if (!_current(generation)) return;
       await action(generation);
     } catch (failure) {
       if (!_disposed && generation == _generation) {
@@ -299,6 +424,7 @@ class EditorController extends ChangeNotifier {
               _sessions = recovered;
               final matches = recovered.where((item) => item.id == selectedId);
               selected = matches.isEmpty ? null : matches.first;
+              _normalizeBatchState();
             }
           } catch (_) {
             if (_current(generation)) {
@@ -319,6 +445,7 @@ class EditorController extends ChangeNotifier {
               final selectedId = selected?.id;
               final matches = recovered.where((item) => item.id == selectedId);
               selected = matches.isEmpty ? null : matches.first;
+              _normalizeBatchState();
               acknowledgedProcessingId = null;
               notice = 'Operation finished after cancellation was requested. Review any recovered copy before exporting.';
             }
@@ -338,6 +465,7 @@ class EditorController extends ChangeNotifier {
         operation = null;
         cancellationRequested = false;
         _emit();
+        _flushDeferredErrorHistoryPersistence();
       }
     }
   }
@@ -411,6 +539,8 @@ class EditorController extends ChangeNotifier {
         capabilities = engine;
         _sessions = sessions;
         selected = null;
+        isBatchMode = false;
+        _normalizeBatchState();
       }, needsReady: false);
 
   Future<void> importMedia({required bool photos}) =>
@@ -452,7 +582,11 @@ class EditorController extends ChangeNotifier {
         } else if (result.sessions.length == 1) {
           isBatchMode = false;
           selected = result.sessions.first;
+        } else {
+          isBatchMode = false;
+          selected = null;
         }
+        _normalizeBatchState();
         if (result.errors.isNotEmpty) {
           notice =
               '${result.sessions.length} imported. ${result.errors.join('\n')}';
@@ -582,6 +716,8 @@ class EditorController extends ChangeNotifier {
     bool retry = false,
   }) async {
     if (busy || !ready || patches.isEmpty) return;
+    final wasBatchMode = isBatchMode;
+    final priorSelectionId = selected?.id;
     for (final entry in patches.entries) {
       final matches = sessions.where((s) => s.id == entry.key);
       final invalid = entry.value.validate();
@@ -608,7 +744,11 @@ class EditorController extends ChangeNotifier {
       }
       await _persist();
       queueCompleted = 0;
-      for (final item in queue) {
+      // Per-item reconciliation may prune rows whose sessions were removed
+      // natively. Iterate a snapshot and skip any rows no longer in the live
+      // queue so reconciliation cannot mutate this active iteration.
+      for (final item in List<QueueItem>.of(queue)) {
+        if (!queue.contains(item)) continue;
         if (!_current(generation)) break;
         if (item.status == 'completed') {
           queueCompleted++;
@@ -646,6 +786,7 @@ class EditorController extends ChangeNotifier {
               if (_current(generation)) {
                 _sessions = recovered;
                 selected = null;
+                _normalizeBatchState();
                 acknowledgedProcessingId = null;
               }
             } catch (_) {
@@ -670,8 +811,12 @@ class EditorController extends ChangeNotifier {
       }
       await _persist();
       if (_current(generation)) {
-        selected = null;
-        isBatchMode = false;
+        final previousSelection = sessions.where(
+          (session) => session.id == priorSelectionId,
+        );
+        selected = previousSelection.isEmpty ? null : previousSelection.first;
+        isBatchMode = wasBatchMode;
+        _normalizeBatchState();
         notice =
             'Batch finished: ${queue.where((q) => q.status == "completed").length}/${queue.length} ready.';
       }
@@ -694,6 +839,7 @@ class EditorController extends ChangeNotifier {
     bool acknowledgeIncomplete = false,
     bool onlyReady = false,
   }) => _run(EditorOperation.exporting, (_) async {
+    if (_reconcileCompletedQueueRows()) await _persist();
     final completedIds = queue
         .where((q) => q.status == 'completed')
         .map((q) => q.sessionId)
@@ -741,6 +887,7 @@ class EditorController extends ChangeNotifier {
     bool acknowledgeIncomplete = false,
     bool onlyReady = false,
   }) => _run(EditorOperation.exporting, (_) async {
+    if (_reconcileCompletedQueueRows()) await _persist();
     final completedIds = queue
         .where((q) => q.status == 'completed')
         .map((q) => q.sessionId)
@@ -858,7 +1005,8 @@ class EditorController extends ChangeNotifier {
         cancellationRequested ||
         operation == EditorOperation.loading ||
         operation == EditorOperation.deleting ||
-        operation == EditorOperation.openingBrowser) {
+        operation == EditorOperation.openingBrowser ||
+        operation == EditorOperation.openingWebsite) {
       return;
     }
     cancellationRequested = true;
@@ -883,6 +1031,7 @@ class EditorController extends ChangeNotifier {
         if (selected?.id == session.id) selected = null;
         batchSelection.remove(session.id);
         queue.removeWhere((q) => q.sessionId == session.id);
+        _normalizeBatchState();
         await _persist();
         acknowledgedProcessingId = null;
         notice = 'App-owned copies removed. Photos and provider originals are unchanged.';
@@ -894,6 +1043,8 @@ class EditorController extends ChangeNotifier {
     selected = null;
     queue = [];
     batchSelection.clear();
+    isBatchMode = false;
+    _normalizeBatchState();
     await _persist();
     acknowledgedProcessingId = null;
     notice =
@@ -903,7 +1054,10 @@ class EditorController extends ChangeNotifier {
       _run(EditorOperation.openingBrowser, (_) => bridge.openICloud());
   Future<void> openUrl(String url) =>
       _run(EditorOperation.openingBrowser, (_) => bridge.openUrl(url));
-  Future<void> openWebsite() => openUrl(AppBrand.websiteUrl);
+  Future<void> openWebsite() => _run(
+    EditorOperation.openingWebsite,
+    (_) => bridge.openUrl(AppBrand.websiteUrl),
+  );
   Future<Map<String, double>?> pickLocation({
     double? latitude,
     double? longitude,

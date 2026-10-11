@@ -26,8 +26,8 @@ Metadata Editor only interacts with files and information that you explicitly ch
 A. Media Files & Embedded Metadata
 When you select an image or video file using the system document picker (UIDocumentPickerViewController) or file sharing interface:
 • Formats Processed: JPEG, PNG, HEIC, MP4, and MOV files.
-• Metadata Fields Read & Modified: EXIF, TIFF, GPS, IPTC, XMP tags, and QuickTime container atoms (including camera make, model, lens profile, focal length, aperture, ISO, shutter speed, capture date/time, and GPS coordinates).
-• Processing Location: All parsing, rewriting, and cryptographic checksum validations occur entirely in-memory and in local sandboxed storage within your iOS device. Your media is never uploaded to external servers or cloud endpoints.
+• Metadata Fields: Supported EXIF, TIFF, GPS, and QuickTime fields may be inspected or changed, depending on the file format and container layout. Arbitrary IPTC or XMP editing is not provided. Unsupported fields and layouts are refused or reported as incomplete rather than silently converted.
+• Processing Location: The media engine reads and writes local, file-backed copies in your iOS sandbox. It does not upload media for processing. Cloud-backed imports and user-operated browser uploads can require a network connection.
 
 B. Device & Photo Library Permissions
 • Files & Storage Access: Metadata Editor requests access to the individual files or folders you explicitly select through the standard iOS document picker.
@@ -35,30 +35,31 @@ B. Device & Photo Library Permissions
 • Camera & Microphone: Metadata Editor does not access your physical device camera or microphone.
 
 C. Saved Presets & Local Settings
-• When you create custom camera recipes, randomization profiles, or saved presets, these configurations are stored locally in the application's private sandboxed SharedPreferences / Application Support directory.
+• Saved camera recipes, randomization options, and editor state are stored locally in the application's private Application Support directory. The app does not use SharedPreferences for these records.
 • Preset configurations are never synced to any remote database.
 
 3. Data Storage, Retention, and Deletion
 A. Local Sandbox Storage
-• Files imported into the application and new files generated during processing are stored locally in the application's sandboxed Processed Media directory (Documents/Processed Media/).
-• Because iOS file sharing is enabled (UIFileSharingEnabled), you can directly inspect, copy, or delete these files at any time using the native Apple Files app.
+• Imported originals, private processing outputs, and session records are stored in the application's private Application Support directory.
+• Fully verified outputs may also be copied to Documents/Processed Media for access through Files. Outputs with incomplete checks remain private until you review the limitations and explicitly export them. Failed verification blocks export.
+• Files sharing exposes public copies, not the private originals and session records.
 
 B. Source File Immutability
 • Metadata Editor enforces a strict architectural rule: source files are immutable. The application never alters or overwrites your original imported files in-place. All operations write output to newly created files.
 
 C. Data Deletion
-• Session Removal: Tapping "Delete session copy" within the application immediately and permanently deletes the sandboxed working copy from local storage.
-• Cache Clearing: The application provides a one-tap cache clearing control in Settings to remove all temporary working files.
-• Application Uninstall: Deleting Metadata Editor from your iOS device immediately and permanently purges all sandboxed data, including session copies, temporary files, and saved presets, via the iOS operating system.
+• Session Removal: Removing a local project deletes its private working and export staging copies. Provider originals, published Processed Media files, and copies exported elsewhere remain unchanged.
+• Cache Clearing: Settings provides a confirmation before removing local project history, private working copies, and private export staging files. Originals, published Processed Media files, and copies exported elsewhere remain unchanged.
+• Application Uninstall: Deleting the app removes its on-device sandbox. Previously exported media and system or provider backups are not managed by this app.
 
 4. Network Connections & External Links
 A. Network Inactivity
 • The application executes no automated network requests, background polling, or API calls during normal operation.
-• The app operates fully offline with complete functionality when Airplane Mode is active or when network access is disabled.
+• Local file processing works without a network connection. Importing an original that is only in iCloud or another cloud provider, visiting an external website, or uploading through a browser requires the relevant network service.
 
 B. User-Initiated External Links
 • The application contains an explicit link to the showcase website (Visit Website -> https://zlarp.com).
-• When tapped, iOS opens the destination URL in your default web browser (Safari). Any browsing activity on external websites is governed by the respective website's privacy terms.
+• When tapped, iOS opens the destination URL in your default web browser. Any browsing activity on external websites is governed by the respective website's privacy terms.
 
 5. Third-Party Libraries & Subprocessors
 Metadata Editor incorporates no third-party tracking, analytics, or advertising libraries. The application is built using:
@@ -67,11 +68,11 @@ Metadata Editor incorporates no third-party tracking, analytics, or advertising 
 There are no third-party data subprocessors.
 
 6. Children's Privacy
-Metadata Editor does not knowingly collect, transmit, or solicit personal information from children under the age of 13 (or under 16 in the European Economic Area). Because the application collects zero personal data from any user, it is fully compliant with COPPA and GDPR requirements.
+Metadata Editor does not knowingly solicit children's personal information. The application's local processing model does not by itself establish compliance with every legal requirement.
 
 7. Your Rights (GDPR & CCPA/CPRA)
 Under global privacy regulations, including the European Union General Data Protection Regulation (GDPR) and California Consumer Privacy Act (CCPA):
-• Right to Access / Portability: All your processed media and metadata remain on your device and are fully accessible via the Files app at all times.
+• Access / Portability: Public copies and explicitly exported outputs are accessible through Files. Private working copies are managed in the app; incomplete outputs require review before export.
 • Right to Erasure: You can delete all local data at any time directly through the app or by deleting the app.
 • Because we do not collect, transmit, or store personal data on any server, we have no personal data to provide, rectify, or delete upon request.
 
@@ -102,7 +103,7 @@ A. License
 Subject to your compliance with these Terms, vxti grants you a revocable, non-exclusive, non-transferable, limited license to download, install, and use Metadata Editor on Apple iOS devices that you own or control, solely for personal or legitimate commercial workflow purposes.
 
 B. Permitted Application Use
-Metadata Editor is designed to provide professional on-device tools for inspecting, editing, stripping, standardizing, and randomizing metadata (EXIF, TIFF, GPS, IPTC, XMP, and QuickTime atoms) in supported media container formats (JPEG, PNG, HEIC, MP4, MOV).
+Metadata Editor provides on-device inspection and supported EXIF, TIFF, GPS, and QuickTime field editing or removal in JPEG, PNG, HEIC, MP4, and MOV containers. Field support depends on the file format and layout. Arbitrary IPTC and XMP editing is not provided.
 
 C. Restrictions
 You agree that you will not:

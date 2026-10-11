@@ -37,6 +37,14 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  Future<void> expandDetails(WidgetTester tester, String key) async {
+    final target = find.byKey(Key(key));
+    await tester.ensureVisible(target);
+    await tester.pumpAndSettle();
+    await tester.tap(target);
+    await tester.pumpAndSettle();
+  }
+
   testWidgets(
     'AppBar contains settings button that navigates to SettingsScreen',
     (tester) async {
@@ -153,11 +161,13 @@ void main() {
   ) async {
     await pumpSettings(tester);
 
+    await expandDetails(tester, 'mediaExportDetails');
+
     // The Photos Workflow
     await tester.tap(find.byKey(const Key('photosWorkflowRow')));
     await tester.pumpAndSettle();
     expect(
-      find.textContaining('To guarantee immutable camera originals'),
+      find.textContaining('Edits create a separate local copy'),
       findsOneWidget,
     );
     await tester.tap(find.text('Got it'));
@@ -182,7 +192,7 @@ void main() {
     await tester.tap(find.byKey(const Key('clearCacheButton')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Clear Media Cache?'), findsOneWidget);
+    expect(find.text('Clear Local Projects?'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('confirmClearCacheButton')));
     await tester.pumpAndSettle();
@@ -194,9 +204,11 @@ void main() {
     tester,
   ) async {
     // Add a preset first
-    await controller.savePreset(
-      'Test Preset',
-      MetadataPatch(values: {'make': 'Apple', 'model': 'iPhone 15 Pro'}),
+    await tester.runAsync(
+      () => controller.savePreset(
+        'Test Preset',
+        MetadataPatch(values: {'make': 'Apple', 'model': 'iPhone 15 Pro'}),
+      ),
     );
     expect(controller.presets.length, 1);
 
@@ -221,6 +233,7 @@ void main() {
   ) async {
     await pumpSettings(tester);
 
+    await expandDetails(tester, 'engineDetails');
     expect(find.text('Swift Media Engine'), findsOneWidget);
     expect(
       find.text('ProbeCore v0.4 · Ready · Sandboxed local engine'),
@@ -246,9 +259,9 @@ void main() {
     (tester) async {
       await pumpSettings(tester);
 
-      expect(find.text('HELP & TROUBLESHOOTING'), findsOneWidget);
+      expect(find.text('HELP'), findsOneWidget);
       expect(find.text('Error Codes & Fixes'), findsOneWidget);
-      expect(find.text('8 CODES'), findsOneWidget);
+      expect(find.text('${kErrorGuideCatalog.length} CODES'), findsOneWidget);
       expect(find.text('Photos Attribution Guide'), findsOneWidget);
     },
   );
@@ -264,12 +277,14 @@ void main() {
       expect(find.text('Photos Attribution Guide'), findsAtLeastNWidgets(1));
       expect(
         find.textContaining(
-          'Why does Photos show "Saved from Metadata Editor"?',
+          'Embedded metadata and Photos app-origin labels are separate.',
         ),
         findsOneWidget,
       );
       expect(
-        find.textContaining('How to prevent attribution stamps:'),
+        find.textContaining(
+          'Apple controls the resulting Photos presentation.',
+        ),
         findsOneWidget,
       );
 
@@ -277,22 +292,29 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        find.textContaining('How to prevent attribution stamps:'),
+        find.textContaining(
+          'Apple controls the resulting Photos presentation.',
+        ),
         findsNothing,
       );
     },
   );
 
   testWidgets(
-    'Error Codes & Fixes row opens Error Reference Guide modal sheet with search and filtering',
+    'Error Codes & Fixes row opens Troubleshooting modal sheet with search and filtering',
     (tester) async {
       await pumpSettings(tester);
 
       await tester.tap(find.byKey(const Key('errorGuideRow')));
       await tester.pumpAndSettle();
 
-      expect(find.text('Error Reference Guide'), findsOneWidget);
-      expect(find.text('8 error codes with diagnostic fixes'), findsOneWidget);
+      expect(find.text('Troubleshooting'), findsOneWidget);
+      expect(
+        find.text(
+          '${kErrorGuideCatalog.length} error codes with diagnostic steps',
+        ),
+        findsOneWidget,
+      );
       expect(find.text('ERR_DATE_FMT'), findsOneWidget);
       expect(find.text('ERR_GPS_BOUNDS'), findsOneWidget);
 
@@ -351,7 +373,7 @@ void main() {
       await tester.tap(find.byKey(const Key('closeErrorGuideButton')));
       await tester.pumpAndSettle();
 
-      expect(find.text('Error Reference Guide'), findsNothing);
+      expect(find.text('Troubleshooting'), findsNothing);
     },
   );
 
@@ -363,27 +385,27 @@ void main() {
       );
       await pumpSettings(tester);
 
-      expect(find.text('RECENT ERROR DETECTED'), findsOneWidget);
+      expect(find.text('RECENT ERROR'), findsOneWidget);
       expect(find.byKey(const Key('recentErrorBanner')), findsOneWidget);
       expect(find.byKey(const Key('recentErrorCodeBadge')), findsOneWidget);
       expect(find.text('ERR_MEDIA_INTEGRITY'), findsOneWidget);
-      expect(find.text('ACTIVE FIX AVAILABLE'), findsOneWidget);
-      expect(find.text('ACTIVE FIX'), findsOneWidget);
+      expect(find.text('DIAGNOSTIC STEPS'), findsOneWidget);
+      expect(find.text('RECENT ERROR'), findsOneWidget);
       expect(find.byKey(const Key('dismissRecentErrorButton')), findsOneWidget);
 
       // Tap dismiss button
       await tester.tap(find.byKey(const Key('dismissRecentErrorButton')));
       await tester.pumpAndSettle();
 
-      expect(find.text('RECENT ERROR DETECTED'), findsNothing);
+      expect(find.text('RECENT ERROR'), findsNothing);
       expect(find.byKey(const Key('recentErrorBanner')), findsNothing);
-      expect(find.text('8 CODES'), findsOneWidget);
+      expect(find.text('${kErrorGuideCatalog.length} CODES'), findsOneWidget);
       expect(controller.lastErrorCode, isNull);
     },
   );
 
   testWidgets(
-    'View Recent Error Fix button opens Error Guide with promoted and auto-expanded card',
+    'View Recent Error Fix button opens Error Guide with promoted issue and explicit steps',
     (tester) async {
       controller.recordError('Latitude must be between -90 and 90');
       await pumpSettings(tester);
@@ -393,12 +415,14 @@ void main() {
       await tester.tap(find.byKey(const Key('viewRecentErrorFixButton')));
       await tester.pumpAndSettle();
 
-      expect(find.text('Error Reference Guide'), findsOneWidget);
+      expect(find.text('Troubleshooting'), findsOneWidget);
       expect(
         find.byKey(const Key('justEncounteredBadge_ERR_GPS_BOUNDS')),
         findsOneWidget,
       );
       expect(find.text('JUST ENCOUNTERED'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('viewLatestSteps')));
+      await tester.pumpAndSettle();
       expect(
         find.textContaining(
           'Geographic coordinates must fall within standard physical boundaries',
@@ -410,7 +434,7 @@ void main() {
       await tester.tap(find.byKey(const Key('closeErrorGuideButton')));
       await tester.pumpAndSettle();
 
-      expect(find.text('Error Reference Guide'), findsNothing);
+      expect(find.text('Troubleshooting'), findsNothing);
     },
   );
 
@@ -419,7 +443,8 @@ void main() {
     (tester) async {
       await pumpSettings(tester);
 
-      expect(find.text('SYSTEM HEALTH & DIAGNOSTICS'), findsOneWidget);
+      expect(find.text('Engine & diagnostics'), findsOneWidget);
+      await expandDetails(tester, 'engineDetails');
       expect(find.text('Photos Access'), findsOneWidget);
       expect(find.text('ON IMPORT'), findsOneWidget);
       expect(find.text('Swift Media Engine'), findsOneWidget);
@@ -436,6 +461,7 @@ void main() {
       controller.capabilities = null;
       await pumpSettings(tester);
 
+      await expandDetails(tester, 'engineDetails');
       expect(find.text('ON IMPORT'), findsOneWidget);
       expect(find.textContaining('· Not ready ·'), findsOneWidget);
       expect(find.byIcon(Icons.hourglass_empty), findsOneWidget);
@@ -466,21 +492,26 @@ void main() {
       await tester.tap(find.byKey(const Key('tabErrorCodes')));
       await tester.pumpAndSettle();
 
-      expect(find.text('ERROR CODES & FIXES'), findsOneWidget);
-      expect(find.text('Error Reference Guide'), findsOneWidget);
-      expect(find.text('8 error codes with diagnostic fixes'), findsOneWidget);
+      expect(find.text('Error codes'), findsOneWidget);
+      expect(find.text('Troubleshooting'), findsOneWidget);
+      expect(
+        find.text(
+          '${kErrorGuideCatalog.length} error codes with diagnostic steps',
+        ),
+        findsOneWidget,
+      );
 
       // Tap Settings tab
       await tester.tap(find.byKey(const Key('tabSettings')));
       await tester.pumpAndSettle();
 
-      expect(find.text('SYSTEM HEALTH & DIAGNOSTICS'), findsOneWidget);
+      expect(find.text('Engine & diagnostics'), findsOneWidget);
 
       // Tap Editor tab
       await tester.tap(find.byKey(const Key('tabEditor')));
       await tester.pumpAndSettle();
 
-      expect(find.text('LOCAL PROJECTS'), findsOneWidget);
+      expect(find.byKey(const Key('tabEditor')), findsOneWidget);
     },
   );
 
@@ -518,7 +549,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Should have switched to Error Codes tab
-      expect(find.text('ERROR CODES & FIXES'), findsOneWidget);
+      expect(find.text('Error codes'), findsOneWidget);
       expect(find.text('ERR_MEDIA_INTEGRITY'), findsWidgets);
       expect(
         find.byKey(const Key('justEncounteredBadge_ERR_MEDIA_INTEGRITY')),

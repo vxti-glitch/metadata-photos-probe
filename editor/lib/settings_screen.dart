@@ -4,7 +4,6 @@ import 'app_brand.dart';
 import 'editor_app.dart';
 import 'editor_controller.dart';
 import 'legal_documents.dart';
-import 'media_bridge.dart';
 
 const _background = Color(0xFF000000);
 const _panel = Color(0xFF1C1C1E);
@@ -63,32 +62,64 @@ class SettingsScreen extends StatelessWidget {
             builder: (context, _) => ListView(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
               children: [
-                _buildIdentityHero(context),
-                const SizedBox(height: 28),
-                _buildSectionHeader('GENERAL'),
-                const SizedBox(height: 8),
-                _buildGeneralCard(context),
-                const SizedBox(height: 24),
-                if (controller.lastErrorCode != null) ...[
-                  _buildSectionHeader('RECENT ERROR DETECTED'),
-                  const SizedBox(height: 8),
-                  _buildRecentErrorBanner(context),
-                  const SizedBox(height: 24),
+                if (controller.statePersistenceError != null) ...[
+                  _buildOperationFeedback(
+                    'Local history could not be saved. Your latest settings or diagnostics may not survive a restart.',
+                    isError: true,
+                    key: const Key('settingsPersistenceWarning'),
+                  ),
+                  const SizedBox(height: 12),
                 ],
-                _buildSectionHeader('HELP & TROUBLESHOOTING'),
-                const SizedBox(height: 8),
-                _buildTroubleshootingCard(context),
-                const SizedBox(height: 24),
-                _buildMediaEngineCard(context),
-                const SizedBox(height: 24),
-                _buildSectionHeader('DATA & STORAGE'),
+                if (controller.error != null) ...[
+                  _buildOperationFeedback(controller.error!, isError: true),
+                  const SizedBox(height: 12),
+                ] else if (controller.notice != null) ...[
+                  _buildOperationFeedback(controller.notice!),
+                  const SizedBox(height: 12),
+                ],
+                if (controller.busy) ...[
+                  _buildOperationFeedback(
+                    controller.progressLabel,
+                    key: const Key('settingsOperationProgress'),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                _buildIdentityHero(context),
+                const SizedBox(height: 20),
+                _buildSectionHeader('STORAGE & PRESETS'),
                 const SizedBox(height: 8),
                 _buildDataStorageCard(context),
-                const SizedBox(height: 24),
-                _buildSectionHeader('SYSTEM HEALTH & DIAGNOSTICS'),
+                const SizedBox(height: 20),
+                _buildSectionHeader('HELP'),
                 const SizedBox(height: 8),
-                _buildDiagnosticsCard(context),
-                const SizedBox(height: 32),
+                if (controller.lastErrorCode != null) ...[
+                  _buildRecentErrorBanner(context),
+                  const SizedBox(height: 8),
+                ],
+                _buildTroubleshootingCard(context),
+                const SizedBox(height: 8),
+                _buildDisclosure(
+                  key: const Key('mediaExportDetails'),
+                  title: 'Media & export',
+                  subtitle: 'Formats, originals and Photos workflow',
+                  icon: Icons.photo_library_outlined,
+                  child: _buildMediaEngineCard(context),
+                ),
+                const SizedBox(height: 20),
+                _buildSectionHeader('ABOUT'),
+                const SizedBox(height: 8),
+                _buildGeneralCard(context),
+                const SizedBox(height: 8),
+                _buildDisclosure(
+                  key: const Key('engineDetails'),
+                  title: 'Engine & diagnostics',
+                  subtitle: controller.ready
+                      ? 'Ready · processing stays on this device'
+                      : 'Startup required before editing',
+                  icon: Icons.info_outline_rounded,
+                  child: _buildDiagnosticsCard(context),
+                ),
+                const SizedBox(height: 20),
                 _buildFooter(),
               ],
             ),
@@ -98,67 +129,97 @@ class SettingsScreen extends StatelessWidget {
     ),
   );
 
-  Widget _buildIdentityHero(BuildContext context) => Center(
-    child: Column(
-      children: [
-        Container(
-          width: 76,
-          height: 76,
-          decoration: BoxDecoration(
-            color: _panel,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: _cardBorder, width: 1.5),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x33000000),
-                blurRadius: 16,
-                offset: Offset(0, 6),
-              ),
-            ],
-          ),
-          alignment: Alignment.center,
-          child: const MetadataMark(size: 48),
-        ),
-        const SizedBox(height: 12),
-        const Text(
-          AppBrand.name,
-          style: TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.w800,
-            color: Colors.white,
-            letterSpacing: 0.2,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          'by ${AppBrand.developer}',
-          style: const TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w500,
-            color: _accent,
-            letterSpacing: 0.1,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-          decoration: BoxDecoration(
-            color: _panel,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: _cardBorder),
-          ),
-          child: Text(
-            'Version ${AppBrand.version}',
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: _muted,
-              letterSpacing: 0.5,
-            ),
-          ),
-        ),
-      ],
+  Widget _buildOperationFeedback(
+    String message, {
+    bool isError = false,
+    Key? key,
+  }) => Container(
+    key:
+        key ??
+        Key(isError ? 'settingsOperationError' : 'settingsOperationNotice'),
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: isError ? const Color(0xFF261215) : _panel,
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(
+        color: isError ? const Color(0xFF591C22) : _cardBorder,
+      ),
     ),
+    child: Text(
+      message,
+      style: TextStyle(
+        color: isError ? const Color(0xFFFFD4CE) : Colors.white,
+        height: 1.4,
+      ),
+    ),
+  );
+
+  Widget _buildIdentityHero(BuildContext context) => _buildCard(
+    children: [
+      Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            const MetadataMark(size: 40),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    AppBrand.name,
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 3),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 3,
+                    children: [
+                      Text(
+                        'Version ${AppBrand.version}',
+                        style: const TextStyle(fontSize: 12, color: _muted),
+                      ),
+                      Text(
+                        'by ${AppBrand.developer}',
+                        style: const TextStyle(fontSize: 12, color: _muted),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
+
+  Widget _buildDisclosure({
+    required Key key,
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required Widget child,
+  }) => _buildCard(
+    children: [
+      Material(
+        color: _panel,
+        child: ExpansionTile(
+          key: key,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+          leading: Icon(icon, color: _accent, size: 22),
+          title: Text(
+            title,
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+          ),
+          subtitle: Text(
+            subtitle,
+            style: const TextStyle(fontSize: 12, color: _muted),
+          ),
+          children: [child],
+        ),
+      ),
+    ],
   );
 
   Widget _buildSectionHeader(String title) => Padding(
@@ -196,7 +257,9 @@ class SettingsScreen extends StatelessWidget {
           size: 16,
           color: _muted,
         ),
-        onTap: () => controller.openWebsite(),
+        onTap: controller.busy || !controller.ready
+            ? null
+            : () => controller.openWebsite(),
       ),
       const _IndentedDivider(),
       _buildRow(
@@ -237,170 +300,68 @@ class SettingsScreen extends StatelessWidget {
 
   Widget _buildRecentErrorBanner(BuildContext context) {
     final code = controller.lastErrorCode!;
-    final item = kErrorGuideCatalog.firstWhere(
-      (e) => e.code == code,
-      orElse: () => ErrorGuideItem(
-        code: code,
-        title: 'Unexpected Processing Error',
-        category: 'System',
-        cause:
-            controller.lastErrorMessage ??
-            'An unexpected error occurred during processing.',
-        steps: const ['Tap View Fix & Guide for diagnostic troubleshooting.'],
-        proTip: 'Ensure your media uses a standard format.',
-      ),
-    );
-    final errorText = controller.lastErrorMessage != null
-        ? simplifyUserError(controller.lastErrorMessage!)
-        : item.cause;
-
+    final item = kErrorGuideCatalog
+        .where((entry) => entry.code == code)
+        .firstOrNull;
     return Container(
       key: const Key('recentErrorBanner'),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: const Color(0xFF261215),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFF591C22), width: 1.2),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF591C22)),
       ),
-      padding: const EdgeInsets.all(16),
-      child: Column(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF38151A),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: const Color(0xFF75242C)),
+          const Icon(
+            Icons.warning_amber_rounded,
+            color: Color(0xFFFF9B9B),
+            size: 22,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item?.title ?? 'Unexpected Processing Error',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
-                alignment: Alignment.center,
-                child: const Icon(
-                  Icons.warning_amber_rounded,
-                  size: 16,
-                  color: Color(0xFFFF453A),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
                   children: [
-                    Row(
-                      children: [
-                        Container(
-                          key: const Key('recentErrorCodeBadge'),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF38151A),
-                            borderRadius: BorderRadius.circular(4),
-                            border: Border.all(color: const Color(0xFF75242C)),
-                          ),
-                          child: Text(
-                            code,
-                            style: const TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 10,
-                              fontWeight: FontWeight.w800,
-                              color: Color(0xFFFF9B9B),
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        const Text(
-                          'ACTIVE FIX AVAILABLE',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
-                            color: Color(0xFFFF453A),
-                            letterSpacing: 0.8,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
                     Text(
-                      item.title,
+                      code,
+                      key: const Key('recentErrorCodeBadge'),
                       style: const TextStyle(
-                        fontSize: 14.5,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
+                        fontFamily: 'monospace',
+                        color: Color(0xFFFF9B9B),
+                        fontSize: 11,
                       ),
+                    ),
+                    const Text(
+                      'DIAGNOSTIC STEPS',
+                      style: TextStyle(fontSize: 10, color: _muted),
                     ),
                   ],
                 ),
-              ),
-              IconButton(
-                key: const Key('dismissRecentErrorButton'),
-                icon: const Icon(
-                  Icons.close_rounded,
-                  size: 18,
-                  color: Color(0xFFFFB4AB),
-                ),
-                tooltip: 'Dismiss alert',
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                onPressed: () => controller.clearLastError(),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1E0E10),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFF40161B)),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(
-                  Icons.lightbulb_outline_rounded,
-                  size: 15,
-                  color: Color(0xFFFF9B9B),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    errorText,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: Color(0xFFFFD4CE),
-                      height: 1.35,
-                    ),
-                  ),
+                TextButton(
+                  key: const Key('viewRecentErrorFixButton'),
+                  onPressed: () =>
+                      _openErrorGuideSheet(context, highlightedCode: code),
+                  child: const Text('View diagnostic steps'),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              key: const Key('viewRecentErrorFixButton'),
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF5A1C22),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  side: const BorderSide(color: Color(0xFF8B2B35)),
-                ),
-              ),
-              onPressed: () =>
-                  _openErrorGuideSheet(context, highlightedCode: code),
-              icon: const Icon(Icons.auto_fix_high_rounded, size: 16),
-              label: const Text(
-                'View Fix & Diagnostic Steps',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-              ),
-            ),
+          IconButton(
+            key: const Key('dismissRecentErrorButton'),
+            tooltip: 'Clear error history',
+            onPressed: controller.clearLastError,
+            icon: const Icon(Icons.close_rounded, size: 18, color: _muted),
           ),
         ],
       ),
@@ -417,17 +378,17 @@ class SettingsScreen extends StatelessWidget {
           iconColor: _accent,
           title: 'Error Codes & Fixes',
           subtitle: hasActiveError
-              ? 'Active fix for ${controller.lastErrorCode} available'
-              : 'Catalog of 8 error codes with step-by-step solutions',
+              ? 'Diagnostic steps for ${controller.lastErrorCode}'
+              : 'Browse ${kErrorGuideCatalog.length} codes and diagnostic steps',
           trailing: hasActiveError
               ? _buildPill(
-                  text: 'ACTIVE FIX',
+                  text: 'RECENT ERROR',
                   bgColor: const Color(0xFF38151A),
                   borderColor: const Color(0xFF75242C),
                   textColor: const Color(0xFFFF9B9B),
                 )
               : _buildPill(
-                  text: '8 CODES',
+                  text: '${kErrorGuideCatalog.length} CODES',
                   bgColor: const Color(0xFF1E2838),
                   borderColor: const Color(0xFF334A6E),
                   textColor: const Color(0xFF9CB5FF),
@@ -443,7 +404,7 @@ class SettingsScreen extends StatelessWidget {
           icon: Icons.lightbulb_outline_rounded,
           iconColor: _activeGreen,
           title: 'Photos Attribution Guide',
-          subtitle: 'Preventing app-origin attribution stamps',
+          subtitle: 'Embedded metadata and Photos labels are separate',
           trailing: const Icon(
             Icons.chevron_right_rounded,
             size: 20,
@@ -453,12 +414,9 @@ class SettingsScreen extends StatelessWidget {
             context,
             title: 'Photos Attribution Guide',
             body:
-                'Why does Photos show "Saved from Metadata Editor"?\n\n'
-                'When third-party apps write directly into the Photos database using Apple\'s PHAssetChangeRequest, iOS automatically stamps the writing application as the asset\'s origin in Photos info panels.\n\n'
-                'How to prevent attribution stamps:\n'
-                '1. Tap "Export to Files" to save clean, standalone media directly to iCloud Drive or On My iPhone.\n'
-                '2. In the iOS Files app, tap Share > Save Image / Save Video, or AirDrop the file to your device.\n'
-                '3. Files and AirDrop imports enter Photos as native user assets with zero third-party attribution.',
+                'Embedded metadata and Photos app-origin labels are separate. Editing camera fields does not prove that a Photos attribution label is absent.\n\n'
+                'Create an edited copy, then use Export to Files. You can manually upload that file through Safari to iCloud Photos and allow it to sync. Apple controls the resulting Photos presentation.\n\n'
+                'This app does not write processed copies directly to Photos, alter Photos databases, or promise that Files, AirDrop, or iCloud imports suppress labels. Check the actual Photos information panel on your device.',
           ),
         ),
       ],
@@ -474,7 +432,7 @@ class SettingsScreen extends StatelessWidget {
         title: 'The Photos Workflow',
         subtitle: 'Manual Files & Safari export workflow',
         trailing: _buildPill(
-          text: 'ACTIVE',
+          text: 'MANUAL',
           bgColor: _activeGreenBg,
           borderColor: _activeGreenBorder,
           textColor: _activeGreen,
@@ -483,8 +441,9 @@ class SettingsScreen extends StatelessWidget {
           context,
           title: 'The Photos Workflow',
           body:
-              'Direct Photos library modification can inject app-origin attribution or trigger unwanted system alterations.\n\n'
-              'To guarantee immutable camera originals and maintain uncompromised attribution independence, Metadata Editor saves processed copies to the Files app. From Files, you can seamlessly import to iCloud Photos or your photo library on your own terms.',
+              'Edits create a separate local copy while the imported original stays unchanged.\n\n'
+              'Review the requested changes, then create the edited copy. Fully verified copies may appear in the app’s Files folder; use Export to Files to choose a destination. If verification is incomplete, review the limitations and explicitly acknowledge them before export. Failed checks block export.\n\n'
+              'If you want the copy in iCloud Photos, upload it yourself through Safari and allow Photos to sync. The resulting Photos labels and presentation need a physical-device check.',
         ),
       ),
       const _IndentedDivider(),
@@ -514,7 +473,9 @@ class SettingsScreen extends StatelessWidget {
         icon: Icons.category_outlined,
         iconColor: _accent,
         title: 'Supported Media Containers',
-        subtitle: 'JPEG · PNG · HEIC · MP4 · MOV',
+        subtitle: controller.ready
+            ? '${controller.capabilities!.formats.map((format) => format.toUpperCase()).join(' · ')} · Field and file-layout limits apply'
+            : 'Format support is available after startup',
         trailing: const Icon(
           Icons.check_circle_outline_rounded,
           size: 18,
@@ -530,8 +491,8 @@ class SettingsScreen extends StatelessWidget {
         key: const Key('clearCacheRow'),
         icon: Icons.delete_outline_rounded,
         iconColor: const Color(0xFFFF9B9B),
-        title: 'Temporary Media Cache',
-        subtitle: 'Clear sandboxed working copies & outputs',
+        title: 'Local Projects & Copies',
+        subtitle: 'Private working copies; published files stay unchanged',
         trailing: OutlinedButton(
           key: const Key('clearCacheButton'),
           style: OutlinedButton.styleFrom(
@@ -544,13 +505,17 @@ class SettingsScreen extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
             ),
           ),
-          onPressed: () => _confirmClearCache(context),
+          onPressed: controller.busy || !controller.ready
+              ? null
+              : () => _confirmClearCache(context),
           child: const Text(
             'Clear',
             style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
           ),
         ),
-        onTap: () => _confirmClearCache(context),
+        onTap: controller.busy || !controller.ready
+            ? null
+            : () => _confirmClearCache(context),
       ),
       const _IndentedDivider(),
       _buildRow(
@@ -572,7 +537,7 @@ class SettingsScreen extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
             ),
           ),
-          onPressed: controller.busy
+          onPressed: controller.busy || !controller.ready
               ? null
               : () => _confirmResetPresets(context),
           child: const Text(
@@ -580,7 +545,9 @@ class SettingsScreen extends StatelessWidget {
             style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
           ),
         ),
-        onTap: () => _confirmResetPresets(context),
+        onTap: controller.busy || !controller.ready
+            ? null
+            : () => _confirmResetPresets(context),
       ),
     ],
   );
@@ -670,44 +637,67 @@ class SettingsScreen extends StatelessWidget {
     onTap: onTap,
     child: Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Row(
-        children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: _iconBg,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            alignment: Alignment.center,
-            child: Icon(icon, size: 18, color: iconColor),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                  ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final stackTrailing =
+              constraints.maxWidth < 340 ||
+              MediaQuery.textScalerOf(context).scale(15) > 21;
+          final details = Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: _iconBg,
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                if (subtitle != null) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(fontSize: 12, color: _muted),
-                  ),
-                ],
+                alignment: Alignment.center,
+                child: Icon(icon, size: 18, color: iconColor),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
+                    if (subtitle != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        style: const TextStyle(fontSize: 12, color: _muted),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (trailing != null && !stackTrailing) ...[
+                const SizedBox(width: 8),
+                trailing,
               ],
-            ),
-          ),
-          if (trailing != null) ...[const SizedBox(width: 8), trailing],
-        ],
+            ],
+          );
+          if (trailing == null || !stackTrailing) return details;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              details,
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.only(left: 46),
+                child: trailing,
+              ),
+            ],
+          );
+        },
       ),
     ),
   );
@@ -756,6 +746,7 @@ class SettingsScreen extends StatelessWidget {
             fontWeight: FontWeight.w700,
           ),
         ),
+        scrollable: true,
         content: Text(
           body,
           style: const TextStyle(color: _muted, fontSize: 14, height: 1.4),
@@ -773,43 +764,50 @@ class SettingsScreen extends StatelessWidget {
   void _confirmClearCache(BuildContext context) {
     showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: _panel,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: _cardBorder),
-        ),
-        title: const Text(
-          'Clear Media Cache?',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
+      builder: (context) => AnimatedBuilder(
+        animation: controller,
+        builder: (context, _) => AlertDialog(
+          backgroundColor: _panel,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: _cardBorder),
           ),
-        ),
-        content: const Text(
-          'Remove all app-owned temporary working files and processed copies from the local sandbox?\n\n'
-          'Original files in Photos and Files are completely untouched.',
-          style: TextStyle(color: _muted, fontSize: 14, height: 1.4),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel', style: TextStyle(color: _muted)),
-          ),
-          FilledButton(
-            key: const Key('confirmClearCacheButton'),
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFF8B2626),
-              foregroundColor: Colors.white,
+          scrollable: true,
+          title: const Text(
+            'Clear Local Projects?',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 17,
+              fontWeight: FontWeight.w700,
             ),
-            onPressed: () async {
-              Navigator.of(context).pop();
-              await controller.clearCache();
-            },
-            child: const Text('Clear Cache'),
           ),
-        ],
+          content: const Text(
+            'Remove your local project history, imported working files, and private edited/export staging copies? Published Processed Media files and copies exported elsewhere stay unchanged.\n\n'
+            'Original files in Photos and Files are completely untouched.',
+            style: TextStyle(color: _muted, fontSize: 14, height: 1.4),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel', style: TextStyle(color: _muted)),
+            ),
+            FilledButton(
+              key: const Key('confirmClearCacheButton'),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF8B2626),
+                foregroundColor: Colors.white,
+              ),
+              onPressed: controller.busy || !controller.ready
+                  ? null
+                  : () async {
+                      if (controller.busy || !controller.ready) return;
+                      Navigator.of(context).pop();
+                      await controller.clearCache();
+                    },
+              child: const Text('Clear Projects'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -817,46 +815,50 @@ class SettingsScreen extends StatelessWidget {
   void _confirmResetPresets(BuildContext context) {
     showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: _panel,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: _cardBorder),
-        ),
-        title: const Text(
-          'Reset Saved Presets?',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
+      builder: (context) => AnimatedBuilder(
+        animation: controller,
+        builder: (context, _) => AlertDialog(
+          backgroundColor: _panel,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: _cardBorder),
           ),
-        ),
-        content: const Text(
-          'Remove all custom saved camera recipes and presets?\n\n'
-          'Default researched camera profiles remain fully available.',
-          style: TextStyle(color: _muted, fontSize: 14, height: 1.4),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel', style: TextStyle(color: _muted)),
-          ),
-          FilledButton(
-            key: const Key('confirmResetPresetsButton'),
-            style: FilledButton.styleFrom(
-              backgroundColor: _cardBorder,
-              foregroundColor: _accent,
+          scrollable: true,
+          title: const Text(
+            'Reset Saved Presets?',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 17,
+              fontWeight: FontWeight.w700,
             ),
-            onPressed: controller.busy
-                ? null
-                : () async {
-                    if (controller.busy) return;
-                    Navigator.of(context).pop();
-                    await controller.resetPresets();
-                  },
-            child: const Text('Reset Presets'),
           ),
-        ],
+          content: const Text(
+            'Remove all custom saved camera recipes and presets?\n\n'
+            'This also clears the remembered profile selection. Default researched camera profiles remain available.',
+            style: TextStyle(color: _muted, fontSize: 14, height: 1.4),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel', style: TextStyle(color: _muted)),
+            ),
+            FilledButton(
+              key: const Key('confirmResetPresetsButton'),
+              style: FilledButton.styleFrom(
+                backgroundColor: _cardBorder,
+                foregroundColor: _accent,
+              ),
+              onPressed: controller.busy || !controller.ready
+                  ? null
+                  : () async {
+                      if (controller.busy || !controller.ready) return;
+                      Navigator.of(context).pop();
+                      await controller.resetPresets();
+                    },
+              child: const Text('Reset Presets'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -927,7 +929,7 @@ const List<ErrorGuideItem> kErrorGuideCatalog = [
     steps: [
       'For photos (JPEG/PNG/HEIC): Format as "YYYY:MM:DD HH:MM:SS" (e.g. 2026:10:10 14:30:00).',
       'For videos (MP4/MOV): Format as ISO 8601 with timezone offset (e.g. 2026-10-10T14:30:00-04:00).',
-      'Tap "Match iPhone" or apply a camera profile to automatically generate valid timestamps.',
+      'Choose Keep original, Set, or Randomize in the date controls. Review the resulting changes before creating the edited copy.',
     ],
     proTip: 'Use 24-hour time notation (00–23) and always include two-digit month, day, hour, minute, and second numbers.',
   ),
@@ -941,7 +943,7 @@ const List<ErrorGuideItem> kErrorGuideCatalog = [
       'Omit degree symbols (°), minutes (\'), seconds ("), and cardinal direction letters (N, S, E, W).',
       'Use a negative sign (-) to represent South latitudes or West longitudes.',
     ],
-    proTip: 'Sharing an address or dropped pin from Apple Maps copies standard decimal coordinates directly to your clipboard.',
+    proTip: 'Use Pick location when available, then review the latitude and longitude before creating the copy.',
   ),
   ErrorGuideItem(
     code: 'ERR_MEDIA_INTEGRITY',
@@ -983,19 +985,19 @@ const List<ErrorGuideItem> kErrorGuideCatalog = [
     code: 'ERR_EXPORT_UNREADY',
     title: 'No Processed Copy Ready to Export',
     category: 'Storage',
-    cause: 'Export or Share was invoked before generating a processed copy from the current editing session.',
+    cause: 'There is no usable edited copy for the selected file, or incomplete verification still needs acknowledgment.',
     steps: [
-      'Scroll to the bottom of the editor view.',
-      'Tap the blue "Process File" button to generate your clean copy.',
-      'Wait for the green "Ready" banner to appear, then tap "Export to Files" or "Share / Save to Photos".',
+      'Select the imported file and review your metadata changes.',
+      'Choose Create edited copy and wait for processing to finish.',
+      'Review any verification limitations. Export to Files becomes available only for an eligible copy.',
     ],
-    proTip: 'In batch mode, tap "Process All Files" to generate clean copies for the entire queue before exporting.',
+    proTip: 'Batch export also requires an eligible processed copy for each selected file. A failed integrity check blocks that copy.',
   ),
   ErrorGuideItem(
     code: 'ERR_PHOTOS_ACCESS',
-    title: 'Photos Library Permission Denied',
+    title: 'Photos Access Is Unavailable',
     category: 'System',
-    cause: 'iOS privacy settings have restricted Metadata Editor from accessing images or videos in your photo library.',
+    cause: 'Photos authorization or access to the selected item is unavailable. Limited access may exclude that item, and cloud-backed originals may need a download.',
     steps: [
       'Open the iOS Settings app on your device.',
       'Scroll down to "Metadata Editor" (or navigate to Privacy & Security > Photos).',
@@ -1006,27 +1008,27 @@ const List<ErrorGuideItem> kErrorGuideCatalog = [
   ),
   ErrorGuideItem(
     code: 'ERR_STORAGE_FULL',
-    title: 'Insufficient Disk Space',
+    title: 'Local Storage or File Access Unavailable',
     category: 'Storage',
-    cause: 'Device storage is too low to write temporary media working copies and container buffers during processing.',
+    cause: 'The app could not read or save an app-owned file. Low disk space, unavailable file access, or a damaged local session record can cause this code; it does not always mean the disk is full.',
     steps: [
-      'In Metadata Editor Settings, scroll to Data & Storage and tap "Clear Media Cache".',
-      'Open iOS Settings > General > iPhone Storage to verify at least 1–2 GB of available free storage.',
-      'Restart the app and retry processing.',
+      'Review Settings > Local Projects & Copies before removing private working copies. Published Processed Media files and copies exported elsewhere remain unchanged.',
+      'Open iOS Settings > General > iPhone Storage and free enough space for the original plus working and output copies.',
+      'Keep the provider original. If the file is cloud-backed, make sure it has downloaded before importing again. Review the safe diagnostic stage if the error persists.',
     ],
-    proTip: 'Clearing the media cache safely purges temporary sandbox files without touching your originals in Photos or Files.',
+    proTip: 'Clearing local projects removes private working and export staging files. Provider originals, published Files copies, and copies exported elsewhere remain unchanged.',
   ),
   ErrorGuideItem(
     code: 'ERR_UNSUPPORTED_MEDIA',
     title: 'Unsupported Container or Codec',
     category: 'System',
-    cause: 'The imported file uses an unrecognized container wrapper, proprietary codec, or corrupted header (e.g. MKV, AVI, WebM).',
+    cause: 'The file format, internal layout, or requested metadata operation is unsupported. A recognized extension alone does not establish support.',
     steps: [
       'Ensure media uses standard formats: JPEG, PNG, HEIC, MP4, or QuickTime MOV.',
-      'Verify video tracks use standard H.264 (AVC) or H.265 (HEVC) compression.',
-      'For downloaded or transcoded clips, re-mux to MP4 before importing.',
+      'Check the field support shown for the imported file; video fields differ from photo fields.',
+      'Retry with a supported field on a separate copy. Keep the original; the app does not convert or re-encode media to bypass this error.',
     ],
-    proTip: 'ProbeCore inspects container atoms directly. Files must contain valid moov, trak, and mdia atoms for processing.',
+    proTip: 'Share the error code and safe diagnostic stage if this repeats. Do not send private media, file names, or location data.',
   ),
 ];
 
@@ -1036,43 +1038,83 @@ class ErrorGuideSheet extends StatefulWidget {
     this.highlightedCode,
     this.isModal = true,
     this.controller,
+    this.onOpenEditor,
   });
 
   final String? highlightedCode;
   final bool isModal;
   final EditorController? controller;
+  final VoidCallback? onOpenEditor;
 
   @override
   State<ErrorGuideSheet> createState() => _ErrorGuideSheetState();
 }
 
 class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
-  static const _categories = [
+  static final _categories = [
     'All',
-    'Dates',
-    'Location',
-    'Integrity',
-    'System',
-    'Storage',
+    ...kErrorGuideCatalog.map((item) => item.category).toSet(),
   ];
 
   late final TextEditingController _searchController;
+  final ScrollController _scrollController = ScrollController();
   String _selectedCategory = 'All';
   late final Set<String> _expandedCodes;
+  String? _lastHighlight;
+  final GlobalKey _latestDetailsKey = GlobalKey();
+
+  String? get _activeHighlight => widget.controller != null
+      ? widget.controller!.lastErrorCode
+      : widget.highlightedCode;
 
   @override
   void initState() {
     super.initState();
     _searchController = TextEditingController();
-    final activeCode =
-        widget.highlightedCode ?? widget.controller?.lastErrorCode;
-    _expandedCodes = {if (activeCode != null) activeCode else 'ERR_DATE_FMT'};
+    final activeCode = _activeHighlight;
+    _lastHighlight = activeCode;
+    _expandedCodes = {};
+    widget.controller?.addListener(_handleControllerChange);
   }
 
   @override
   void dispose() {
+    widget.controller?.removeListener(_handleControllerChange);
     _searchController.dispose();
+    _scrollController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant ErrorGuideSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller?.removeListener(_handleControllerChange);
+      widget.controller?.addListener(_handleControllerChange);
+    }
+    _updateHighlight();
+  }
+
+  void _updateHighlight() {
+    final active = _activeHighlight;
+    if (active != _lastHighlight) {
+      _lastHighlight = active;
+      if (active != null) {
+        _expandedCodes.clear();
+        _selectedCategory = 'All';
+        _searchController.clear();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _scrollController.hasClients) {
+            _scrollController.jumpTo(0);
+          }
+        });
+      }
+    }
+  }
+
+  void _handleControllerChange() {
+    if (!mounted) return;
+    setState(_updateHighlight);
   }
 
   List<ErrorGuideItem> get _filteredItems {
@@ -1089,8 +1131,7 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
           item.steps.any((s) => s.toLowerCase().contains(query));
     }).toList();
 
-    final activeHighlight =
-        widget.highlightedCode ?? widget.controller?.lastErrorCode;
+    final activeHighlight = _activeHighlight;
     if (activeHighlight != null) {
       final highlightIndex = items.indexWhere(
         (it) => it.code == activeHighlight,
@@ -1114,6 +1155,161 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
     });
   }
 
+  void _showLatestSteps() {
+    final code = _activeHighlight;
+    if (code == null) return;
+    setState(() {
+      _selectedCategory = 'All';
+      _searchController.clear();
+      _expandedCodes.add(code);
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final detailsContext = _latestDetailsKey.currentContext;
+      if (mounted && detailsContext != null) {
+        Scrollable.ensureVisible(
+          detailsContext,
+          duration: const Duration(milliseconds: 250),
+        );
+      }
+    });
+  }
+
+  Widget _latestIssue() {
+    final code = _activeHighlight;
+    final controller = widget.controller;
+    final item = kErrorGuideCatalog
+        .where((entry) => entry.code == code)
+        .firstOrNull;
+    final needsStartup = controller != null && !controller.ready;
+    return Container(
+      key: const Key('latestIssueCard'),
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: code == null ? _panel : const Color(0xFF221418),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: code == null ? _cardBorder : const Color(0xFF591C22),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                code == null
+                    ? Icons.check_circle_outline_rounded
+                    : Icons.warning_amber_rounded,
+                size: 22,
+                color: code == null ? _activeGreen : const Color(0xFFFF9B9B),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      code == null ? 'No recent errors' : 'Latest issue',
+                      style: const TextStyle(fontSize: 12, color: _muted),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      code == null
+                          ? needsStartup
+                                ? 'Startup required'
+                                : 'Nothing to troubleshoot yet'
+                          : item?.title ?? 'An operation could not finish',
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (code != null && controller != null)
+                IconButton(
+                  key: const Key('clearGuideHistory'),
+                  tooltip: 'Clear error history',
+                  onPressed: controller.clearLastError,
+                  icon: const Icon(
+                    Icons.close_rounded,
+                    size: 18,
+                    color: _muted,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            code == null && !needsStartup
+                ? 'If an operation fails, its code and next steps will appear here.'
+                : needsStartup
+                ? 'The editor needs to refresh local history before you can continue.'
+                : 'Your original is unchanged. Review the steps, then return to your edits.',
+            style: const TextStyle(
+              fontSize: 13,
+              height: 1.4,
+              color: Colors.white70,
+            ),
+          ),
+          if (code != null || needsStartup) ...[
+            const SizedBox(height: 8),
+            if (code != null)
+              Text(
+                'Code: $code',
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontFamily: 'monospace',
+                  color: Color(0xFFFF9B9B),
+                ),
+              ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                if (needsStartup)
+                  FilledButton.icon(
+                    key: const Key('retryStartupFromGuide'),
+                    onPressed: controller.busy ? null : controller.initialize,
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    label: const Text('Retry startup'),
+                  ),
+                if (item != null)
+                  needsStartup
+                      ? OutlinedButton(
+                          key: const Key('viewLatestSteps'),
+                          onPressed: _showLatestSteps,
+                          child: const Text('View steps'),
+                        )
+                      : FilledButton.icon(
+                          key: const Key('viewLatestSteps'),
+                          onPressed: _showLatestSteps,
+                          icon: const Icon(Icons.checklist_rounded, size: 18),
+                          label: const Text('View steps'),
+                        ),
+                if (widget.onOpenEditor != null)
+                  TextButton(
+                    key: const Key('returnToEditorFromGuide'),
+                    onPressed: widget.onOpenEditor,
+                    child: const Text('Return to editor'),
+                  ),
+              ],
+            ),
+            if (item == null && code != null)
+              const Text(
+                'This code has no catalog entry. Keep the original and share the code with the developer; avoid sharing private media or location data.',
+                style: TextStyle(fontSize: 12, color: _muted, height: 1.4),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final items = _filteredItems;
@@ -1134,183 +1330,187 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
       ),
       child: SafeArea(
         top: false,
-        child: Column(
-          children: [
-            if (widget.isModal) ...[
-              const SizedBox(height: 10),
-              Center(
-                child: Container(
-                  width: 36,
-                  height: 5,
-                  decoration: BoxDecoration(
-                    color: _cardBorder,
-                    borderRadius: BorderRadius.circular(2.5),
-                  ),
-                ),
-              ),
-            ],
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 12, 8),
-              child: Row(
-                children: [
-                  Container(
-                    width: 32,
-                    height: 32,
+        child: SingleChildScrollView(
+          key: const Key('errorGuideScroll'),
+          controller: _scrollController,
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          child: Column(
+            children: [
+              if (widget.isModal) ...[
+                const SizedBox(height: 10),
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 5,
                     decoration: BoxDecoration(
-                      color: _iconBg,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    alignment: Alignment.center,
-                    child: const Icon(
-                      Icons.menu_book_rounded,
-                      size: 18,
-                      color: _accent,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Error Reference Guide',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white,
-                          ),
-                        ),
-                        SizedBox(height: 2),
-                        Text(
-                          '8 error codes with diagnostic fixes',
-                          style: TextStyle(fontSize: 12, color: _muted),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (widget.isModal)
-                    IconButton(
-                      key: const Key('closeErrorGuideButton'),
-                      tooltip: 'Close',
-                      icon: const Icon(Icons.close_rounded, color: _muted),
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                ],
-              ),
-            ),
-            const Divider(height: 1, color: _cardBorder),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: Container(
-                height: 40,
-                decoration: BoxDecoration(
-                  color: _panel,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: _cardBorder),
-                ),
-                child: TextField(
-                  key: const Key('errorSearchInput'),
-                  controller: _searchController,
-                  style: const TextStyle(fontSize: 14, color: Colors.white),
-                  textInputAction: TextInputAction.search,
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    hintText: 'Search code, keyword, or symptom...',
-                    hintStyle: const TextStyle(fontSize: 13, color: _subtle),
-                    prefixIcon: const Icon(
-                      Icons.search_rounded,
-                      size: 18,
-                      color: _muted,
-                    ),
-                    suffixIcon: _searchController.text.isNotEmpty
-                        ? IconButton(
-                            key: const Key('clearSearchButton'),
-                            tooltip: 'Clear search',
-                            icon: const Icon(
-                              Icons.close_rounded,
-                              size: 16,
-                              color: _muted,
-                            ),
-                            onPressed: () {
-                              _searchController.clear();
-                              setState(() {});
-                            },
-                          )
-                        : null,
-                    isDense: true,
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 11,
+                      color: _cardBorder,
+                      borderRadius: BorderRadius.circular(2.5),
                     ),
                   ),
                 ),
-              ),
-            ),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              child: Row(
-                children: _categories.map((cat) {
-                  final isSelected = _selectedCategory == cat;
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: Semantics(
-                      selected: isSelected,
-                      button: true,
-                      child: InkWell(
-                        key: Key('categoryPill_$cat'),
-                        borderRadius: BorderRadius.circular(16),
-                        onTap: () => setState(() => _selectedCategory = cat),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: isSelected ? _accent : _panel,
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: isSelected ? _accent : _cardBorder,
-                            ),
-                          ),
-                          child: Text(
-                            cat,
+              ],
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 12, 8),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: _iconBg,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      alignment: Alignment.center,
+                      child: const Icon(
+                        Icons.menu_book_rounded,
+                        size: 18,
+                        color: _accent,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Troubleshooting',
                             style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: isSelected
-                                  ? FontWeight.w700
-                                  : FontWeight.w500,
-                              color: isSelected ? Colors.white : _muted,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '${kErrorGuideCatalog.length} error codes with diagnostic steps',
+                            style: const TextStyle(fontSize: 12, color: _muted),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (widget.isModal) const SizedBox(width: 48, height: 48),
+                  ],
+                ),
+              ),
+              _latestIssue(),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                child: Container(
+                  constraints: const BoxConstraints(minHeight: 48),
+                  decoration: BoxDecoration(
+                    color: _panel,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: _cardBorder),
+                  ),
+                  child: TextField(
+                    key: const Key('errorSearchInput'),
+                    controller: _searchController,
+                    style: const TextStyle(fontSize: 14, color: Colors.white),
+                    textInputAction: TextInputAction.search,
+                    onChanged: (_) => setState(() {}),
+                    decoration: InputDecoration(
+                      hintText: 'Search code, keyword, or symptom...',
+                      hintStyle: const TextStyle(fontSize: 13, color: _subtle),
+                      prefixIcon: const Icon(
+                        Icons.search_rounded,
+                        size: 18,
+                        color: _muted,
+                      ),
+                      suffixIcon: _searchController.text.isNotEmpty
+                          ? IconButton(
+                              key: const Key('clearSearchButton'),
+                              tooltip: 'Clear search',
+                              icon: const Icon(
+                                Icons.close_rounded,
+                                size: 16,
+                                color: _muted,
+                              ),
+                              onPressed: () {
+                                _searchController.clear();
+                                setState(() {});
+                              },
+                            )
+                          : null,
+                      isDense: true,
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 11,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 4,
+                ),
+                child: Wrap(
+                  spacing: 0,
+                  runSpacing: 6,
+                  children: _categories.map((cat) {
+                    final isSelected = _selectedCategory == cat;
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Semantics(
+                        selected: isSelected,
+                        button: true,
+                        child: InkWell(
+                          key: Key('categoryPill_$cat'),
+                          borderRadius: BorderRadius.circular(16),
+                          onTap: () => setState(() => _selectedCategory = cat),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: isSelected ? _accent : _panel,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: isSelected ? _accent : _cardBorder,
+                              ),
+                            ),
+                            child: Text(
+                              cat,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: isSelected
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                                color: isSelected ? Colors.white : _muted,
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                  );
-                }).toList(),
+                    );
+                  }).toList(),
+                ),
               ),
-            ),
-            const SizedBox(height: 6),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
-              child: Row(
-                children: [
-                  Text(
-                    '${items.length} of ${kErrorGuideCatalog.length} codes',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: _muted,
-                      letterSpacing: 0.3,
+              const SizedBox(height: 6),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 4,
+                ),
+                child: Row(
+                  children: [
+                    Text(
+                      '${items.length} of ${kErrorGuideCatalog.length} codes',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: _muted,
+                        letterSpacing: 0.3,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            const Divider(height: 1, color: _cardBorder),
-            Expanded(
-              child: items.isEmpty
+              const Divider(height: 1, color: _cardBorder),
+              items.isEmpty
                   ? Center(
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
@@ -1354,6 +1554,8 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
                       ),
                     )
                   : ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
                       keyboardDismissBehavior:
                           ScrollViewKeyboardDismissBehavior.onDrag,
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
@@ -1363,11 +1565,14 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
                       itemBuilder: (context, index) {
                         final item = items[index];
                         final isExpanded = _expandedCodes.contains(item.code);
-                        return _buildErrorCard(item, isExpanded);
+                        final card = _buildErrorCard(item, isExpanded);
+                        return item.code == _activeHighlight
+                            ? KeyedSubtree(key: _latestDetailsKey, child: card)
+                            : card;
                       },
                     ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1382,18 +1587,38 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
     }
 
     final maxHeight = MediaQuery.sizeOf(context).height * 0.90;
-    return Center(
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: maxHeight, maxWidth: 720),
-        child: sheetContent,
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: maxHeight, maxWidth: 720),
+          child: Stack(
+            children: [
+              sheetContent,
+              Positioned(
+                top: 10,
+                right: 12,
+                child: Material(
+                  color: _panel,
+                  borderRadius: BorderRadius.circular(24),
+                  child: IconButton(
+                    key: const Key('closeErrorGuideButton'),
+                    tooltip: 'Close',
+                    icon: const Icon(Icons.close_rounded, color: _muted),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
 
   Widget _buildErrorCard(ErrorGuideItem item, bool isExpanded) {
-    final isHighlighted =
-        item.code ==
-        (widget.highlightedCode ?? widget.controller?.lastErrorCode);
+    final isHighlighted = item.code == (_activeHighlight);
     return Container(
       key: Key('errorTile_${item.code}'),
       decoration: BoxDecoration(
@@ -1417,7 +1642,10 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       Container(
                         padding: const EdgeInsets.symmetric(
@@ -1491,7 +1719,6 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
                           ),
                         ),
                       ),
-                      const Spacer(),
                       Icon(
                         isExpanded
                             ? Icons.keyboard_arrow_up_rounded
@@ -1541,7 +1768,7 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
                   ),
                   const SizedBox(height: 14),
                   const Text(
-                    'HOW TO FIX',
+                    'WHAT TO TRY',
                     style: TextStyle(
                       fontSize: 10.5,
                       fontWeight: FontWeight.w800,
@@ -1559,8 +1786,11 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Container(
-                            width: 18,
-                            height: 18,
+                            constraints: const BoxConstraints(
+                              minWidth: 18,
+                              minHeight: 18,
+                            ),
+                            padding: const EdgeInsets.all(3),
                             margin: const EdgeInsets.only(top: 1, right: 8),
                             decoration: BoxDecoration(
                               color: _activeGreenBg,

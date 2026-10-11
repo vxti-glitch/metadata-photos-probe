@@ -117,8 +117,10 @@ class _EditorHomeState extends State<EditorHome> {
   @override
   Widget build(BuildContext context) {
     final session = controller.selected;
-    final isBatch =
-        controller.isBatchMode && controller.batchSelection.isNotEmpty;
+    final batchSources = controller.sessions
+        .where((item) => controller.batchSelection.contains(item.id))
+        .toList();
+    final isBatch = controller.isBatchMode && batchSources.isNotEmpty;
 
     PreferredSizeWidget? appBar;
     if (_selectedTabIndex == 0) {
@@ -127,7 +129,7 @@ class _EditorHomeState extends State<EditorHome> {
             ? null
             : IconButton(
                 tooltip: 'Back to projects',
-                onPressed: controller.busy
+                onPressed: controller.busy || !controller.ready
                     ? null
                     : isBatch
                     ? controller.exitBatchEditing
@@ -136,37 +138,18 @@ class _EditorHomeState extends State<EditorHome> {
               ),
         title: Row(
           children: [
-            const _MetadataMark(),
-            const SizedBox(width: 12),
+            const MetadataMark(size: 28),
+            const SizedBox(width: 10),
             Expanded(
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      isBatch
-                          ? 'BATCH EDITING (${controller.batchSelection.length})'
-                          : AppBrand.header,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 2,
-                      ),
-                    ),
-                    Text(
-                      isBatch
-                          ? 'Shared profile across selected files'
-                          : AppBrand.headerSubtitle,
-                      style: const TextStyle(
-                        fontSize: 9,
-                        color: _muted,
-                        letterSpacing: 1.1,
-                      ),
-                    ),
-                  ],
+              child: Text(
+                isBatch
+                    ? 'Batch edit (${controller.batchSelection.length})'
+                    : AppBrand.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
             ),
@@ -201,29 +184,22 @@ class _EditorHomeState extends State<EditorHome> {
           children: [
             Icon(Icons.menu_book_rounded, color: _accent, size: 20),
             SizedBox(width: 10),
-            Text(
-              'ERROR CODES & FIXES',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 1.5,
+            Expanded(
+              child: Text(
+                'Error codes',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
               ),
             ),
           ],
         ),
         actions: [
           if (controller.lastErrorCode != null)
-            TextButton.icon(
+            IconButton(
               key: const Key('clearLastErrorBarButton'),
-              icon: const Icon(
-                Icons.check_circle_outline_rounded,
-                size: 16,
-                color: Color(0xFF30D158),
-              ),
-              label: const Text(
-                'Clear Active',
-                style: TextStyle(color: Color(0xFF30D158), fontSize: 13),
-              ),
+              tooltip: 'Clear error history',
+              icon: const Icon(Icons.history_rounded),
               onPressed: controller.clearLastError,
             ),
           IconButton(
@@ -240,94 +216,124 @@ class _EditorHomeState extends State<EditorHome> {
       );
     }
 
-    Widget body;
-    if (_selectedTabIndex == 1) {
-      body = ErrorGuideSheet(
-        highlightedCode: controller.lastErrorCode,
-        isModal: false,
-        controller: controller,
-      );
-    } else if (_selectedTabIndex == 2) {
-      body = SettingsScreen(controller: controller, isTab: true);
-    } else {
-      body = SafeArea(
-        top: false,
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 760),
-            child: Column(
+    final editorBody = SafeArea(
+      top: false,
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: LayoutBuilder(
+            builder: (context, constraints) => Column(
               children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Column(
-                    children: [
-                      if (controller.error != null)
-                        _DiagnosticErrorBanner(
-                          rawError: controller.error!,
-                          errorCode: controller.lastErrorCode,
-                          onViewFix: () =>
-                              setState(() => _selectedTabIndex = 1),
-                          onDismiss: controller.dismissMessage,
-                        ),
-                      if (controller.notice != null)
-                        _Message(
-                          text: controller.notice!,
-                          dismiss: controller.dismissMessage,
-                        ),
-                      if (controller.busy) _Progress(controller: controller),
-                    ],
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: constraints.maxHeight * 0.42,
+                  ),
+                  child: SingleChildScrollView(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (controller.error != null)
+                            _DiagnosticErrorBanner(
+                              rawError: controller.error!,
+                              errorCode: controller.lastErrorCode,
+                              onViewFix: () =>
+                                  setState(() => _selectedTabIndex = 1),
+                              onDismiss: controller.dismissMessage,
+                            ),
+                          if (controller.notice != null)
+                            _Message(
+                              text: controller.notice!,
+                              dismiss: controller.dismissMessage,
+                            ),
+                          if (controller.statePersistenceError != null)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: Semantics(
+                                liveRegion: true,
+                                child: const Text(
+                                  'Local history could not be saved. Your latest settings or diagnostics may not survive a restart.',
+                                  style: TextStyle(
+                                    color: Colors.amber,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          if (controller.busy)
+                            _Progress(controller: controller),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
                 Expanded(
-                  child: ListView(
-                    key: ValueKey(
-                      isBatch ? 'batch' : (session?.id ?? 'projects'),
-                    ),
-                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
-                    children: [
-                      if (!controller.ready && !controller.busy) ...[
-                        const _Panel(
-                          child: Text(
-                            'The media engine must be ready before editing. Your files have not been changed.',
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        FilledButton(
-                          onPressed: controller.initialize,
-                          child: const Text('Retry startup'),
-                        ),
-                      ] else if (isBatch)
-                        MetadataForm(
+                  child: !controller.ready
+                      ? ListView(
+                          padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+                          children: [
+                            const _Panel(
+                              child: Text(
+                                'The media engine must be ready before editing. Your files have not been changed.',
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            FilledButton(
+                              onPressed: controller.busy
+                                  ? null
+                                  : controller.initialize,
+                              child: const Text('Retry startup'),
+                            ),
+                          ],
+                        )
+                      : isBatch
+                      ? MetadataForm(
                           key: const ValueKey('batch_editor'),
                           controller: controller,
-                          session: controller.sessions.firstWhere(
-                            (s) => controller.batchSelection.contains(s.id),
-                            orElse: () => controller.sessions.first,
+                          session: batchSources.firstWhere(
+                            (source) => source.id == session?.id,
+                            orElse: () => batchSources.first,
                           ),
                           batch: true,
+                          fillAvailableSpace: true,
                         )
-                      else if (session == null)
-                        _Projects(controller: controller)
-                      else
-                        MetadataForm(
+                      : session == null
+                      ? ListView(
+                          key: const ValueKey('projects'),
+                          padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+                          children: [_Projects(controller: controller)],
+                        )
+                      : MetadataForm(
                           key: ValueKey(session.id),
                           controller: controller,
                           session: session,
+                          fillAvailableSpace: true,
                         ),
-                    ],
-                  ),
                 ),
               ],
             ),
           ),
         ),
-      );
-    }
+      ),
+    );
 
     return Scaffold(
       appBar: appBar,
-      body: body,
+      body: IndexedStack(
+        index: _selectedTabIndex,
+        children: [
+          editorBody,
+          ErrorGuideSheet(
+            highlightedCode: controller.lastErrorCode,
+            isModal: false,
+            controller: controller,
+            onOpenEditor: () => setState(() => _selectedTabIndex = 0),
+          ),
+          SettingsScreen(controller: controller, isTab: true),
+        ],
+      ),
       bottomNavigationBar: NavigationBar(
         key: const Key('mainNavigationBar'),
         selectedIndex: _selectedTabIndex,
@@ -373,8 +379,6 @@ class MetadataMark extends StatelessWidget {
     ),
   );
 }
-
-typedef _MetadataMark = MetadataMark;
 
 /// Concept B Precision Viewfinder HUD:
 /// Hairline reticle corners, precision crosshair ticks, and three telemetry tracks with an Apple System Blue focal dot.
@@ -466,22 +470,21 @@ class _Projects extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      const SizedBox(height: 14),
+      const SizedBox(height: 4),
       const Text(
-        AppBrand.headline,
+        'Edit your metadata',
         style: TextStyle(
-          fontSize: 32,
+          fontSize: 26,
           height: 1.12,
-          letterSpacing: -1,
           fontWeight: FontWeight.w700,
         ),
       ),
-      const SizedBox(height: 14),
+      const SizedBox(height: 10),
       const Text(
-        'Inspect camera information and create an edited copy on your iPhone. Your original stays untouched.',
+        'Choose photos or videos, review your changes, then create a copy. Your originals stay unchanged.',
         style: TextStyle(color: _muted, fontSize: 15, height: 1.5),
       ),
-      const SizedBox(height: 24),
+      const SizedBox(height: 18),
       _Panel(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -519,8 +522,13 @@ class _Projects extends StatelessWidget {
         ),
       ),
       const SizedBox(height: 18),
-      const _WorkflowNote(),
-      const SizedBox(height: 28),
+      const ExpansionTile(
+        key: Key('homePhotosWorkflow'),
+        tilePadding: EdgeInsets.zero,
+        title: Text('Using your copy in Apple Photos'),
+        children: [_WorkflowNote()],
+      ),
+      const SizedBox(height: 18),
       Row(
         children: [
           const Expanded(
@@ -542,9 +550,11 @@ class _Projects extends StatelessWidget {
                       final confirmed = await _confirm(
                         context,
                         'Clear local projects?',
-                        'This removes only copies stored by this app. Photos, Files originals and exported copies stay unchanged.',
+                        'Remove all app-owned private working copies and local project history? Photos and Files originals, published Processed Media copies, and copies exported elsewhere stay unchanged.',
                       );
-                      if (confirmed) await controller.clear();
+                      if (confirmed && context.mounted) {
+                        await controller.clear();
+                      }
                     },
               child: const Text('Clear all'),
             ),
@@ -606,38 +616,28 @@ class _Projects extends StatelessWidget {
                   label: const Text('Edit selected files'),
                 ),
                 const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed:
-                            controller.busy || controller.batchSelection.isEmpty
-                            ? null
-                            : () => _shareBatch(context, controller),
-                        icon: const Icon(Icons.ios_share_rounded, size: 16),
-                        label: const Text('Share selected copies'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed:
-                            controller.busy || controller.batchSelection.isEmpty
-                            ? null
-                            : () => _exportBatch(context, controller),
-                        icon: const Icon(
-                          Icons.folder_shared_outlined,
-                          size: 16,
-                        ),
-                        label: const Text('Export to folder'),
-                      ),
-                    ),
-                  ],
+                _ActionPair(
+                  first: OutlinedButton.icon(
+                    onPressed:
+                        controller.busy || controller.batchSelection.isEmpty
+                        ? null
+                        : () => _shareBatch(context, controller),
+                    icon: const Icon(Icons.ios_share_rounded, size: 16),
+                    label: const Text('Share copies'),
+                  ),
+                  second: OutlinedButton.icon(
+                    onPressed:
+                        controller.busy || controller.batchSelection.isEmpty
+                        ? null
+                        : () => _exportBatch(context, controller),
+                    icon: const Icon(Icons.folder_shared_outlined, size: 16),
+                    label: const Text('Export copies'),
+                  ),
                 ),
                 const SizedBox(height: 6),
                 const Center(
                   child: Text(
-                    'Processed media saves automatically to On My iPhone › Metadata Editor',
+                    'Fully verified copies may save automatically to Files. Copies with incomplete checks need review and explicit export.',
                     style: TextStyle(fontSize: 11, color: _muted),
                     textAlign: TextAlign.center,
                   ),
@@ -653,8 +653,10 @@ class _Projects extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.spaceBetween,
                   children: [
                     const Text(
                       'Batch Queue',
@@ -664,7 +666,7 @@ class _Projects extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      '${controller.queueCompletedCount}/${controller.queueTotal} ready',
+                      '${controller.queueCompletedCount}/${controller.queueTotal} processed',
                       style: const TextStyle(color: _accent, fontSize: 12),
                     ),
                   ],
@@ -693,34 +695,27 @@ class _Projects extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 if (controller.queueCompletedCount > 0) ...[
-                  Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton.tonal(
-                          onPressed: controller.busy
-                              ? null
-                              : () => _exportBatch(
-                                  context,
-                                  controller,
-                                  onlyReady: true,
-                                ),
-                          child: const Text('Export ready'),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: controller.busy
-                              ? null
-                              : () => _shareBatch(
-                                  context,
-                                  controller,
-                                  onlyReady: true,
-                                ),
-                          child: const Text('Share ready'),
-                        ),
-                      ),
-                    ],
+                  _ActionPair(
+                    first: FilledButton.tonal(
+                      onPressed: controller.busy
+                          ? null
+                          : () => _exportBatch(
+                              context,
+                              controller,
+                              onlyReady: true,
+                            ),
+                      child: const Text('Export processed'),
+                    ),
+                    second: OutlinedButton(
+                      onPressed: controller.busy
+                          ? null
+                          : () => _shareBatch(
+                              context,
+                              controller,
+                              onlyReady: true,
+                            ),
+                      child: const Text('Share processed'),
+                    ),
                   ),
                 ],
                 if (controller.queueFailedCount > 0) ...[
@@ -739,7 +734,7 @@ class _Projects extends StatelessWidget {
                 ExpansionTile(
                   tilePadding: EdgeInsets.zero,
                   title: Text(
-                    'Batch: ${controller.queue.where((q) => q.status == "completed").length}/${controller.queue.length} ready',
+                    'Batch: ${controller.queue.where((q) => q.status == "completed").length}/${controller.queue.length} processed',
                     style: const TextStyle(fontSize: 13),
                   ),
                   children: [
@@ -812,11 +807,11 @@ class _Projects extends StatelessWidget {
           child: _Panel(
             padding: const EdgeInsets.all(4),
             child: ListTile(
-              enabled: !controller.busy,
+              enabled: controller.ready && !controller.busy,
               onTap: () => controller.select(session),
               leading: Checkbox(
                 value: controller.batchSelection.contains(session.id),
-                onChanged: controller.busy
+                onChanged: controller.busy || !controller.ready
                     ? null
                     : (value) =>
                           controller.toggleBatch(session, value ?? false),
@@ -832,21 +827,49 @@ class _Projects extends StatelessWidget {
               trailing: IconButton(
                 tooltip: 'Remove ${session.displayName}',
                 icon: const Icon(Icons.delete_outline_rounded),
-                onPressed: controller.busy
+                onPressed: controller.busy || !controller.ready
                     ? null
                     : () async {
                         final confirmed = await _confirm(
                           context,
                           'Remove local project?',
-                          'Only this app’s copies will be deleted. Your original and exported copies stay unchanged.',
+                          'Remove this local project and its private working copies? Your original, published Processed Media copies, and copies exported elsewhere stay unchanged.',
                         );
-                        if (confirmed) await controller.delete(session);
+                        if (confirmed && context.mounted) {
+                          await controller.delete(session);
+                        }
                       },
               ),
             ),
           ),
         ),
     ],
+  );
+}
+
+class _ActionPair extends StatelessWidget {
+  const _ActionPair({required this.first, required this.second});
+  final Widget first;
+  final Widget second;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      if (constraints.maxWidth < 440 ||
+          MediaQuery.textScalerOf(context).scale(14) > 18) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [first, const SizedBox(height: 8), second],
+        );
+      }
+      return Row(
+        children: [
+          Expanded(child: first),
+          const SizedBox(width: 8),
+          Expanded(child: second),
+        ],
+      );
+    },
   );
 }
 
@@ -915,7 +938,7 @@ class WorkflowNote extends StatelessWidget {
         ),
         SizedBox(height: 8),
         Text(
-          'Requires iCloud Photos, a browser upload and an internet connection. If the button opens another browser, open Safari manually for the tested upload workflow.',
+          'Requires iCloud Photos and an internet connection. Use Safari for upload, then check the result in Photos. Source labels and Photos display are controlled by Apple and are not guaranteed.',
           style: TextStyle(color: Color(0xFF90B0A0), fontSize: 11, height: 1.4),
         ),
       ],
@@ -941,7 +964,7 @@ class _DiagnosticErrorBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final simplified = simplifyUserError(rawError);
-    final code = errorCode ?? 'ERR_GENERAL';
+    final code = errorCode ?? 'ERR_PROCESSING';
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
@@ -961,25 +984,29 @@ class _DiagnosticErrorBanner extends StatelessWidget {
           children: [
             Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 7,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFF453A).withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                      color: const Color(0xFFFF453A).withValues(alpha: 0.4),
+                Flexible(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 3,
                     ),
-                  ),
-                  child: Text(
-                    code,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      color: Color(0xFFFF453A),
-                      letterSpacing: 0.8,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF453A).withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: const Color(0xFFFF453A).withValues(alpha: 0.4),
+                      ),
+                    ),
+                    child: Text(
+                      code,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFFFF453A),
+                        letterSpacing: 0.8,
+                      ),
                     ),
                   ),
                 ),
@@ -999,50 +1026,47 @@ class _DiagnosticErrorBanner extends StatelessWidget {
                   tooltip: 'Dismiss message',
                   onPressed: onDismiss,
                   icon: const Icon(Icons.close, size: 18, color: _muted),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
                 ),
               ],
             ),
             const SizedBox(height: 8),
             Text(
               simplified,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 fontSize: 13,
                 color: Color(0xFFE5E5EA),
                 height: 1.45,
               ),
             ),
-            if (simplified != rawError)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  rawError,
-                  style: const TextStyle(fontSize: 11, color: _muted),
-                ),
-              ),
             const SizedBox(height: 10),
             Row(
               children: [
-                FilledButton.icon(
-                  key: const Key('viewSolutionButton'),
-                  onPressed: onViewFix,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFFFF453A),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 8,
+                Expanded(
+                  child: FilledButton.icon(
+                    key: const Key('viewSolutionButton'),
+                    onPressed: onViewFix,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFFFF453A),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 8,
+                      ),
+                      minimumSize: const Size(0, 36),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                     ),
-                    minimumSize: const Size(0, 36),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+                    icon: const Icon(Icons.lightbulb_outline_rounded, size: 16),
+                    label: const Text(
+                      'Error details',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ),
-                  icon: const Icon(Icons.lightbulb_outline_rounded, size: 16),
-                  label: const Text(
-                    'View Solution & Steps',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
                   ),
                 ),
               ],

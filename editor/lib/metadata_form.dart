@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -10,6 +11,8 @@ import 'media_models.dart';
 import 'metadata_patch.dart';
 import 'metadata_dates.dart';
 import 'editor_app.dart' show WorkflowNote;
+
+enum _FormStage { edit, review, result }
 
 /// Caller-owned text controllers must outlive the dialog's exit animation.
 /// Navigator.pop completes the push future before its overlay is unmounted.
@@ -36,10 +39,12 @@ class MetadataForm extends StatefulWidget {
     required this.controller,
     required this.session,
     this.batch = false,
+    this.fillAvailableSpace = false,
   });
   final EditorController controller;
   final MediaSession session;
   final bool batch;
+  final bool fillAvailableSpace;
   @override
   State<MetadataForm> createState() => _MetadataFormState();
 }
@@ -52,11 +57,18 @@ class _MetadataFormState extends State<MetadataForm>
   late final Future<List<CameraProfile>> catalog;
   late final TabController _tabController;
   int _tabIndex = 0;
+  _FormStage _stage = _FormStage.edit;
+  Map<String, MetadataPatch>? _reviewedPatches;
+  String? _reviewedDraftSignature;
+  Map<String, String?> _processingIdsBefore = const {};
+  Set<String> _attemptedBatchIds = const {};
+  bool _acknowledgeBatchExport = false;
+  bool _quickDateSelected = false;
   int _batchStaggerSeconds = 0;
   CameraProfile? profile;
   ProfileCamera? camera;
   String? brand;
-  RandomizationSettings settings = const RandomizationSettings();
+  late RandomizationSettings settings;
   String? formError;
   MetadataPatch? profileBaseline;
   final explicitOverrides = <String>{};
@@ -65,7 +77,15 @@ class _MetadataFormState extends State<MetadataForm>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    settings = RandomizationSettings(
+      randomizeDates: !widget.fillAvailableSpace,
+    );
+    _tabIndex = widget.fillAvailableSpace ? 1 : 0;
+    _tabController = TabController(
+      length: 2,
+      vsync: this,
+      initialIndex: _tabIndex,
+    );
     _tabController.addListener(() {
       if (mounted && _tabController.index != _tabIndex) {
         setState(() => _tabIndex = _tabController.index);
@@ -164,14 +184,26 @@ class _MetadataFormState extends State<MetadataForm>
     super.dispose();
   }
 
-  Set<String> get supported =>
-      widget.controller.capabilities!.fieldsFor(widget.session.inspection.kind);
+  Set<String> get supported {
+    final capabilities = widget.controller.capabilities!;
+    if (!widget.batch) {
+      return capabilities.fieldsFor(widget.session.inspection.kind);
+    }
+    return widget.controller.sessions
+        .where(
+          (session) => widget.controller.batchSelection.contains(session.id),
+        )
+        .expand((session) => capabilities.fieldsFor(session.inspection.kind))
+        .toSet();
+  }
+
   void _apply(
     MetadataPatch patch, {
     bool notify = true,
     bool fromProfile = false,
   }) {
     profileBaseline = fromProfile ? patch : null;
+    _quickDateSelected = false;
     explicitOverrides.clear();
     for (final key in inputs.keys) {
       if (patch.values.containsKey(key)) {
@@ -335,34 +367,157 @@ class _MetadataFormState extends State<MetadataForm>
     }
   }
 
-  Widget _automaticDates() => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      CheckboxListTile(
-        key: const Key('automaticDates'),
-        contentPadding: EdgeInsets.zero,
-        controlAffinity: ListTileControlAffinity.leading,
-        value: settings.randomizeDates,
-        onChanged: widget.controller.busy
-            ? null
-            : (enabled) => _settingsChanged(
-                settings.withAutomaticDates(enabled ?? false),
-              ),
-        title: const Text('Randomize date & time'),
-        subtitle: const Text(
-          'Off keeps original dates unless you set them manually.',
+  static final _dateFieldKeys = {
+    ...sharedDateOffsets.keys,
+    ...sharedDateOffsets.values,
+    ...movieDateKeys,
+    'quickTimeCreationDate',
+  };
+
+  String get _dateIntent {
+    if (settings.randomizeDates) return 'randomize';
+    if (_quickDateSelected) return 'set';
+    if (_dateFieldKeys.any(
+      (key) => modes[key] == 'set' || modes[key] == 'remove',
+    )) {
+      return 'custom';
+    }
+    return 'keep';
+  }
+
+  String _draftSignature() => jsonEncode({
+    'modes': {for (final key in (modes.keys.toList()..sort())) key: modes[key]},
+    'inputs': {
+      for (final key in (inputs.keys.toList()..sort())) key: inputs[key]!.text,
+    },
+    'settings': settings.toMap(),
+    'profile': profile?.id,
+    'camera': camera?.id,
+    'overrides': explicitOverrides.toList()..sort(),
+    'batchStaggerSeconds': _batchStaggerSeconds,
+    'quickDateSelected': _quickDateSelected,
+    if (widget.batch)
+      'selectedSources':
+          (widget.controller.sessions
+              .where(
+                (session) =>
+                    widget.controller.batchSelection.contains(session.id),
+              )
+              .map((session) => '${session.id}:${session.inspection.kind.name}')
+              .toList()
+            ..sort()),
+  });
+
+  void _clearDateDrafts() {
+    _quickDateSelected = false;
+    for (final key in _dateFieldKeys) {
+      if (!inputs.containsKey(key)) continue;
+      modes[key] = 'keep';
+      inputs[key]!.text =
+          widget.session.inspection.metadata[key] ??
+          (key == 'lensModel'
+              ? widget.session.inspection.metadata['lens']
+              : null) ??
+          '';
+      explicitOverrides.remove(key);
+    }
+  }
+
+  Future<void> _setDateIntent(String intent) async {
+    if (widget.controller.busy) return;
+    if (intent == 'keep' || intent == 'randomize') {
+      _clearDateDrafts();
+      _settingsChanged(settings.withAutomaticDates(intent == 'randomize'));
+      return;
+    }
+    final previousSettings = settings;
+    settings = settings.withAutomaticDates(false);
+    final selected = await _pickCaptureDate();
+    if (!selected) settings = previousSettings;
+  }
+
+  Widget _automaticDates() {
+    if (!widget.fillAvailableSpace) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          CheckboxListTile(
+            key: const Key('automaticDates'),
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+            value: settings.randomizeDates,
+            onChanged: widget.controller.busy
+                ? null
+                : (enabled) => _settingsChanged(
+                    settings.withAutomaticDates(enabled ?? false),
+                  ),
+            title: const Text('Randomize date & time'),
+            subtitle: const Text(
+              'Off keeps original dates unless you set them manually.',
+            ),
+          ),
+          if (!settings.randomizeDates)
+            OutlinedButton.icon(
+              key: const Key('setCaptureDate'),
+              onPressed: widget.controller.busy ? null : _pickCaptureDate,
+              icon: const Icon(Icons.event_outlined),
+              label: const Text('Set date & time'),
+            ),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            'Date & time',
+            style: TextStyle(fontWeight: FontWeight.w600),
+          ),
         ),
-      ),
-      if (!settings.randomizeDates)
-        OutlinedButton.icon(
-          key: const Key('setCaptureDate'),
-          onPressed: widget.controller.busy ? null : _pickCaptureDate,
-          icon: const Icon(Icons.event_outlined),
-          label: const Text('Set date & time'),
+        const SizedBox(height: 8),
+        SegmentedButton<String>(
+          key: const Key('dateIntentSegment'),
+          showSelectedIcon: false,
+          segments: const [
+            ButtonSegment(value: 'keep', label: Text('Keep original')),
+            ButtonSegment(value: 'set', label: Text('Set')),
+            ButtonSegment(value: 'randomize', label: Text('Randomize')),
+          ],
+          emptySelectionAllowed: true,
+          selected: _dateIntent == 'custom' ? const {} : {_dateIntent},
+          onSelectionChanged: widget.controller.busy
+              ? null
+              : (selection) {
+                  if (selection.isNotEmpty) _setDateIntent(selection.first);
+                },
         ),
-    ],
-  );
-  Future<void> _pickCaptureDate() async {
+        const SizedBox(height: 6),
+        Text(switch (_dateIntent) {
+          'set' =>
+            'Choose a capture time; supported date fields update together.',
+          'randomize' =>
+            'Create a randomized capture time within your date settings.',
+          'custom' =>
+            'Custom date edits or removals are staged in Advanced metadata.',
+          _ => 'Preserve each original date and time.',
+        }, style: const TextStyle(color: Colors.white60, fontSize: 12)),
+        if (_dateIntent == 'set')
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              key: const Key('changeCaptureDate'),
+              onPressed: widget.controller.busy ? null : _pickCaptureDate,
+              icon: const Icon(Icons.edit_calendar_outlined, size: 16),
+              label: const Text('Change date & time'),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<bool> _pickCaptureDate() async {
     final text = inputs['dateTimeOriginal']!.text;
     final exif = RegExp(r'^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})$')
         .firstMatch(text);
@@ -385,12 +540,12 @@ class _MetadataFormState extends State<MetadataForm>
       firstDate: DateTime(1900),
       lastDate: DateTime(2038, 1, 1),
     );
-    if (date == null || !mounted) return;
+    if (date == null || !mounted || widget.controller.busy) return false;
     final time = await showTimePicker(
       context: context,
       initialTime: TimeOfDay.fromDateTime(initial),
     );
-    if (time == null || !mounted) return;
+    if (time == null || !mounted || widget.controller.busy) return false;
     final selection = DateTime(
       date.year,
       date.month,
@@ -403,6 +558,7 @@ class _MetadataFormState extends State<MetadataForm>
       image: widget.session.inspection.kind.isImage,
     );
     setState(() {
+      _quickDateSelected = true;
       for (final e in patch.values.entries) {
         if (!supported.contains(e.key)) continue;
         // A timezone explicitly entered in the manual editor takes precedence.
@@ -417,181 +573,256 @@ class _MetadataFormState extends State<MetadataForm>
       }
       formError = null;
     });
+    return true;
   }
 
-  Future<void> _process() async {
-    try {
-      if (widget.batch) {
-        final sources = widget.controller.sessions
-            .where((s) => widget.controller.batchSelection.contains(s.id))
-            .toList();
-        final manual = _patch(
-          allowEmpty: settings.randomizeDates,
-          fields: sources
-              .expand(
-                (s) => widget.controller.capabilities!.fieldsFor(
-                  s.inspection.kind,
-                ),
-              )
-              .toSet(),
-        );
-        final patches = <String, MetadataPatch>{};
-        for (var i = 0; i < sources.length; i++) {
-          final source = sources[i];
-          final itemManual = datesForMedia(
-            manual,
-            image: source.inspection.kind.isImage,
-            keptOffsets: source.inspection.kind.isImage
-                ? source.inspection.metadata
-                : widget.session.inspection.metadata,
-            keepFields: explicitOverrides
-                .where((key) => modes[key] == 'keep')
-                .toSet(),
-          );
-          MetadataPatch itemPatch;
-          if (profile != null && camera != null && profileBaseline != null) {
-            final kept = explicitOverrides
-                .where((key) => modes[key] == 'keep')
-                .toSet();
-            final fixedDates = sharedDateOffsets.keys
-                .where(
-                  (key) =>
-                      manual.values.containsKey(key) &&
-                      (explicitOverrides.contains(key) ||
-                          manual.values[key] != profileBaseline!.values[key]),
-                )
-                .toSet();
-            final rawGenerated = _profilePatch(source);
-            final generated = source.inspection.kind.isImage
-                ? randomDatesWithKeptZones(
-                    rawGenerated,
-                    keepFields: kept,
-                    destinationMetadata: source.inspection.metadata,
-                    fixedDates: fixedDates,
-                  )
-                : rawGenerated;
-            final dateOverride =
-                {...sharedDateOffsets.keys, ...sharedDateOffsets.values}.any(
-                  (key) =>
-                      manual.values.containsKey(key) &&
-                      (explicitOverrides.contains(key) ||
-                          manual.values[key] != profileBaseline!.values[key]),
-                );
-            // Manual overrides after choosing a profile are retained; newly
-            // randomized small values remain independent for each batch item.
-            final values = {...generated.values};
-            final removals = {...generated.removals};
-            final fields = widget.controller.capabilities!.fieldsFor(
-              source.inspection.kind,
-            );
-            for (final key in fields) {
-              final intent = modes[key];
-              if (intent == 'keep' &&
-                  (explicitOverrides.contains(key) ||
-                      profileBaseline!.values.containsKey(key) ||
-                      profileBaseline!.removals.contains(key))) {
-                values.remove(key);
-                removals.remove(key);
-              } else if (itemManual.values.containsKey(key) &&
-                  ((intent == 'set' &&
-                          (explicitOverrides.contains(key) ||
-                              manual.values[key] !=
-                                  profileBaseline!.values[key])) ||
-                      (dateOverride && !manual.values.containsKey(key)))) {
-                values[key] = itemManual.values[key]!;
-                removals.remove(key);
-              } else if (intent == 'remove') {
-                values.remove(key);
-                removals.add(key);
-              }
-            }
-            itemPatch = MetadataPatch(values: values, removals: removals);
-          } else {
-            itemPatch = _standaloneAutomaticDates(itemManual, source);
-          }
-          patches[source.id] = itemPatch;
-        }
-        final staggeredPatches = offsetBatchDatePatches(
-          patches,
-          Duration(seconds: _batchStaggerSeconds),
-        );
-        final sanitizedPatches = <String, MetadataPatch>{};
-        for (final entry in staggeredPatches.entries) {
-          final source = sources.firstWhere((s) => s.id == entry.key);
-          final fields = widget.controller.capabilities!.fieldsFor(
-            source.inspection.kind,
-          );
-          sanitizedPatches[entry.key] = MetadataPatch(
-            values: {
-              for (final v in entry.value.values.entries)
-                if (fields.contains(v.key)) v.key: v.value,
-            },
-            removals: entry.value.removals
-                .where((k) => fields.contains(k))
-                .toList(),
-          );
-        }
-        await widget.controller.processBatch(sanitizedPatches);
-      } else {
-        final rawManual = _patch(allowEmpty: settings.randomizeDates);
-        final kept = explicitOverrides
-            .where((key) => modes[key] == 'keep')
-            .toSet();
-        var shaped = rawManual;
-        if (profileBaseline != null && widget.session.inspection.kind.isImage) {
-          final fixedDates = sharedDateOffsets.keys
-              .where(
-                (key) =>
-                    rawManual.values.containsKey(key) &&
-                    (explicitOverrides.contains(key) ||
-                        rawManual.values[key] != profileBaseline!.values[key]),
-              )
-              .toSet();
-          final withZones = MetadataPatch(
-            values: {
-              ...rawManual.values,
-              for (final key in sharedDateOffsets.values)
-                if (kept.contains(key) &&
-                    !rawManual.values.containsKey(key) &&
-                    profileBaseline!.values.containsKey(key))
-                  key: profileBaseline!.values[key]!,
-            },
-            removals: rawManual.removals,
-          );
-          final normalized = randomDatesWithKeptZones(
-            withZones,
-            keepFields: kept,
-            destinationMetadata: widget.session.inspection.metadata,
-            fixedDates: {...fixedDates, ...kept},
-          );
-          shaped = MetadataPatch(
-            values: {
-              for (final entry in normalized.values.entries)
-                if (!kept.contains(entry.key)) entry.key: entry.value,
-            },
-            removals: normalized.removals,
-          );
-        }
-        final manual = datesForMedia(
-          shaped,
-          image: widget.session.inspection.kind.isImage,
-          keptOffsets: widget.session.inspection.metadata,
+  Future<Map<String, MetadataPatch>> _resolvePatches() async {
+    if (widget.batch) {
+      final sources = widget.controller.sessions
+          .where((s) => widget.controller.batchSelection.contains(s.id))
+          .toList();
+      final manual = _patch(
+        allowEmpty: settings.randomizeDates,
+        fields: sources
+            .expand(
+              (s) =>
+                  widget.controller.capabilities!.fieldsFor(s.inspection.kind),
+            )
+            .toSet(),
+      );
+      final patches = <String, MetadataPatch>{};
+      for (var i = 0; i < sources.length; i++) {
+        final source = sources[i];
+        final itemManual = datesForMedia(
+          manual,
+          image: source.inspection.kind.isImage,
+          keptOffsets: source.inspection.kind.isImage
+              ? source.inspection.metadata
+              : widget.session.inspection.metadata,
           keepFields: explicitOverrides
               .where((key) => modes[key] == 'keep')
               .toSet(),
         );
-        await widget.controller.processMetadata(
-          profileBaseline == null
-              ? _standaloneAutomaticDates(manual, widget.session)
-              : manual,
+        MetadataPatch itemPatch;
+        if (profile != null && camera != null && profileBaseline != null) {
+          final kept = explicitOverrides
+              .where((key) => modes[key] == 'keep')
+              .toSet();
+          final fixedDates = sharedDateOffsets.keys
+              .where(
+                (key) =>
+                    manual.values.containsKey(key) &&
+                    (explicitOverrides.contains(key) ||
+                        manual.values[key] != profileBaseline!.values[key]),
+              )
+              .toSet();
+          final rawGenerated = _profilePatch(source);
+          final generated = source.inspection.kind.isImage
+              ? randomDatesWithKeptZones(
+                  rawGenerated,
+                  keepFields: kept,
+                  destinationMetadata: source.inspection.metadata,
+                  fixedDates: fixedDates,
+                )
+              : rawGenerated;
+          final dateOverride =
+              {...sharedDateOffsets.keys, ...sharedDateOffsets.values}.any(
+                (key) =>
+                    manual.values.containsKey(key) &&
+                    (explicitOverrides.contains(key) ||
+                        manual.values[key] != profileBaseline!.values[key]),
+              );
+          // Manual overrides after choosing a profile are retained; newly
+          // randomized small values remain independent for each batch item.
+          final values = {...generated.values};
+          final removals = {...generated.removals};
+          final fields = widget.controller.capabilities!.fieldsFor(
+            source.inspection.kind,
+          );
+          for (final key in fields) {
+            final intent = modes[key];
+            if (intent == 'keep' &&
+                (explicitOverrides.contains(key) ||
+                    profileBaseline!.values.containsKey(key) ||
+                    profileBaseline!.removals.contains(key))) {
+              values.remove(key);
+              removals.remove(key);
+            } else if (itemManual.values.containsKey(key) &&
+                ((intent == 'set' &&
+                        (explicitOverrides.contains(key) ||
+                            manual.values[key] !=
+                                profileBaseline!.values[key])) ||
+                    (dateOverride && !manual.values.containsKey(key)))) {
+              values[key] = itemManual.values[key]!;
+              removals.remove(key);
+            } else if (intent == 'remove') {
+              values.remove(key);
+              removals.add(key);
+            }
+          }
+          itemPatch = MetadataPatch(values: values, removals: removals);
+        } else {
+          itemPatch = _standaloneAutomaticDates(itemManual, source);
+        }
+        patches[source.id] = itemPatch;
+      }
+      final staggeredPatches = offsetBatchDatePatches(
+        patches,
+        Duration(seconds: _batchStaggerSeconds),
+      );
+      final sanitizedPatches = <String, MetadataPatch>{};
+      for (final entry in staggeredPatches.entries) {
+        final source = sources.firstWhere((s) => s.id == entry.key);
+        final fields = widget.controller.capabilities!.fieldsFor(
+          source.inspection.kind,
         );
+        sanitizedPatches[entry.key] = MetadataPatch(
+          values: {
+            for (final v in entry.value.values.entries)
+              if (fields.contains(v.key)) v.key: v.value,
+          },
+          removals: entry.value.removals
+              .where((k) => fields.contains(k))
+              .toList(),
+        );
+      }
+      return sanitizedPatches;
+    } else {
+      final rawManual = _patch(allowEmpty: settings.randomizeDates);
+      final kept = explicitOverrides
+          .where((key) => modes[key] == 'keep')
+          .toSet();
+      var shaped = rawManual;
+      if (profileBaseline != null && widget.session.inspection.kind.isImage) {
+        final fixedDates = sharedDateOffsets.keys
+            .where(
+              (key) =>
+                  rawManual.values.containsKey(key) &&
+                  (explicitOverrides.contains(key) ||
+                      rawManual.values[key] != profileBaseline!.values[key]),
+            )
+            .toSet();
+        final withZones = MetadataPatch(
+          values: {
+            ...rawManual.values,
+            for (final key in sharedDateOffsets.values)
+              if (kept.contains(key) &&
+                  !rawManual.values.containsKey(key) &&
+                  profileBaseline!.values.containsKey(key))
+                key: profileBaseline!.values[key]!,
+          },
+          removals: rawManual.removals,
+        );
+        final normalized = randomDatesWithKeptZones(
+          withZones,
+          keepFields: kept,
+          destinationMetadata: widget.session.inspection.metadata,
+          fixedDates: {...fixedDates, ...kept},
+        );
+        shaped = MetadataPatch(
+          values: {
+            for (final entry in normalized.values.entries)
+              if (!kept.contains(entry.key)) entry.key: entry.value,
+          },
+          removals: normalized.removals,
+        );
+      }
+      final manual = datesForMedia(
+        shaped,
+        image: widget.session.inspection.kind.isImage,
+        keptOffsets: widget.session.inspection.metadata,
+        keepFields: explicitOverrides
+            .where((key) => modes[key] == 'keep')
+            .toSet(),
+      );
+      return {
+        widget.session.id: profileBaseline == null
+            ? _standaloneAutomaticDates(manual, widget.session)
+            : manual,
+      };
+    }
+  }
+
+  Future<void> _reviewChanges() async {
+    try {
+      if (_reviewedPatches != null &&
+          _reviewedDraftSignature == _draftSignature()) {
+        setState(() {
+          _acknowledgeBatchExport = false;
+          _stage = _FormStage.review;
+          formError = null;
+        });
+        return;
+      }
+      final patches = await _resolvePatches();
+      if (patches.values.every(
+        (patch) => patch.values.isEmpty && patch.removals.isEmpty,
+      )) {
+        throw const FormatException('Choose at least one metadata change.');
+      }
+      if (!mounted) return;
+      setState(() {
+        _reviewedPatches = Map.unmodifiable(patches);
+        _reviewedDraftSignature = _draftSignature();
+        _acknowledgeBatchExport = false;
+        _stage = _FormStage.review;
+        formError = null;
+      });
+    } on FormatException catch (e) {
+      widget.controller.recordError(e.message);
+      if (mounted) setState(() => formError = e.message);
+    }
+  }
+
+  Future<void> _createReviewedCopy() async {
+    final patches = _reviewedPatches;
+    if (patches == null || widget.controller.busy) return;
+    try {
+      _acknowledgeBatchExport = false;
+      _processingIdsBefore = {
+        for (final session in widget.controller.sessions)
+          session.id: session.processing?.id,
+      };
+      if (widget.batch) {
+        final changed = {
+          for (final entry in patches.entries)
+            if (entry.value.values.isNotEmpty ||
+                entry.value.removals.isNotEmpty)
+              entry.key: entry.value,
+        };
+        _attemptedBatchIds = changed.keys.toSet();
+        if (changed.isNotEmpty) await widget.controller.processBatch(changed);
+      } else {
+        final patch = patches[widget.session.id];
+        if (patch == null) return;
+        _attemptedBatchIds = {widget.session.id};
+        await widget.controller.processMetadata(patch);
+      }
+      if (mounted) setState(() => _stage = _FormStage.result);
+    } on FormatException catch (e) {
+      widget.controller.recordError(e.message);
+      if (mounted) setState(() => formError = e.message);
+    }
+  }
+
+  Future<void> _process() async {
+    try {
+      final patches = await _resolvePatches();
+      if (widget.batch) {
+        await widget.controller.processBatch(patches);
+      } else {
+        await widget.controller.processMetadata(patches[widget.session.id]!);
       }
       if (mounted) setState(() => formError = null);
     } on FormatException catch (e) {
       widget.controller.recordError(e.message);
-      setState(() => formError = e.message);
+      if (mounted) setState(() => formError = e.message);
     }
   }
+
+  void _returnToEdit() => setState(() {
+    _stage = _FormStage.edit;
+  });
 
   Future<void> _openModelSearchSheet(
     BuildContext context,
@@ -816,17 +1047,21 @@ class _MetadataFormState extends State<MetadataForm>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text(
-                      'Output File',
-                      style: TextStyle(color: Colors.white60, fontSize: 12),
+                    const Expanded(
+                      child: Text(
+                        'Output File',
+                        style: TextStyle(color: Colors.white60, fontSize: 12),
+                      ),
                     ),
-                    Text(
-                      '${output.inspection.kind.label} · ${output.inspection.sizeLabel}',
-                      style: const TextStyle(
-                        color: Colors.white60,
-                        fontSize: 12,
+                    Flexible(
+                      child: Text(
+                        '${output.inspection.kind.label} · ${output.inspection.sizeLabel}',
+                        textAlign: TextAlign.end,
+                        style: const TextStyle(
+                          color: Colors.white60,
+                          fontSize: 12,
+                        ),
                       ),
                     ),
                   ],
@@ -902,27 +1137,29 @@ class _MetadataFormState extends State<MetadataForm>
           const SizedBox(height: 16),
           Row(
             children: [
-              Expanded(
-                child: FilledButton.icon(
-                  key: const Key('exportFiles'),
-                  onPressed: controller.canExport
-                      ? controller.exportFiles
-                      : null,
-                  icon: const Icon(Icons.folder_shared_outlined, size: 18),
-                  label: const Text('Export to Files'),
+              if (!widget.fillAvailableSpace) ...[
+                Expanded(
+                  child: FilledButton.icon(
+                    key: const Key('exportFiles'),
+                    onPressed: controller.canExport
+                        ? controller.exportFiles
+                        : null,
+                    icon: const Icon(Icons.folder_shared_outlined, size: 18),
+                    label: const Text('Export to Files'),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: OutlinedButton.icon(
-                  key: const Key('shareFiles'),
-                  onPressed: controller.canExport
-                      ? controller.shareFiles
-                      : null,
-                  icon: const Icon(Icons.ios_share_rounded, size: 18),
-                  label: const Text('Share / Save to Photos'),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    key: const Key('shareFiles'),
+                    onPressed: controller.canExport
+                        ? controller.shareFiles
+                        : null,
+                    icon: const Icon(Icons.ios_share_rounded, size: 18),
+                    label: const Text('Share copy'),
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
           const SizedBox(height: 10),
@@ -930,7 +1167,7 @@ class _MetadataFormState extends State<MetadataForm>
             key: const Key('openICloud'),
             onPressed: controller.busy ? null : controller.openICloud,
             icon: const Icon(Icons.cloud_upload_outlined, size: 18),
-            label: const Text('Open iCloud Photos in Safari'),
+            label: const Text('Open iCloud Photos'),
           ),
           const SizedBox(height: 6),
           const Text(
@@ -953,6 +1190,412 @@ class _MetadataFormState extends State<MetadataForm>
 
   @override
   Widget build(BuildContext context) {
+    final content = _stageContent(context);
+    if (!widget.fillAvailableSpace) return content;
+    return Column(
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+            child: content,
+          ),
+        ),
+        _primaryActionBar(),
+      ],
+    );
+  }
+
+  Widget _primaryActionBar() => SafeArea(
+    top: false,
+    child: Container(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      decoration: const BoxDecoration(
+        color: Color(0xFF121214),
+        border: Border(top: BorderSide(color: Color(0xFF2C2C2E))),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: _stage == _FormStage.result
+            ? _resultFooterActions()
+            : [
+                FilledButton.icon(
+                  key: Key('primary${_stage.name}Action'),
+                  onPressed: widget.controller.busy
+                      ? null
+                      : () {
+                          switch (_stage) {
+                            case _FormStage.edit:
+                              _reviewChanges();
+                            case _FormStage.review:
+                              _createReviewedCopy();
+                            case _FormStage.result:
+                              _returnToEdit();
+                          }
+                        },
+                  icon: Icon(switch (_stage) {
+                    _FormStage.edit => Icons.fact_check_outlined,
+                    _FormStage.review => Icons.auto_fix_high_outlined,
+                    _FormStage.result => Icons.edit_outlined,
+                  }),
+                  label: Text(switch (_stage) {
+                    _FormStage.edit => 'Review changes',
+                    _FormStage.review => 'Create edited copy',
+                    _FormStage.result => 'Edit changes',
+                  }),
+                ),
+                if (_stage == _FormStage.review)
+                  TextButton(
+                    key: const Key('returnToEdit'),
+                    onPressed: widget.controller.busy ? null : _returnToEdit,
+                    child: const Text('Back to edit'),
+                  ),
+              ],
+      ),
+    ),
+  );
+
+  List<Widget> _resultFooterActions() {
+    if (!widget.batch) {
+      final current =
+          widget.controller.sessions
+              .where((session) => session.id == widget.session.id)
+              .firstOrNull ??
+          widget.session;
+      final output = current.processing;
+      final isNew =
+          output != null &&
+          output.id != _processingIdsBefore[widget.session.id];
+      final canExport = isNew && widget.controller.canExport;
+      return [
+        FilledButton.icon(
+          key: const Key('exportFiles'),
+          onPressed: canExport ? widget.controller.exportFiles : null,
+          icon: const Icon(Icons.folder_shared_outlined),
+          label: const Text('Export to Files'),
+        ),
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 4,
+          runSpacing: 0,
+          children: [
+            TextButton.icon(
+              key: const Key('shareFiles'),
+              onPressed: canExport ? widget.controller.shareFiles : null,
+              icon: const Icon(Icons.ios_share_outlined),
+              label: const Text('Share copy'),
+            ),
+            TextButton(
+              key: const Key('primaryresultAction'),
+              onPressed: widget.controller.busy ? null : _returnToEdit,
+              child: const Text('Back to edit'),
+            ),
+          ],
+        ),
+      ];
+    }
+    final outputs = _newBatchOutputs();
+    final canExport =
+        outputs.isNotEmpty &&
+        outputs.every(
+          (session) =>
+              !session.processing!.integrity.hasMismatch &&
+              (!session.processing!.integrity.needsAcknowledgment ||
+                  _acknowledgeBatchExport),
+        ) &&
+        !widget.controller.busy;
+    return [
+      FilledButton.icon(
+        key: const Key('exportReadyBatchCopies'),
+        onPressed: canExport
+            ? () => widget.controller.exportSelectedBatch(
+                acknowledgeIncomplete: _acknowledgeBatchExport,
+                onlyReady: true,
+              )
+            : null,
+        icon: const Icon(Icons.folder_shared_outlined),
+        label: const Text('Export processed copies'),
+      ),
+      Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 4,
+        runSpacing: 0,
+        children: [
+          TextButton.icon(
+            key: const Key('shareReadyBatchCopies'),
+            onPressed: canExport
+                ? () => widget.controller.shareSelectedBatch(
+                    acknowledgeIncomplete: _acknowledgeBatchExport,
+                    onlyReady: true,
+                  )
+                : null,
+            icon: const Icon(Icons.ios_share_outlined),
+            label: const Text('Share copies'),
+          ),
+          TextButton(
+            key: const Key('primaryresultAction'),
+            onPressed: widget.controller.busy ? null : _returnToEdit,
+            child: const Text('Back to edit'),
+          ),
+        ],
+      ),
+    ];
+  }
+
+  List<MediaSession> _newBatchOutputs() {
+    final queueById = {
+      for (final item in widget.controller.queue) item.sessionId: item,
+    };
+    return widget.controller.sessions.where((session) {
+      return _attemptedBatchIds.contains(session.id) &&
+          session.processing != null &&
+          session.processing!.id != _processingIdsBefore[session.id] &&
+          queueById[session.id]?.status == 'completed';
+    }).toList();
+  }
+
+  Widget _reviewContent(BuildContext context) {
+    final patches = _reviewedPatches!;
+    final sessions = widget.controller.sessions
+        .where((session) => patches.containsKey(session.id))
+        .toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Review changes',
+          style: Theme.of(context).textTheme.headlineSmall,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          widget.batch
+              ? '${patches.values.where((patch) => patch.values.isNotEmpty || patch.removals.isNotEmpty).length} copies planned · unchanged files will be skipped'
+              : 'Check the requested changes before creating a copy.',
+          style: const TextStyle(color: Colors.white60),
+        ),
+        const SizedBox(height: 16),
+        for (final session in sessions)
+          _reviewSessionCard(session, patches[session.id]!),
+        const SizedBox(height: 8),
+        const Text(
+          'Fields omitted from this review remain unchanged, including dates and location.',
+          style: TextStyle(color: Colors.white60, fontSize: 12, height: 1.4),
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          'Creating a copy leaves the selected original untouched.',
+          style: TextStyle(color: Colors.white70, fontSize: 13),
+        ),
+      ],
+    );
+  }
+
+  Widget _reviewSessionCard(MediaSession session, MetadataPatch patch) {
+    String originalValue(String key) =>
+        session.inspection.metadata[key] ??
+        (key == 'lensModel' ? session.inspection.metadata['lens'] : null) ??
+        'Not present';
+    final changes = <Widget>[
+      for (final entry in patch.values.entries)
+        ListTile(
+          dense: true,
+          title: Text(_fieldLabel(entry.key)),
+          subtitle: Text('${originalValue(entry.key)}  →  ${entry.value}'),
+        ),
+      for (final key in patch.removals)
+        ListTile(
+          dense: true,
+          title: Text(_fieldLabel(key)),
+          subtitle: Text(
+            session.inspection.metadata[key] == null &&
+                    (key != 'lensModel' ||
+                        session.inspection.metadata['lens'] == null)
+                ? 'Not reported  →  Remove if present'
+                : '${originalValue(key)}  →  Removed',
+          ),
+        ),
+    ];
+    return Card(
+      color: const Color(0xFF1C1C1E),
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ListTile(
+              title: Text(session.displayName),
+              subtitle: Text(
+                '${session.inspection.kind.label} · ${session.inspection.sizeLabel}',
+              ),
+            ),
+            const Divider(height: 1),
+            if (changes.isEmpty)
+              const ListTile(
+                title: Text('Unchanged — no copy will be created'),
+                subtitle: Text('No supported fields change for this file.'),
+              )
+            else
+              ...changes,
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _fieldLabel(String key) =>
+      metadataFields
+          .where((field) => field.key == key)
+          .map((field) => field.label)
+          .firstOrNull ??
+      key;
+
+  Widget _integritySummary(IntegrityReport report) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final check in report.checks)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              '${check.name}: ${check.status} — ${check.detail}',
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          ),
+        for (final limitation in report.limitations)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              'Limitation: $limitation',
+              style: const TextStyle(color: Colors.orangeAccent, fontSize: 12),
+            ),
+          ),
+      ],
+    ),
+  );
+
+  Widget _resultContent(BuildContext context) {
+    final controller = widget.controller;
+    if (!widget.batch) {
+      final current =
+          controller.sessions
+              .where((session) => session.id == widget.session.id)
+              .firstOrNull ??
+          widget.session;
+      final output = current.processing;
+      final isNew =
+          output != null &&
+          output.id != _processingIdsBefore[widget.session.id];
+      if (isNew) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              output.integrity.hasMismatch
+                  ? 'New output failed integrity checks'
+                  : 'Copy created',
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+            _buildProcessingResults(context, output),
+          ],
+        );
+      }
+      return const Text(
+        'No processed copy is available. Review the error, then edit and try again.',
+      );
+    }
+    final sessions = controller.sessions
+        .where((session) => controller.batchSelection.contains(session.id))
+        .toList();
+    final queueById = {
+      for (final item in controller.queue) item.sessionId: item,
+    };
+    final withOutput = _newBatchOutputs();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Batch results', style: Theme.of(context).textTheme.headlineSmall),
+        const SizedBox(height: 4),
+        Text(
+          '${withOutput.length} new copies created · ${_attemptedBatchIds.length - withOutput.length} attempted files need attention',
+          style: const TextStyle(color: Colors.white60),
+        ),
+        const SizedBox(height: 12),
+        for (final session in sessions)
+          Card(
+            color: const Color(0xFF1C1C1E),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Column(
+                children: [
+                  ListTile(
+                    title: Text(session.displayName),
+                    subtitle: Text(
+                      !_attemptedBatchIds.contains(session.id)
+                          ? 'Unchanged — no copy created'
+                          : queueById[session.id]?.status == 'completed' &&
+                                session.processing != null &&
+                                session.processing!.id !=
+                                    _processingIdsBefore[session.id]
+                          ? '${session.processing!.outputDisplayName ?? 'Processed copy'} · ${session.processing!.integrity.status.name}'
+                          : queueById[session.id]?.message ??
+                                'No new copy created',
+                    ),
+                    trailing: Icon(
+                      !_attemptedBatchIds.contains(session.id)
+                          ? Icons.remove_circle_outline
+                          : queueById[session.id]?.status == 'completed' &&
+                                session.processing != null &&
+                                session.processing!.id !=
+                                    _processingIdsBefore[session.id]
+                          ? Icons.check_circle_outline
+                          : Icons.error_outline,
+                      color: !_attemptedBatchIds.contains(session.id)
+                          ? Colors.white54
+                          : queueById[session.id]?.status == 'completed' &&
+                                session.processing != null &&
+                                session.processing!.id !=
+                                    _processingIdsBefore[session.id]
+                          ? const Color(0xFF0A84FF)
+                          : Colors.orangeAccent,
+                    ),
+                  ),
+                  if (_attemptedBatchIds.contains(session.id) &&
+                      session.processing != null &&
+                      session.processing!.id !=
+                          _processingIdsBefore[session.id])
+                    _integritySummary(session.processing!.integrity),
+                ],
+              ),
+            ),
+          ),
+        if (withOutput.any(
+          (session) => session.processing!.integrity.needsAcknowledgment,
+        ))
+          CheckboxListTile(
+            key: const Key('acknowledgeBatchExport'),
+            value: _acknowledgeBatchExport,
+            onChanged: controller.busy
+                ? null
+                : (value) =>
+                      setState(() => _acknowledgeBatchExport = value ?? false),
+            title: const Text('Accept the listed limitations for ready copies'),
+            subtitle: const Text(
+              'Review each copy’s checks and limitations below before exporting.',
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _stageContent(BuildContext context) {
+    if (_stage == _FormStage.review && _reviewedPatches != null) {
+      return _reviewContent(context);
+    }
+    if (_stage == _FormStage.result) return _resultContent(context);
     final controller = widget.controller;
     final source = widget.session;
     final output = source.processing;
@@ -1062,7 +1705,8 @@ class _MetadataFormState extends State<MetadataForm>
             style: const TextStyle(color: Colors.white60),
           ),
           const SizedBox(height: 12),
-          _buildMediaInspectorHUD(context, source),
+          if (!widget.fillAvailableSpace)
+            _buildMediaInspectorHUD(context, source),
         ],
         if (formError != null)
           Container(
@@ -1124,35 +1768,46 @@ class _MetadataFormState extends State<MetadataForm>
             ),
           ),
         const SizedBox(height: 20),
-        TabBar(
-          controller: _tabController,
-          onTap: (index) {
-            if (_tabIndex != index) {
-              setState(() => _tabIndex = index);
-            }
-          },
-          indicatorColor: const Color(0xFF0A84FF),
-          labelColor: const Color(0xFF0A84FF),
-          unselectedLabelColor: Colors.white60,
-          tabs: const [
-            Tab(text: 'Presets'),
-            Tab(text: 'Edit'),
-          ],
-        ),
-        const SizedBox(height: 16),
-        _tabIndex == 0 ? _presets(context) : _manual(context),
-        const SizedBox(height: 16),
-        FilledButton.icon(
-          key: const Key('process'),
-          onPressed: controller.busy ? null : _process,
-          icon: const Icon(Icons.auto_fix_high_outlined),
-          label: Text(
-            widget.batch
-                ? 'Process ${controller.batchSelection.length} selected files'
-                : 'Process file',
+        if (widget.fillAvailableSpace) ...[
+          ExpansionTile(
+            key: const Key('profilesAndPresets'),
+            title: const Text('Profiles & presets'),
+            subtitle: const Text('Optional camera profile and saved recipes'),
+            children: [_presets(context)],
           ),
-        ),
-        if (!widget.batch && output != null)
+          _manual(context),
+        ] else ...[
+          TabBar(
+            controller: _tabController,
+            onTap: (index) {
+              if (_tabIndex != index) {
+                setState(() => _tabIndex = index);
+              }
+            },
+            indicatorColor: const Color(0xFF0A84FF),
+            labelColor: const Color(0xFF0A84FF),
+            unselectedLabelColor: Colors.white60,
+            tabs: const [
+              Tab(text: 'Profile & presets'),
+              Tab(text: 'Edit'),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _tabIndex == 0 ? _presets(context) : _manual(context),
+        ],
+        const SizedBox(height: 16),
+        if (!widget.fillAvailableSpace)
+          FilledButton.icon(
+            key: const Key('process'),
+            onPressed: controller.busy ? null : _process,
+            icon: const Icon(Icons.auto_fix_high_outlined),
+            label: Text(
+              widget.batch
+                  ? 'Process ${controller.batchSelection.length} selected files'
+                  : 'Process file',
+            ),
+          ),
+        if (!widget.batch && output != null && !widget.fillAvailableSpace)
           _buildProcessingResults(context, output),
         const SizedBox(height: 12),
         ExpansionTile(
@@ -1242,275 +1897,307 @@ class _MetadataFormState extends State<MetadataForm>
   Widget _presets(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      FutureBuilder<List<CameraProfile>>(
-        future: catalog,
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return const Text(
-              'Camera catalog unavailable. Manual editing and saved presets remain available.',
-            );
-          }
-          final profiles = snapshot.data;
-          if (profiles == null) return const LinearProgressIndicator();
-          final brands = profiles.map((p) => p.brand).toSet().toList()..sort();
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      ExpansionTile(
+        key: const Key('profileSettingsExpansion'),
+        initiallyExpanded: !widget.fillAvailableSpace,
+        title: const Text('Camera profile & randomization'),
+        subtitle: Text(
+          profile == null
+              ? 'Choose a researched device profile'
+              : '${profile!.model} · ${camera?.name ?? 'Select camera'}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        children: [
+          FutureBuilder<List<CameraProfile>>(
+            future: catalog,
+            builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return const Text(
+                  'Camera catalog unavailable. Manual editing and saved presets remain available.',
+                );
+              }
+              final profiles = snapshot.data;
+              if (profiles == null) return const LinearProgressIndicator();
+              final brands = profiles.map((p) => p.brand).toSet().toList()
+                ..sort();
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Expanded(
-                    child: Text(
-                      'Device Profile',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF8E8E93),
-                      ),
-                    ),
-                  ),
-                  TextButton.icon(
-                    key: const Key('matchDeviceButton'),
-                    style: TextButton.styleFrom(
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      foregroundColor: const Color(0xFF0A84FF),
-                    ),
-                    onPressed: widget.controller.busy
-                        ? null
-                        : () async {
-                            final host = await widget.controller
-                                .getHostDevice();
-                            if (!mounted) return;
-                            if (host != null && host['profileId'] != null) {
-                              final matched = profiles
-                                  .where((p) => p.id == host['profileId'])
-                                  .firstOrNull;
-                              if (matched != null) {
-                                setState(() {
-                                  brand = matched.brand;
-                                  profile = matched;
-                                  camera = matched.cameras.firstOrNull;
-                                  profileBaseline = null;
-                                  _appliedFeedback = false;
-                                  if (camera != null) {
-                                    _apply(
-                                      _profilePatch(widget.session),
-                                      fromProfile: true,
-                                    );
-                                  }
-                                });
-                                widget.controller.rememberSelectedProfile(
-                                  brand: matched.brand,
-                                  profileId: matched.id,
-                                  cameraId: camera?.id,
-                                );
-                              }
-                            }
-                          },
-                    icon: const Icon(Icons.phone_iphone_rounded, size: 15),
-                    label: const Text(
-                      'Match iPhone',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              _buildSelectorField(
-                key: const Key('profileBrand'),
-                label: 'Brand',
-                value: brand ?? 'Select brand',
-                enabled: true,
-                onTap: () =>
-                    _openBrandPickerSheet(context, brands, profiles: profiles),
-              ),
-              const SizedBox(height: 8),
-              _buildSelectorField(
-                key: ValueKey('model-${brand ?? "none"}'),
-                label: 'Model',
-                value:
-                    profile?.model ??
-                    (brand == null ? 'Choose a brand first' : 'Select model'),
-                enabled: brand != null,
-                onTap: brand == null
-                    ? null
-                    : () => _openModelSearchSheet(
-                        context,
-                        profiles.where((p) => p.brand == brand).toList(),
-                      ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (brand != null)
-                      IconButton(
-                        key: const Key('searchModels'),
-                        tooltip: 'Search models',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                          minWidth: 26,
-                          minHeight: 26,
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'Device Profile',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF8E8E93),
+                          ),
                         ),
-                        visualDensity: VisualDensity.compact,
-                        splashRadius: 16,
-                        icon: const Icon(
-                          Icons.search_rounded,
-                          size: 18,
-                          color: Color(0xFF0A84FF),
+                      ),
+                      TextButton.icon(
+                        key: const Key('matchDeviceButton'),
+                        style: TextButton.styleFrom(
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          foregroundColor: const Color(0xFF0A84FF),
                         ),
                         onPressed: widget.controller.busy
                             ? null
-                            : () => _openModelSearchSheet(
-                                context,
-                                profiles
-                                    .where((p) => p.brand == brand)
-                                    .toList(),
-                              ),
-                      ),
-                    Icon(
-                      Icons.keyboard_arrow_down_rounded,
-                      size: 18,
-                      color: brand != null
-                          ? const Color(0xFF0A84FF)
-                          : Colors.white24,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 8),
-              _buildSelectorField(
-                key: ValueKey(
-                  'camera-${profile?.id ?? "none"}${camera != null ? "-${camera!.id}" : ""}',
-                ),
-                label: 'Camera',
-                value:
-                    camera?.name ??
-                    (profile == null
-                        ? 'Choose a model first'
-                        : 'Select camera'),
-                enabled: profile != null,
-                onTap: profile == null
-                    ? null
-                    : () => _openCameraPickerSheet(context, profile!.cameras),
-              ),
-              const SizedBox(height: 8),
-              FilledButton(
-                key: const Key('applyProfile'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: _appliedFeedback
-                      ? const Color(0xFF2C2C2E)
-                      : const Color(0xFF1C1C1E),
-                  foregroundColor: _appliedFeedback
-                      ? const Color(0xFF0A84FF)
-                      : Colors.white,
-                ),
-                onPressed:
-                    profile == null || camera == null || widget.controller.busy
-                    ? null
-                    : () {
-                        try {
-                          _apply(
-                            _profilePatch(widget.session),
-                            fromProfile: true,
-                          );
-                          _appliedTimer?.cancel();
-                          setState(() {
-                            _appliedFeedback = true;
-                            formError = null;
-                          });
-                          _appliedTimer = Timer(const Duration(seconds: 2), () {
-                            if (mounted) {
-                              setState(() => _appliedFeedback = false);
-                            }
-                          });
-                        } catch (e) {
-                          _appliedTimer?.cancel();
-                          final err = e is FormatException
-                              ? e.message
-                              : e.toString();
-                          widget.controller.recordError(err);
-                          setState(() {
-                            _appliedFeedback = false;
-                            formError = err;
-                          });
-                        }
-                      },
-                child: _appliedFeedback
-                    ? const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.check_circle_rounded, size: 18),
-                          SizedBox(width: 8),
-                          Text(
-                            'Applied',
-                            style: TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                        ],
-                      )
-                    : const Text('Apply & randomize'),
-              ),
-              if (_appliedFeedback) ...[
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF132720),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: const Color(0xFF224436)),
-                  ),
-                  child: const Row(
-                    children: [
-                      Icon(
-                        Icons.check_circle_outline_rounded,
-                        size: 16,
-                        color: Color(0xFF84E4C7),
-                      ),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Settings applied. Press "Process" below to generate your file.',
+                            : () async {
+                                final host = await widget.controller
+                                    .getHostDevice();
+                                if (!mounted) return;
+                                if (host != null && host['profileId'] != null) {
+                                  final matched = profiles
+                                      .where((p) => p.id == host['profileId'])
+                                      .firstOrNull;
+                                  if (matched != null) {
+                                    setState(() {
+                                      brand = matched.brand;
+                                      profile = matched;
+                                      camera = matched.cameras.firstOrNull;
+                                      profileBaseline = null;
+                                      _appliedFeedback = false;
+                                      if (camera != null) {
+                                        _apply(
+                                          _profilePatch(widget.session),
+                                          fromProfile: true,
+                                        );
+                                      }
+                                    });
+                                    widget.controller.rememberSelectedProfile(
+                                      brand: matched.brand,
+                                      profileId: matched.id,
+                                      cameraId: camera?.id,
+                                    );
+                                  }
+                                }
+                              },
+                        icon: const Icon(Icons.phone_iphone_rounded, size: 15),
+                        label: const Text(
+                          'Match iPhone',
                           style: TextStyle(
                             fontSize: 12,
-                            color: Color(0xFF84E4C7),
-                            fontWeight: FontWeight.w500,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                       ),
                     ],
                   ),
-                ),
-              ],
-              _automaticDates(),
-              TextButton(
-                onPressed: widget.controller.busy
-                    ? null
-                    : _configureRandomization,
-                child: const Text('Randomization settings'),
-              ),
-              if (camera?.evidence.values.contains('descriptive-label') ??
-                  false)
-                const Text(
-                  'Lens label is descriptive; exact capture wording has not been verified.',
-                  style: TextStyle(color: Colors.white60, fontSize: 12),
-                ),
-              Text(
-                '${profiles.length} researched models. Unknown hardware fields are cleared rather than invented.',
-                style: const TextStyle(color: Colors.white60, fontSize: 12),
-              ),
-            ],
-          );
-        },
+                  const SizedBox(height: 6),
+                  _buildSelectorField(
+                    key: const Key('profileBrand'),
+                    label: 'Brand',
+                    value: brand ?? 'Select brand',
+                    enabled: true,
+                    onTap: () => _openBrandPickerSheet(
+                      context,
+                      brands,
+                      profiles: profiles,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  _buildSelectorField(
+                    key: ValueKey('model-${brand ?? "none"}'),
+                    label: 'Model',
+                    value:
+                        profile?.model ??
+                        (brand == null
+                            ? 'Choose a brand first'
+                            : 'Select model'),
+                    enabled: brand != null,
+                    onTap: brand == null
+                        ? null
+                        : () => _openModelSearchSheet(
+                            context,
+                            profiles.where((p) => p.brand == brand).toList(),
+                          ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (brand != null)
+                          IconButton(
+                            key: const Key('searchModels'),
+                            tooltip: 'Search models',
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                              minWidth: 26,
+                              minHeight: 26,
+                            ),
+                            visualDensity: VisualDensity.compact,
+                            splashRadius: 16,
+                            icon: const Icon(
+                              Icons.search_rounded,
+                              size: 18,
+                              color: Color(0xFF0A84FF),
+                            ),
+                            onPressed: widget.controller.busy
+                                ? null
+                                : () => _openModelSearchSheet(
+                                    context,
+                                    profiles
+                                        .where((p) => p.brand == brand)
+                                        .toList(),
+                                  ),
+                          ),
+                        Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          size: 18,
+                          color: brand != null
+                              ? const Color(0xFF0A84FF)
+                              : Colors.white24,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  _buildSelectorField(
+                    key: ValueKey(
+                      'camera-${profile?.id ?? "none"}${camera != null ? "-${camera!.id}" : ""}',
+                    ),
+                    label: 'Camera',
+                    value:
+                        camera?.name ??
+                        (profile == null
+                            ? 'Choose a model first'
+                            : 'Select camera'),
+                    enabled: profile != null,
+                    onTap: profile == null
+                        ? null
+                        : () =>
+                              _openCameraPickerSheet(context, profile!.cameras),
+                  ),
+                  const SizedBox(height: 8),
+                  FilledButton(
+                    key: const Key('applyProfile'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _appliedFeedback
+                          ? const Color(0xFF2C2C2E)
+                          : const Color(0xFF1C1C1E),
+                      foregroundColor: _appliedFeedback
+                          ? const Color(0xFF0A84FF)
+                          : Colors.white,
+                    ),
+                    onPressed:
+                        profile == null ||
+                            camera == null ||
+                            widget.controller.busy
+                        ? null
+                        : () {
+                            try {
+                              _apply(
+                                _profilePatch(widget.session),
+                                fromProfile: true,
+                              );
+                              _appliedTimer?.cancel();
+                              setState(() {
+                                _appliedFeedback = true;
+                                formError = null;
+                              });
+                              _appliedTimer = Timer(
+                                const Duration(seconds: 2),
+                                () {
+                                  if (mounted) {
+                                    setState(() => _appliedFeedback = false);
+                                  }
+                                },
+                              );
+                            } catch (e) {
+                              _appliedTimer?.cancel();
+                              final err = e is FormatException
+                                  ? e.message
+                                  : e.toString();
+                              widget.controller.recordError(err);
+                              setState(() {
+                                _appliedFeedback = false;
+                                formError = err;
+                              });
+                            }
+                          },
+                    child: _appliedFeedback
+                        ? const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.check_circle_rounded, size: 18),
+                              SizedBox(width: 8),
+                              Text(
+                                'Applied',
+                                style: TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                            ],
+                          )
+                        : Text(
+                            widget.fillAvailableSpace
+                                ? 'Apply camera profile'
+                                : 'Apply & randomize',
+                          ),
+                  ),
+                  if (_appliedFeedback) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF132720),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFF224436)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.check_circle_outline_rounded,
+                            size: 16,
+                            color: Color(0xFF84E4C7),
+                          ),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              widget.fillAvailableSpace
+                                  ? 'Profile values staged. Review changes before creating a copy.'
+                                  : 'Settings applied. Press "Process" below to generate your file.',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFF84E4C7),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  _automaticDates(),
+                  TextButton(
+                    onPressed: widget.controller.busy
+                        ? null
+                        : _configureRandomization,
+                    child: const Text('Randomization settings'),
+                  ),
+                  if (camera?.evidence.values.contains('descriptive-label') ??
+                      false)
+                    const Text(
+                      'Lens label is descriptive; exact capture wording has not been verified.',
+                      style: TextStyle(color: Colors.white60, fontSize: 12),
+                    ),
+                  Text(
+                    '${profiles.length} researched models. Unknown hardware fields are cleared rather than invented.',
+                    style: const TextStyle(color: Colors.white60, fontSize: 12),
+                  ),
+                ],
+              );
+            },
+          ),
+        ],
       ),
       const SizedBox(height: 20),
       const Text('Saved presets'),
@@ -1621,27 +2308,89 @@ class _MetadataFormState extends State<MetadataForm>
             ),
           ),
         ),
-      const SizedBox(height: 12),
-      Wrap(
-        spacing: 8,
-        runSpacing: 8,
+      const SizedBox(height: 8),
+      ExpansionTile(
+        key: const Key('advancedPresetActions'),
+        initiallyExpanded: !widget.fillAvailableSpace,
+        title: const Text('Advanced preset tools'),
+        subtitle: const Text('Save edits or import a preset recipe'),
         children: [
-          OutlinedButton.icon(
-            onPressed: widget.controller.busy ? null : _savePreset,
-            icon: const Icon(Icons.bookmark_add_outlined, size: 16),
-            label: const Text('Save current edits'),
-          ),
-          OutlinedButton.icon(
-            onPressed: widget.controller.busy
-                ? null
-                : widget.controller.importPreset,
-            icon: const Icon(Icons.file_download_outlined, size: 16),
-            label: const Text('Import preset'),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: widget.controller.busy ? null : _savePreset,
+                icon: const Icon(Icons.bookmark_add_outlined, size: 16),
+                label: const Text('Save current edits'),
+              ),
+              OutlinedButton.icon(
+                onPressed: widget.controller.busy
+                    ? null
+                    : widget.controller.importPreset,
+                icon: const Icon(Icons.file_download_outlined, size: 16),
+                label: const Text('Import preset'),
+              ),
+            ],
           ),
         ],
       ),
     ],
   );
+  Widget _profileSummary(BuildContext context) => Container(
+    margin: const EdgeInsets.only(bottom: 12),
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+    decoration: BoxDecoration(
+      color: const Color(0xFF1C1C1E),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: const Color(0xFF2C2C2E)),
+    ),
+    child: Row(
+      children: [
+        const Icon(Icons.camera_alt_outlined, color: Color(0xFF0A84FF)),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Camera profile',
+                style: TextStyle(color: Colors.white60, fontSize: 12),
+              ),
+              Text(
+                profile == null
+                    ? 'No profile selected'
+                    : '${profile!.model} · ${camera?.name ?? 'Select camera'}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+        ),
+        IconButton(
+          key: const Key('configureProfileFromEdit'),
+          tooltip: 'Choose camera profile',
+          onPressed: widget.controller.busy
+              ? null
+              : () async {
+                  final profiles = await catalog;
+                  if (mounted && context.mounted) {
+                    _openModelSearchSheet(context, profiles);
+                  }
+                },
+          icon: const Icon(Icons.search_rounded),
+        ),
+        IconButton(
+          key: const Key('configureRandomizationFromEdit'),
+          tooltip: 'Randomization settings',
+          onPressed: widget.controller.busy ? null : _configureRandomization,
+          icon: const Icon(Icons.tune_rounded),
+        ),
+      ],
+    ),
+  );
+
   Widget _manual(BuildContext context) {
     final groups = metadataFields
         .where((f) => supported.contains(f.key))
@@ -1649,103 +2398,45 @@ class _MetadataFormState extends State<MetadataForm>
         .toSet();
     return Column(
       children: [
+        _profileSummary(context),
+        if (widget.fillAvailableSpace) ...[
+          _automaticDates(),
+          const SizedBox(height: 12),
+          if (supported.contains('software'))
+            SwitchListTile(
+              key: const Key('quickRemoveSoftware'),
+              contentPadding: EdgeInsets.zero,
+              value: modes['software'] == 'remove',
+              onChanged: widget.controller.busy
+                  ? null
+                  : (remove) => setState(() {
+                      modes['software'] = remove ? 'remove' : 'keep';
+                      explicitOverrides.add('software');
+                    }),
+              title: const Text('Remove software tag'),
+              subtitle: Text(switch (modes['software']) {
+                'remove' => 'Current plan removes the original software tag.',
+                'set' =>
+                  'Current plan sets “${inputs['software']!.text}”; turning this on removes it.',
+                _ => 'Current plan keeps the original value unchanged.',
+              }),
+            ),
+        ],
         const Text(
           'Keep retains the original. Set changes a value. Remove deletes the selected field.',
           style: TextStyle(color: Colors.white60, fontSize: 12),
         ),
-        for (final group in groups)
+        if (widget.fillAvailableSpace)
           ExpansionTile(
-            initiallyExpanded: group == 'Camera',
-            title: Text(group),
-            children: [
-              if (group == 'Dates' || group == 'Video dates') _automaticDates(),
-              if (group == 'Location')
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: OutlinedButton.icon(
-                    key: const Key('pickLocationMap'),
-                    onPressed: widget.controller.busy
-                        ? null
-                        : _selectLocationOnMap,
-                    icon: const Icon(Icons.map_outlined, size: 18),
-                    label: const Text('Select Location on Map'),
-                  ),
-                ),
-              for (final field in metadataFields.where(
-                (f) => f.group == group && supported.contains(f.key),
-              ))
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Column(
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(child: Text(field.label)),
-                          DropdownButton<String>(
-                            key: Key('${field.key}Mode'),
-                            value: modes[field.key],
-                            items: const [
-                              DropdownMenuItem(
-                                value: 'keep',
-                                child: Text('Keep'),
-                              ),
-                              DropdownMenuItem(
-                                value: 'set',
-                                child: Text('Set'),
-                              ),
-                              DropdownMenuItem(
-                                value: 'remove',
-                                child: Text('Remove'),
-                              ),
-                            ],
-                            onChanged: widget.controller.busy
-                                ? null
-                                : (mode) => setState(() {
-                                    modes[field.key] = mode!;
-                                    explicitOverrides.add(field.key);
-                                  }),
-                          ),
-                        ],
-                      ),
-                      if (modes[field.key] == 'set') ...[
-                        const SizedBox(height: 6),
-                        Semantics(
-                          label: field.label,
-                          child: TextField(
-                            key: Key(
-                              field.key == 'lensModel' ? 'lens' : field.key,
-                            ),
-                            controller: inputs[field.key],
-                            onChanged: (_) => explicitOverrides.add(field.key),
-                            enabled: !widget.controller.busy,
-                            decoration: InputDecoration(
-                              isDense: true,
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 12,
-                              ),
-                              hintText:
-                                  field.group == 'Dates' &&
-                                      !field.key.startsWith('offset')
-                                  ? (widget.session.inspection.kind.isImage
-                                        ? 'YYYY:MM:DD HH:mm:ss'
-                                        : 'YYYY-MM-DDTHH:mm:ssZ')
-                                  : null,
-                            ),
-                            keyboardType: field.numeric
-                                ? const TextInputType.numberWithOptions(
-                                    signed: true,
-                                    decimal: true,
-                                  )
-                                : TextInputType.text,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-            ],
-          ),
+            key: const Key('advancedMetadata'),
+            title: const Text('Advanced metadata'),
+            subtitle: const Text(
+              'Camera, exposure, location, and individual fields',
+            ),
+            children: [for (final group in groups) _metadataGroup(group)],
+          )
+        else
+          for (final group in groups) _metadataGroup(group),
         if (groups.isEmpty)
           const Text(
             'This format currently has no supported metadata operations.',
@@ -1754,9 +2445,101 @@ class _MetadataFormState extends State<MetadataForm>
     );
   }
 
+  Widget _metadataGroup(String group) => ExpansionTile(
+    initiallyExpanded: group == 'Camera',
+    title: Text(group),
+    children: [
+      if (!widget.fillAvailableSpace &&
+          (group == 'Dates' || group == 'Video dates'))
+        _automaticDates(),
+      if (group == 'Location')
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: OutlinedButton.icon(
+            key: const Key('pickLocationMap'),
+            onPressed: widget.controller.busy ? null : _selectLocationOnMap,
+            icon: const Icon(Icons.map_outlined, size: 18),
+            label: const Text('Select Location on Map'),
+          ),
+        ),
+      for (final field in metadataFields.where(
+        (f) => f.group == group && supported.contains(f.key),
+      ))
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(child: Text(field.label)),
+                  DropdownButton<String>(
+                    key: Key('${field.key}Mode'),
+                    value: modes[field.key],
+                    items: const [
+                      DropdownMenuItem(value: 'keep', child: Text('Keep')),
+                      DropdownMenuItem(value: 'set', child: Text('Set')),
+                      DropdownMenuItem(value: 'remove', child: Text('Remove')),
+                    ],
+                    onChanged: widget.controller.busy
+                        ? null
+                        : (mode) => setState(() {
+                            if (_dateFieldKeys.contains(field.key)) {
+                              _quickDateSelected = false;
+                            }
+                            modes[field.key] = mode!;
+                            explicitOverrides.add(field.key);
+                          }),
+                  ),
+                ],
+              ),
+              if (modes[field.key] == 'set') ...[
+                const SizedBox(height: 6),
+                Semantics(
+                  label: field.label,
+                  child: TextField(
+                    key: Key(field.key == 'lensModel' ? 'lens' : field.key),
+                    controller: inputs[field.key],
+                    onChanged: (_) {
+                      if (_dateFieldKeys.contains(field.key)) {
+                        _quickDateSelected = false;
+                      }
+                      explicitOverrides.add(field.key);
+                    },
+                    enabled: !widget.controller.busy,
+                    decoration: InputDecoration(
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
+                      hintText:
+                          field.group == 'Dates' &&
+                              !field.key.startsWith('offset')
+                          ? (widget.session.inspection.kind.isImage
+                                ? 'YYYY:MM:DD HH:mm:ss'
+                                : 'YYYY-MM-DDTHH:mm:ssZ')
+                          : null,
+                    ),
+                    keyboardType: field.numeric
+                        ? const TextInputType.numberWithOptions(
+                            signed: true,
+                            decimal: true,
+                          )
+                        : TextInputType.text,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+    ],
+  );
+
   Future<void> _loadPreset(SavedPreset preset) async {
     try {
       if (preset.recipe == null) {
+        settings = settings.withAutomaticDates(false);
+        _quickDateSelected = false;
         setState(() {
           profile = null;
           camera = null;
