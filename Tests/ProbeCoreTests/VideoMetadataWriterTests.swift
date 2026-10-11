@@ -139,8 +139,16 @@ final class VideoMetadataWriterTests: XCTestCase {
         _ = try await VideoMetadataWriter.write(source: source, output: seed,
             patch: MetadataPatch(values: ["lensModel": .string("Existing Lens")]))
         let trackMetadata = try firstTrackMetadataAtom(Data(contentsOf: seed))
-        try structuralMovie(trackUserData: trackMetadata, trackMeta: trackMetadata).write(to: duplicateSource)
-        try await assertRefused(Data(contentsOf: duplicateSource))
+        let duplicateBytes = structuralMovie(trackUserData: trackMetadata, trackMeta: trackMetadata)
+        try duplicateBytes.write(to: duplicateSource)
+        let duplicateOutput = directory.appendingPathComponent("track-metadata-duplicate-output.mov")
+        do {
+            _ = try await VideoMetadataWriter.write(source: duplicateSource, output: duplicateOutput,
+                patch: MetadataPatch(values: ["lensModel": .string("Requested Lens")]))
+            XCTFail("Editing ambiguous track metadata must be refused")
+        } catch ProbeError.unsupported { }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: duplicateOutput.path))
+        XCTAssertEqual(try Data(contentsOf: duplicateSource), duplicateBytes)
     }
 
     func testExtendedSizeFtypWorksAndInvalidCompatibleBrandPaddingIsRefused() async throws {
