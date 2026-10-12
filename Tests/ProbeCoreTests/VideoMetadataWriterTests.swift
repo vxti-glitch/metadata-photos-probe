@@ -2,6 +2,7 @@ import XCTest
 import Foundation
 import AVFoundation
 import CoreVideo
+import AudioToolbox
 @testable import ProbeCore
 
 final class VideoMetadataWriterTests: XCTestCase {
@@ -27,12 +28,13 @@ final class VideoMetadataWriterTests: XCTestCase {
     func testAutomaticProfileOnUntaggedNativeMoviesPreservesEncodedSamples() async throws {
         // No user fixture is used or uploaded. This covers the first edit of an
         // ordinary movie with no camera mdta and the full automatic camera plan.
-        for kind in [MediaKind.mov, .mp4] {
-            let source = directory.appendingPathComponent("automatic-source.\(kind.rawValue)")
-            try await makeNativeMOV(source, includeMetadata: false, kind: kind)
+        for (kind, includeAudio) in [(MediaKind.mov, false), (.mp4, false), (.mov, true), (.mp4, true)] {
+            let suffix = includeAudio ? "audio" : "video"
+            let source = directory.appendingPathComponent("automatic-source-\(suffix).\(kind.rawValue)")
+            try await makeNativeMOV(source, includeMetadata: false, kind: kind, includeAudio: includeAudio, fastStart: includeAudio)
             let original = try WholeFileDigest.sha256(source)
             for (index, iso) in [123.0, 65535.0].enumerated() {
-                let output = directory.appendingPathComponent("automatic-edited-\(index).\(kind.rawValue)")
+                let output = directory.appendingPathComponent("automatic-edited-\(suffix)-\(index).\(kind.rawValue)")
                 var values: [String: MetadataValue] = [
                     "make": .string("Apple"), "model": .string("iPhone 15 Pro Max"),
                     "software": .string("18.6.2"),
@@ -52,8 +54,11 @@ final class VideoMetadataWriterTests: XCTestCase {
                 let inspected = try await MetadataEngine.inspect(output)
                 try patch.validateReadback(inspected)
                 let comparison = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: patch)
-                XCTAssertFalse(comparison.checks.contains { $0.status == .failed }, "Synthetic \(kind): \(comparison.checks)")
+                XCTAssertFalse(comparison.checks.contains { $0.status == .failed }, "Synthetic \(kind) \(suffix): \(comparison.checks)")
                 XCTAssertTrue(comparison.checks.contains { $0.name.contains("compressed data") && $0.status == .passed })
+                let encodedChecks = comparison.checks.filter { $0.name.contains("compressed data") }
+                XCTAssertEqual(encodedChecks.count, includeAudio ? 2 : 1)
+                XCTAssertTrue(encodedChecks.allSatisfy { $0.status == .passed })
                 XCTAssertEqual(try WholeFileDigest.sha256(source), original)
             }
         }
@@ -459,8 +464,9 @@ final class VideoMetadataWriterTests: XCTestCase {
         XCTAssertEqual(try WholeFileDigest.sha256(source), originalDigest)
     }
 
-    private func makeNativeMOV(_ url: URL, includeMetadata: Bool, kind: MediaKind = .mov) async throws {
+    private func makeNativeMOV(_ url: URL, includeMetadata: Bool, kind: MediaKind = .mov, includeAudio: Bool = false, fastStart: Bool = false) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: kind == .mp4 ? .mp4 : .mov)
+        writer.shouldOptimizeForNetworkUse = fastStart
         if includeMetadata {
             writer.metadata = [(.quickTimeMetadataMake, "Source Maker"), (.quickTimeMetadataModel, "Source Movie"),
                 (.quickTimeMetadataTitle, "Retained synthetic title"), (.quickTimeMetadataLocationISO6709, "+12.5000-044.2500/")].map { identifier, value in
@@ -475,6 +481,14 @@ final class VideoMetadataWriterTests: XCTestCase {
             kCVPixelBufferWidthKey as String: 32, kCVPixelBufferHeightKey as String: 32])
         guard writer.canAdd(input) else { throw ProbeError.writeFailed("Cannot add native MOV fixture input") }
         writer.add(input)
+        let audioInput: AVAssetWriterInput?
+        if includeAudio {
+            let audio = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+                AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48_000,
+                AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64_000])
+            guard writer.canAdd(audio) else { throw ProbeError.writeFailed("Cannot add synthetic AAC fixture") }
+            writer.add(audio); audioInput = audio
+        } else { audioInput = nil }
         guard writer.startWriting() else { throw writer.error ?? ProbeError.writeFailed("Cannot start native MOV fixture") }
         writer.startSession(atSourceTime: .zero)
         for frame in 0..<3 {
@@ -497,8 +511,57 @@ final class VideoMetadataWriterTests: XCTestCase {
                 throw writer.error ?? ProbeError.writeFailed("Cannot append native MOV frame")
             }
         }
-        input.markAsFinished(); await writer.finishWriting()
+        input.markAsFinished()
+        if let audioInput {
+            let deadline = Date().addingTimeInterval(10)
+            while !audioInput.isReadyForMoreMediaData {
+                guard Date() < deadline, writer.status == .writing else {
+                    writer.cancelWriting(); throw ProbeError.writeFailed("Synthetic AAC fixture stalled")
+                }
+                try await Task.sleep(nanoseconds: 10_000_000)
+            }
+            guard audioInput.append(try syntheticPCM()) else {
+                throw writer.error ?? ProbeError.writeFailed("Cannot append synthetic PCM fixture")
+            }
+            audioInput.markAsFinished()
+        }
+        await writer.finishWriting()
         guard writer.status == .completed else { throw writer.error ?? ProbeError.writeFailed("Native MOV fixture unfinished") }
+    }
+
+    private func syntheticPCM() throws -> CMSampleBuffer {
+        // Encode a generated 0.1-second silence source once for fixture creation.
+        // The metadata operation never decodes or re-encodes either media track.
+        let samples = 4_800, bytesPerSample = 2
+        var description: CMAudioFormatDescription?
+        var stream = AudioStreamBasicDescription(mSampleRate: 48_000, mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked,
+            mBytesPerPacket: 2, mFramesPerPacket: 1, mBytesPerFrame: 2,
+            mChannelsPerFrame: 1, mBitsPerChannel: 16, mReserved: 0)
+        guard CMAudioFormatDescriptionCreate(allocator: kCFAllocatorDefault, asbd: &stream,
+            layoutSize: 0, layout: nil, magicCookieSize: 0, magicCookie: nil,
+            extensions: nil, formatDescriptionOut: &description) == noErr, let description else {
+            throw ProbeError.writeFailed("Synthetic PCM format unavailable")
+        }
+        var block: CMBlockBuffer?
+        let length = samples * bytesPerSample
+        guard CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil,
+            blockLength: length, blockAllocator: kCFAllocatorDefault, customBlockSource: nil,
+            offsetToData: 0, dataLength: length, flags: 0, blockBufferOut: &block) == noErr,
+            let block else { throw ProbeError.writeFailed("Synthetic PCM block unavailable") }
+        guard CMBlockBufferFillDataBytes(with: 0, blockBuffer: block, offsetIntoDestination: 0,
+            dataLength: length) == noErr else { throw ProbeError.writeFailed("Synthetic PCM initialization failed") }
+        var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 48_000),
+            presentationTimeStamp: .zero, decodeTimeStamp: .invalid)
+        var size = bytesPerSample
+        var sample: CMSampleBuffer?
+        guard CMSampleBufferCreateReady(allocator: kCFAllocatorDefault, dataBuffer: block,
+            formatDescription: description, sampleCount: samples, sampleTimingEntryCount: 1,
+            sampleTimingArray: &timing, sampleSizeEntryCount: 1, sampleSizeArray: &size,
+            sampleBufferOut: &sample) == noErr, let sample else {
+            throw ProbeError.writeFailed("Synthetic PCM sample unavailable")
+        }
+        return sample
     }
 
     private struct Box { let type: String; let range: Range<Int>; let payload: Range<Int> }

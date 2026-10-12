@@ -299,7 +299,9 @@ actor NativeSessionStore {
         guard try WholeFileDigest.sha256(source) == original.sourceSHA256 else { throw NativeMediaError.processing }
         guard result.integrity.status != .mismatch,
               !result.integrity.checks.contains(where: { $0.status == .failed }) else {
-            throw ProbeError.integrityMismatch("Processing produced failed integrity checks")
+            let names = result.integrity.checks.filter { $0.status == .failed }.map(\.name)
+            throw ProbeError.integrityMismatch(names.isEmpty
+                ? "Processing report status mismatch" : names.joined(separator: ", "))
         }
         guard !result.integrity.checks.isEmpty,
               result.integrity.status != .verified || Self.isFullyVerified(result.integrity) else {

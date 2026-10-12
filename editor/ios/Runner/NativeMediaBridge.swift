@@ -627,6 +627,10 @@ final class NativeMediaBridge: NSObject {
         // Error descriptions and userInfo may embed filenames, filesystem URLs
         // and metadata. Expose only fixed stage tokens and known numeric codes.
         var diagnostics: [String: Any] = ["stage": code]
+        if case ProbeError.integrityMismatch(let names) = error {
+            let failedChecks = Self.safeIntegrityCheckIDs(names)
+            if !failedChecks.isEmpty { diagnostics["failedChecks"] = failedChecks }
+        }
         if !(error is NativeMediaError), !(error is ProbeError) {
             let native = error as NSError
             let domains = [NSCocoaErrorDomain, NSOSStatusErrorDomain, "AVFoundationErrorDomain", "PHPhotosErrorDomain"]
@@ -634,6 +638,54 @@ final class NativeMediaBridge: NSObject {
             diagnostics["nativeCode"] = native.code
         }
         return FlutterError(code: code, message: message, details: diagnostics)
+    }
+
+    /// Only closed, code-owned identifiers cross the channel. Never return the
+    /// check detail: it can contain file URLs, resource names or metadata values.
+    static func safeIntegrityCheckIDs(_ names: String) -> [String] {
+        guard names.utf8.count <= 8_192 else { return [] }
+        var known: [String: String] = [
+            "container": "container",
+            "requested camera metadata": "requested_camera_metadata",
+            "requested metadata": "requested_metadata",
+            "retained embedded metadata": "retained_metadata",
+            "exposed embedded location": "retained_location",
+            "exact complete file bytes": "complete_file_bytes",
+            "image presentation": "image_presentation",
+            "ImageIO exposed non-target properties": "image_properties",
+            "ImageIO non-target properties": "image_properties",
+            "JPEG compressed scans and coding segments": "jpeg_compressed_data",
+            "JPEG non-target application/color blocks": "jpeg_retained_blocks",
+            "PNG compressed pixels and non-target chunks": "png_compressed_data",
+            "HEIC non-Exif item bytes": "heic_compressed_items",
+            "HEIC item graph and properties": "heic_item_graph",
+            "HEIC item graph": "heic_item_graph",
+            "video track count": "video_track_count",
+            "video exposed track inventory": "video_track_inventory",
+            "video exposed duration": "video_duration",
+            "video compressed samples": "video_compressed_samples",
+            "Processing report status mismatch": "report_status",
+            "Processing returned an inconsistent integrity report": "report_consistency"
+        ]
+        for index in 1...64 {
+            known["track \(index) compressed data / timing / format"] = "video_samples_track_\(index)"
+        }
+        for field in MetadataPatch.supportedKeys(for: .mov) {
+            known["AVFoundation target " + field] = "video_target_" + field
+        }
+        for field in MetadataPatch.supportedKeys(for: .png) {
+            known["ImageIO target " + field] = "image_target_" + field
+        }
+        let tokens = names.split(separator: ",", omittingEmptySubsequences: true)
+        guard tokens.count <= 128 else { return [] }
+        var seen = Set<String>(), result = [String]()
+        for token in tokens {
+            let name = String(token).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let id = known[name], seen.insert(id).inserted else { continue }
+            result.append(id)
+            if result.count == 32 { break }
+        }
+        return result
     }
 
     private static func safeUnsupportedMessage(_ detail: String) -> String {

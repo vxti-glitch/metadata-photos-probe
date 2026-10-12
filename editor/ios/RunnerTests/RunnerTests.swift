@@ -726,7 +726,7 @@ class RunnerTests: XCTestCase {
     do {
       _ = try await store.exportCopyURL(sessionID: imported.id, processingID: output.id, acknowledgeIncomplete: false)
       XCTFail("Opaque PNG EXIF qualification must still require acknowledgment")
-    } catch NativeMediaError.processing { }
+    } catch NativeMediaError.unsupported { }
     let exported = try await store.exportCopyURL(sessionID: imported.id, processingID: output.id, acknowledgeIncomplete: true)
     XCTAssertEqual(exported.lastPathComponent, expectedName)
     XCTAssertEqual(try WholeFileDigest.sha256(exported), output.outputSHA256)
@@ -1099,6 +1099,64 @@ class RunnerTests: XCTestCase {
       _ = try NativeMediaBridge.metadataPatch(["patch": ["values": ["make": 123], "removals": []]])
       XCTFail("Malformed field payload was accepted")
     } catch NativeMediaError.invalidArgument { }
+  }
+
+  func testIntegrityDiagnosticsUseOnlyClosedSafeCheckIdentifiers() throws {
+    let names = "retained embedded metadata, track 1 compressed data / timing / format, AVFoundation target iso, ImageIO target software, retained embedded metadata"
+    let mapped = NativeMediaBridge.flutterError(ProbeError.integrityMismatch(names))
+    let details = try XCTUnwrap(mapped.details as? [String: Any])
+    XCTAssertEqual(details["stage"] as? String, "integrity")
+    XCTAssertEqual(details["failedChecks"] as? [String], ["retained_metadata", "video_samples_track_1", "video_target_iso", "image_target_software"])
+    XCTAssertEqual(NativeMediaBridge.safeIntegrityCheckIDs("Processing report status mismatch"), ["report_status"])
+    XCTAssertEqual(NativeMediaBridge.safeIntegrityCheckIDs("Processing returned an inconsistent integrity report"), ["report_consistency"])
+  }
+
+  func testIntegrityDiagnosticsRejectPrivateUnknownOversizedAndPartialTokens() {
+    for names in [
+      "file:///private/media/Private Clip.mp4 GPS=10.123,20.456",
+      "retained embedded metadata: Private Clip.mp4",
+      "track 0 compressed data / timing / format",
+      "track 65 compressed data / timing / format",
+      "track 01 compressed data / timing / format",
+      "AVFoundation target Private Clip.mp4",
+      "AVFoundation target lensMake",
+      "ImageIO target movieCreateDate",
+      String(repeating: "private", count: 2_000),
+      Array(repeating: "requested metadata", count: 129).joined(separator: ", ")
+    ] {
+      XCTAssertTrue(NativeMediaBridge.safeIntegrityCheckIDs(names).isEmpty)
+    }
+    let bounded = (1...64).map { "track \($0) compressed data / timing / format" }.joined(separator: ", ")
+    XCTAssertEqual(NativeMediaBridge.safeIntegrityCheckIDs(bounded).count, 32)
+    XCTAssertEqual(NativeMediaBridge.safeIntegrityCheckIDs("unknown private token, video exposed duration"), ["video_duration"])
+  }
+
+  func testSessionFailureRetainsSafeFailingCheckNamesWithoutPublishingOutput() async throws {
+    let provider = folder.appendingPathComponent("synthetic-failing-report.jpg")
+    try jpeg().write(to: provider)
+    let store = NativeSessionStore(root: folder.appendingPathComponent("synthetic-report-sessions"),
+      processOperation: { source, output, patch in
+        let result = try await Self.verifiedCopy(source, output, patch)
+        return ProcessingResult(outputURL: output, sourceInspection: result.sourceInspection,
+          outputInspection: result.outputInspection, integrity: IntegrityComparison(status: .incomplete,
+            checks: [IntegrityCheck(name: "retained embedded metadata", status: .failed,
+              detail: "Private filename and GPS must never cross the error channel")], limitations: []))
+      })
+    let imported = try await store.importFile(provider)
+    do {
+      _ = try await store.process(sessionID: imported.id, patch: CameraPatch(make: "Synthetic", model: "Synthetic"))
+      XCTFail("A failed integrity report became an active output")
+    } catch ProbeError.integrityMismatch(let names) {
+      XCTAssertEqual(names, "retained embedded metadata")
+      let details = NativeMediaBridge.flutterError(ProbeError.integrityMismatch(names)).details as? [String: Any]
+      XCTAssertEqual(details?["failedChecks"] as? [String], ["retained_metadata"])
+      XCTAssertFalse(String(describing: details).contains("Private filename"))
+    }
+    let sessions = try await store.list()
+    XCTAssertNil(sessions.first?.processing)
+    let files = try FileManager.default.contentsOfDirectory(atPath: folder
+      .appendingPathComponent("synthetic-report-sessions").appendingPathComponent(imported.id.uuidString).path)
+    XCTAssertEqual(files, [imported.sourceName])
   }
 
   func testPhotoStreamPreservesSafeNativeErrorCodeForDiagnostics() throws {
