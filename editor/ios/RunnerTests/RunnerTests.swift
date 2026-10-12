@@ -636,16 +636,104 @@ class RunnerTests: XCTestCase {
     let source = root.appendingPathComponent(imported.id.uuidString).appendingPathComponent(imported.sourceName)
     let originalPermissions = try FileManager.default.attributesOfItem(atPath: source.path)[.posixPermissions] as? NSNumber
     XCTAssertEqual(originalPermissions?.intValue, 0o400)
-    let changed = try await store.processMetadata(sessionID: imported.id,
-      patch: MetadataPatch(values: ["make": .string("Apple"), "model": .string("Synthetic camera")]))
+    let patch = MetadataPatch(values: [
+      "make": .string("Apple"), "model": .string("Synthetic camera"), "software": .string("17.5.1"),
+      "lensModel": .string("Main Camera - 24 mm f/1.78"), "focalLength35mm": .number(24),
+      "iso": .number(800), "exposureTime": .number(1.0 / 120), "fNumber": .number(1.78),
+      "latitude": .number(-12.5), "longitude": .number(44.25), "altitude": .number(-10.2004),
+      "dateTimeOriginal": .string("2026-04-05T06:07:08-04:00"),
+      "movieCreateDate": .string("2026-04-05T06:07:08-04:00"), "movieModifyDate": .string("2026-04-05T06:07:08-04:00"),
+      "trackCreateDate": .string("2026-04-05T06:07:08-04:00"), "trackModifyDate": .string("2026-04-05T06:07:08-04:00"),
+      "mediaCreateDate": .string("2026-04-05T06:07:08-04:00"), "mediaModifyDate": .string("2026-04-05T06:07:08-04:00")
+    ])
+    let changed: NativeSession
+    do { changed = try await store.processMetadata(sessionID: imported.id, patch: patch) }
+    catch {
+      try await reportSyntheticVideoFailure(source: source, patch: patch, label: "profile")
+      throw error
+    }
     let output = try XCTUnwrap(changed.processing)
     XCTAssertEqual(output.outputInspection.kind, .mp4)
     XCTAssertEqual(output.outputInspection.metadata["model"], "Synthetic camera")
+    try patch.validateReadback(output.outputInspection)
     XCTAssertFalse(output.integrity.checks.contains { $0.status == .failed })
+    XCTAssertTrue(output.integrity.checks.contains { $0.name.contains("compressed data") && $0.status == .passed })
+    let exported = try await store.exportCopyURL(sessionID: imported.id, processingID: output.id, acknowledgeIncomplete: true)
+    let removal = MetadataPatch(values: ["model": .string("Replacement camera")], removals: ["iso", "exposureTime", "fNumber", "lensModel", "latitude", "longitude", "altitude", "software", "trackCreateDate"])
+    let cleared: NativeSession
+    do { cleared = try await store.processMetadata(sessionID: imported.id, patch: removal) }
+    catch {
+      // Also exercise actual removal from the first edited file independently.
+      try await reportSyntheticVideoFailure(source: exported, patch: removal, label: "removal")
+      throw error
+    }
+    let clearedOutput = try XCTUnwrap(cleared.processing)
+    try removal.validateReadback(clearedOutput.outputInspection)
+    XCTAssertFalse(clearedOutput.integrity.checks.contains { $0.status == .failed })
+    let editedImport = try await store.importFile(exported)
+    let removedEdited: NativeSession
+    do { removedEdited = try await store.processMetadata(sessionID: editedImport.id, patch: removal) }
+    catch {
+      try await reportSyntheticVideoFailure(source: exported, patch: removal, label: "edited-removal")
+      throw error
+    }
+    let removedOutput = try XCTUnwrap(removedEdited.processing)
+    try removal.validateReadback(removedOutput.outputInspection)
+    XCTAssertTrue(removedOutput.integrity.checks.contains { $0.name.contains("compressed data") && $0.status == .passed })
     XCTAssertEqual(try WholeFileDigest.sha256(source), imported.sourceSHA256)
     XCTAssertEqual(try WholeFileDigest.sha256(provider), providerHash)
     let sourcePermissions = try FileManager.default.attributesOfItem(atPath: source.path)[.posixPermissions] as? NSNumber
     XCTAssertEqual(sourcePermissions?.intValue, 0o400)
+  }
+
+  private func reportSyntheticVideoFailure(source: URL, patch: MetadataPatch, label: String) async throws {
+    let diagnostic = folder.appendingPathComponent("synthetic-\(label)-diagnostic.mp4")
+    do {
+      _ = try await VideoMetadataWriter.write(source: source, output: diagnostic, patch: patch)
+      let before = try await MetadataEngine.inspect(source), after = try await MetadataEngine.inspect(diagnostic)
+      for key in Set(before.metadata.keys).union(after.metadata.keys).sorted() where before.metadata[key] != after.metadata[key] {
+        print("Synthetic iOS \(label) metadata \(key): \(before.metadata[key] ?? "<absent>") -> \(after.metadata[key] ?? "<absent>")")
+      }
+      let comparison = try await MediaIntegrity.compareMetadata(source: source, output: diagnostic, patch: patch)
+      print("Synthetic iOS \(label) failed checks: \(comparison.checks.filter { $0.status == .failed })")
+    } catch { print("Synthetic iOS \(label) diagnostic failed: \(error)") }
+  }
+
+  func testPNGScreenshotImportFullProfileReservedFilenameExportAndRecovery() async throws {
+    let provider = folder.appendingPathComponent("Screenshot.PNG")
+    let original = png()
+    try original.write(to: provider)
+    let root = folder.appendingPathComponent("screenshot-sessions", isDirectory: true)
+    let store = NativeSessionStore(root: root)
+    let imported = try await store.importFile(provider)
+    XCTAssertEqual(imported.inspection.kind, .png)
+    XCTAssertNil(imported.inspection.metadata["model"])
+    let names = try await store.reserveOutputNames(sessionIDs: [imported.id])
+    let expectedName = try XCTUnwrap(names[imported.id.uuidString])
+    XCTAssertNotNil(expectedName.range(of: "^IMG_[0-9]{4}\\.PNG$", options: .regularExpression))
+    let patch = MetadataPatch(values: ["make": .string("Apple"), "model": .string("iPhone 15 Pro"),
+      "iso": .number(400), "exposureTime": .number(1.0 / 120), "fNumber": .number(1.78),
+      "software": .string("17.5.1"), "lensModel": .string("Main Camera"),
+      "dateTimeOriginal": .string("2026:04:05 06:07:08"), "createDate": .string("2026:04:05 06:07:08"),
+      "modifyDate": .string("2026:04:05 06:07:08"), "offsetTimeOriginal": .string("-04:00")])
+    let changed = try await store.processMetadata(sessionID: imported.id, patch: patch)
+    let output = try XCTUnwrap(changed.processing)
+    XCTAssertEqual(output.outputDisplayName, expectedName)
+    XCTAssertEqual(output.outputInspection.kind, .png)
+    try patch.validateReadback(output.outputInspection)
+    XCTAssertFalse(output.integrity.checks.contains { $0.status == .failed })
+    XCTAssertTrue(output.integrity.checks.contains { $0.name == "PNG compressed pixels and non-target chunks" && $0.status == .passed })
+    do {
+      _ = try await store.exportCopyURL(sessionID: imported.id, processingID: output.id, acknowledgeIncomplete: false)
+      XCTFail("Opaque PNG EXIF qualification must still require acknowledgment")
+    } catch NativeMediaError.processing { }
+    let exported = try await store.exportCopyURL(sessionID: imported.id, processingID: output.id, acknowledgeIncomplete: true)
+    XCTAssertEqual(exported.lastPathComponent, expectedName)
+    XCTAssertEqual(try WholeFileDigest.sha256(exported), output.outputSHA256)
+    let recovered = NativeSessionStore(root: root)
+    let recoveredExport = try await recovered.exportCopyURL(sessionID: imported.id, processingID: output.id, acknowledgeIncomplete: true)
+    XCTAssertEqual(try WholeFileDigest.sha256(recoveredExport), output.outputSHA256)
+    XCTAssertEqual(try Data(contentsOf: provider), original)
   }
 
   private func syntheticMP4(_ url: URL) async throws {
