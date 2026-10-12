@@ -8,6 +8,7 @@ import 'package:metadata_editor/metadata_form.dart';
 import 'package:metadata_editor/metadata_patch.dart';
 
 import 'fake_media_bridge.dart';
+import 'form_test_helpers.dart';
 
 void main() {
   Future<EditorController> launch(
@@ -27,7 +28,15 @@ void main() {
   }
 
   Future<void> tap(WidgetTester tester, String key) async {
-    final target = find.byKey(Key(key));
+    if (key == 'advancedMetadata' ||
+        key == 'quickRemoveSoftware' ||
+        key == 'profilesAndPresets') {
+      await expandManualEditing(tester);
+    }
+    final target =
+        key == 'profilesAndPresets' && find.byKey(Key(key)).evaluate().isEmpty
+        ? find.text('Saved presets')
+        : find.byKey(Key(key));
     await tester.ensureVisible(target);
     await tester.pumpAndSettle();
     await tester.tap(target);
@@ -153,6 +162,9 @@ void main() {
       await tap(tester, 'advancedMetadata');
       await tester.ensureVisible(find.text('Dates'));
       await tester.tap(find.text('Dates'));
+      await tester.pumpAndSettle();
+      await tap(tester, 'offsetTimeOriginalMode');
+      await tester.tap(find.text('Keep').last);
       await tester.pumpAndSettle();
       await setField(tester, 'dateTimeOriginal', '2026:04:05 10:00:00');
       await tap(tester, 'primaryeditAction');

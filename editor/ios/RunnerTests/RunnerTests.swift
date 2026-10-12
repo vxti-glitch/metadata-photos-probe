@@ -19,6 +19,17 @@ class RunnerTests: XCTestCase {
     try FileManager.default.removeItem(at: folder)
   }
 
+  func testSupportEmailHasOnlyTheFixedRecipientAndPercentEncodedSubject() throws {
+    let url = NativeMediaBridge.supportEmailURL
+    XCTAssertEqual(url.absoluteString, "mailto:vxti.dev@gmail.com?subject=Metadata%20Editor%20Support")
+    let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+    XCTAssertEqual(components.scheme, "mailto")
+    XCTAssertEqual(components.path, "vxti.dev@gmail.com")
+    XCTAssertNil(components.host)
+    XCTAssertNil(components.fragment)
+    XCTAssertEqual(components.queryItems, [URLQueryItem(name: "subject", value: "Metadata Editor Support")])
+  }
+
   func testCanceledOperationRetainsLeaseAndIgnoresStaleCompletion() throws {
     let gate = NativeOperationGate()
     let first = try gate.begin()
@@ -34,6 +45,179 @@ class RunnerTests: XCTestCase {
     XCTAssertFalse(gate.finish(first))
     XCTAssertTrue(gate.isCurrent(second))
     XCTAssertTrue(gate.finish(second))
+  }
+
+  func testReservationBridgeAcceptsOnlyBoundedUniqueIdentifiers() throws {
+    let id = UUID().uuidString
+    XCTAssertEqual(try NativeMediaBridge.reservationIdentifiers(["sessionIds": [id]]), [UUID(uuidString: id)!])
+    let invalidArguments: [[String: Any]] = [
+      ["sessionIds": []], ["sessionIds": [id, id]], ["sessionIds": ["../../outside"]],
+      ["sessionIds": Array(repeating: id, count: 51)], ["sessionIds": [id], "name": "IMG_1234.JPG"]
+    ]
+    for arguments in invalidArguments { XCTAssertThrowsError(try NativeMediaBridge.reservationIdentifiers(arguments)) }
+  }
+
+  func testReservationsSurviveRelaunchAndEachBatchFileUsesItsReviewedName() async throws {
+    let provider = folder.appendingPathComponent("reserve.jpg")
+    try jpeg().write(to: provider)
+    let root = folder.appendingPathComponent("reserve-sessions", isDirectory: true)
+    let store = NativeSessionStore(root: root, processOperation: Self.verifiedCopy)
+    let first = try await store.importFile(provider)
+    let second = try await store.importFile(provider)
+    let ids = [first.id, second.id]
+    let names = try await store.reserveOutputNames(sessionIDs: ids)
+    XCTAssertEqual(Set(names.values).count, 2)
+    let repeated = try await store.reserveOutputNames(sessionIDs: Array(ids.reversed()))
+    XCTAssertEqual(names, repeated)
+    let recovered = NativeSessionStore(root: root, processOperation: Self.verifiedCopy)
+    let restored = try await recovered.reserveOutputNames(sessionIDs: ids)
+    XCTAssertEqual(names, restored)
+    for id in ids {
+      let changed = try await recovered.process(sessionID: id, patch: CameraPatch(make: "Same", model: "Same"))
+      XCTAssertEqual(changed.processing?.outputDisplayName, names[id.uuidString])
+      XCTAssertNil(changed.reservedOutputDisplayName)
+    }
+    let next = try await recovered.reserveOutputNames(sessionIDs: ids)
+    XCTAssertTrue(Set(next.values).isDisjoint(with: Set(names.values)))
+    try await recovered.delete(first.id)
+    try await recovered.clear()
+    let empty = try await recovered.list()
+    XCTAssertTrue(empty.isEmpty)
+  }
+
+  func testReservationRetainedAfterProcessingFailureAndPublicCollisionNeverRenames() async throws {
+    let provider = folder.appendingPathComponent("failure.jpg")
+    try jpeg().write(to: provider)
+    let root = folder.appendingPathComponent("failure-sessions", isDirectory: true)
+    let publicFolder = folder.appendingPathComponent("Public", isDirectory: true)
+    try FileManager.default.createDirectory(at: publicFolder, withIntermediateDirectories: false)
+    let failing = NativeSessionStore(root: root, autoExportRoot: publicFolder, processOperation: { _, _, _ in
+      throw NativeMediaError.processing
+    })
+    let imported = try await failing.importFile(provider)
+    let names = try await failing.reserveOutputNames(sessionIDs: [imported.id])
+    let name = try XCTUnwrap(names[imported.id.uuidString])
+    do {
+      _ = try await failing.process(sessionID: imported.id, patch: CameraPatch(make: "Same", model: "Same"))
+      XCTFail("Failure unexpectedly succeeded")
+    } catch NativeMediaError.processing { }
+    let afterFailure = try await failing.reserveOutputNames(sessionIDs: [imported.id])
+    XCTAssertEqual(afterFailure, names)
+    let collision = publicFolder.appendingPathComponent(name.lowercased())
+    let bytes = Data("external consumer file".utf8)
+    try bytes.write(to: collision)
+    let retry = NativeSessionStore(root: root, autoExportRoot: publicFolder, processOperation: Self.verifiedCopy)
+    do {
+      _ = try await retry.process(sessionID: imported.id, patch: CameraPatch(make: "Same", model: "Same"))
+      XCTFail("A reserved-name collision was silently renamed or accepted")
+    } catch NativeMediaError.storage { }
+    XCTAssertEqual(try Data(contentsOf: collision), bytes)
+    let collisionState = try await retry.list()
+    XCTAssertEqual(collisionState.first?.reservedOutputDisplayName, name)
+    XCTAssertNil(collisionState.first?.processing)
+    try FileManager.default.removeItem(at: collision)
+    let changed = try await retry.process(sessionID: imported.id, patch: CameraPatch(make: "Same", model: "Same"))
+    XCTAssertEqual(changed.processing?.outputDisplayName, name)
+  }
+
+  func testReservationLoadRejectsUnsafeWrongExtensionDuplicatesAndOutputReuse() async throws {
+    for mode in ["unsafe", "extension", "duplicate", "existing"] {
+      let root = folder.appendingPathComponent("invalid-\(mode)", isDirectory: true)
+      let session = try persistedSession(root: root, status: .verified)
+      let manifest = root.appendingPathComponent("manifest.json")
+      var map = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: manifest)) as? [String: Any])
+      var items = try XCTUnwrap(map["sessions"] as? [[String: Any]])
+      items[0]["reservedOutputDisplayName"] = mode == "unsafe" ? "../IMG_1234.JPG" : mode == "extension" ? "IMG_1234.MP4" : "IMG_1234.JPG"
+      if mode == "duplicate" {
+        var duplicate = items[0]
+        let id = UUID()
+        duplicate["id"] = id.uuidString
+        try FileManager.default.copyItem(at: root.appendingPathComponent(session.id.uuidString), to: root.appendingPathComponent(id.uuidString))
+        items.append(duplicate)
+      }
+      if mode == "existing" {
+        var processing = try XCTUnwrap(items[0]["processing"] as? [String: Any])
+        processing["outputDisplayName"] = "IMG_1234.JPG"
+        items[0]["processing"] = processing
+      }
+      map["sessions"] = items
+      let bytes = try JSONSerialization.data(withJSONObject: map)
+      try bytes.write(to: manifest)
+      do { _ = try await NativeSessionStore(root: root).list(); XCTFail("Invalid reservation loaded: \(mode)") }
+      catch NativeMediaError.storage { }
+      XCTAssertEqual(try Data(contentsOf: manifest), bytes)
+    }
+  }
+
+  func testOldJournalWithoutReservationRemainsLoadableAndCanReserve() async throws {
+    let root = folder.appendingPathComponent("old-journal", isDirectory: true)
+    let session = try persistedSession(root: root, status: .verified)
+    let store = NativeSessionStore(root: root)
+    let recovered = try await store.list()
+    XCTAssertNil(recovered.first?.reservedOutputDisplayName)
+    let reserved = try await store.reserveOutputNames(sessionIDs: [session.id])
+    XCTAssertEqual(reserved.count, 1)
+    XCTAssertTrue(reserved.values.first?.hasSuffix(".JPG") == true)
+  }
+
+  func testCollisionCreatedDuringProcessingKeepsReservationAndDiscardsPrivateStaging() async throws {
+    let provider = folder.appendingPathComponent("late-collision.jpg")
+    try jpeg().write(to: provider)
+    let root = folder.appendingPathComponent("late-collision-sessions", isDirectory: true)
+    let publicFolder = folder.appendingPathComponent("LatePublic", isDirectory: true)
+    try FileManager.default.createDirectory(at: publicFolder, withIntermediateDirectories: false)
+    let store = NativeSessionStore(root: root, autoExportRoot: publicFolder, processOperation: { source, output, patch in
+      let processed = try await Self.verifiedCopy(source, output, patch)
+      let map = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("manifest.json"))) as! [String: Any]
+      let sessions = map["sessions"] as! [[String: Any]]
+      let name = sessions[0]["reservedOutputDisplayName"] as! String
+      try Data("late external file".utf8).write(to: publicFolder.appendingPathComponent(name))
+      return processed
+    })
+    let imported = try await store.importFile(provider)
+    let names = try await store.reserveOutputNames(sessionIDs: [imported.id])
+    do {
+      _ = try await store.process(sessionID: imported.id, patch: CameraPatch(make: "Same", model: "Same"))
+      XCTFail("Collision during processing was accepted")
+    } catch NativeMediaError.storage { }
+    let rows = try await store.list()
+    XCTAssertNil(rows.first?.processing)
+    XCTAssertEqual(rows.first?.reservedOutputDisplayName, names[imported.id.uuidString])
+    let files = try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent(imported.id.uuidString).path)
+    XCTAssertFalse(files.contains { $0.hasPrefix("output-") })
+  }
+
+  func testFailedFinalCommitDoesNotConsumePersistedReservation() async throws {
+    let provider = folder.appendingPathComponent("failed-reservation-commit.jpg")
+    try jpeg().write(to: provider)
+    let root = folder.appendingPathComponent("failed-reservation-commit", isDirectory: true)
+    let snapshot = folder.appendingPathComponent("reserved-snapshot.json")
+    let outside = folder.appendingPathComponent("foreign-journal.json")
+    try Data("external journal".utf8).write(to: outside)
+    let store = NativeSessionStore(root: root, processOperation: { source, output, patch in
+      let result = try await Self.verifiedCopy(source, output, patch)
+      let manifest = root.appendingPathComponent("manifest.json")
+      try FileManager.default.copyItem(at: manifest, to: snapshot)
+      try FileManager.default.removeItem(at: manifest)
+      try FileManager.default.createSymbolicLink(at: manifest, withDestinationURL: outside)
+      return result
+    })
+    let imported = try await store.importFile(provider)
+    let names = try await store.reserveOutputNames(sessionIDs: [imported.id])
+    do {
+      _ = try await store.process(sessionID: imported.id, patch: CameraPatch(make: "Same", model: "Same"))
+      XCTFail("Invalid journal destination accepted")
+    } catch { }
+    XCTAssertEqual(try Data(contentsOf: outside), Data("external journal".utf8))
+    let manifest = root.appendingPathComponent("manifest.json")
+    try FileManager.default.removeItem(at: manifest)
+    try FileManager.default.copyItem(at: snapshot, to: manifest)
+    let recovered = NativeSessionStore(root: root)
+    let rows = try await recovered.list()
+    XCTAssertNil(rows.first?.processing)
+    XCTAssertEqual(rows.first?.reservedOutputDisplayName, names[imported.id.uuidString])
+    let restored = try await recovered.reserveOutputNames(sessionIDs: [imported.id])
+    XCTAssertEqual(restored, names)
   }
 
   func testBridgeRejectsPathIdentifiersAndMalformedCameraFields() throws {

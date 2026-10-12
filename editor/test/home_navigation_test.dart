@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:metadata_editor/camera_profiles.dart';
 import 'package:metadata_editor/editor_app.dart';
 import 'package:metadata_editor/editor_controller.dart';
+import 'package:metadata_editor/metadata_form.dart';
+import 'package:metadata_editor/metadata_patch.dart';
 
 import 'fake_media_bridge.dart';
 
@@ -16,15 +18,12 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
+    tester.platformDispatcher.textScaleFactorTestValue = scale;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
     await tester.runAsync(loadCameraProfiles);
     final controller = EditorController(bridge ?? FakeMediaBridge());
     addTearDown(controller.dispose);
-    await tester.pumpWidget(
-      MediaQuery(
-        data: MediaQueryData(textScaler: TextScaler.linear(scale)),
-        child: MetadataEditorApp(controller: controller),
-      ),
-    );
+    await tester.pumpWidget(MetadataEditorApp(controller: controller));
     await tester.pumpAndSettle();
     return controller;
   }
@@ -44,25 +43,20 @@ void main() {
     tester,
   ) async {
     await launch(tester, scale: 2);
-    expect(find.text('Edit your metadata'), findsOneWidget);
+    expect(find.byKey(const Key('selectMedia')), findsOneWidget);
     expect(tester.takeException(), isNull);
     expect(find.byKey(const Key('tabErrorCodes')), findsNothing);
     expect(find.byKey(const Key('openErrorGuideFromBar')), findsNothing);
-    expect(
-      tester
-          .widget<NavigationBar>(find.byKey(const Key('mainNavigationBar')))
-          .destinations,
-      hasLength(2),
-    );
-    await tap(tester, 'tabSettings');
+    expect(find.byType(NavigationBar), findsNothing);
+    await tap(tester, 'openSettings');
     await tap(tester, 'errorGuideRow');
     expect(find.text('Error Codes & Fixes'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tap(tester, 'errorGuideBackButton');
     expect(find.text('Settings'), findsWidgets);
     expect(tester.takeException(), isNull);
-    await tap(tester, 'tabEditor');
-    expect(find.text('Edit your metadata'), findsOneWidget);
+    await tap(tester, 'settingsBackButton');
+    expect(find.byKey(const Key('selectMedia')), findsOneWidget);
   });
 
   testWidgets('editing draft survives nested guide back and return to editor', (
@@ -70,7 +64,9 @@ void main() {
   ) async {
     final bridge = FakeMediaBridge();
     final controller = await launch(tester, bridge: bridge);
+    await tap(tester, 'selectMedia');
     await tap(tester, 'importFiles');
+    await tap(tester, 'manualEditing');
     await tester.ensureVisible(find.text('Advanced metadata'));
     await tester.tap(find.text('Advanced metadata'));
     await tester.pumpAndSettle();
@@ -84,7 +80,7 @@ void main() {
     await tester.pumpAndSettle();
     controller.recordError('Latitude must be between -90 and 90');
     await tester.pumpAndSettle();
-    await tap(tester, 'tabSettings');
+    await tap(tester, 'openSettings');
     await tap(tester, 'errorGuideRow');
     await tap(tester, 'viewLatestSteps');
     await tap(tester, 'errorGuideBackButton');
@@ -92,12 +88,7 @@ void main() {
     await tap(tester, 'errorGuideRow');
     await tap(tester, 'returnToEditorFromGuide');
     expect(find.byKey(const Key('errorGuideBackButton')), findsNothing);
-    expect(
-      tester
-          .widget<NavigationBar>(find.byKey(const Key('mainNavigationBar')))
-          .selectedIndex,
-      0,
-    );
+    expect(find.byKey(const Key('backToHome')), findsOneWidget);
     expect(
       tester.widget<TextField>(find.byKey(const Key('model'))).controller!.text,
       'Draft model',
@@ -126,19 +117,21 @@ void main() {
   testWidgets('clear confirmation preserves published copies', (tester) async {
     final bridge = FakeMediaBridge()..sessions = [fixture()];
     await launch(tester, bridge: bridge);
-    await tester.ensureVisible(find.text('Clear all'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Clear all'));
-    await tester.pumpAndSettle();
+    await tap(tester, 'openSettings');
+    await tap(tester, 'localProjectsRow');
+    await tap(tester, 'clearCacheButton');
     expect(
-      find.textContaining('published Processed Media copies'),
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.textContaining('Photos originals'),
+      ),
       findsOneWidget,
     );
     expect(
-      find.textContaining('copies exported elsewhere stay unchanged'),
+      find.textContaining('already exported copies remain unchanged'),
       findsOneWidget,
     );
-    await tester.tap(find.text('Keep'));
+    await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     expect(bridge.sessions, hasLength(1));
   });
@@ -166,4 +159,145 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+  testWidgets(
+    'selection picker is a single entry point and cancel leaves Home',
+    (tester) async {
+      final bridge = FakeMediaBridge();
+      await launch(tester, bridge: bridge);
+      expect(find.byKey(const Key('importFiles')), findsNothing);
+      expect(find.byKey(const Key('importPhotos')), findsNothing);
+      await tap(tester, 'selectMedia');
+      expect(find.byKey(const Key('importFiles')), findsOneWidget);
+      expect(find.byKey(const Key('importPhotos')), findsOneWidget);
+      Navigator.of(tester.element(find.byKey(const Key('importFiles')))).pop();
+      await tester.pumpAndSettle();
+      expect(bridge.imports, 0);
+      expect(find.byKey(const Key('selectMedia')), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'multiple imported items enter batch and Home back clears all selection',
+    (tester) async {
+      final bridge = FakeMediaBridge()
+        ..batchImportResult = [fixture(), fixture(id: nextOutputId)];
+      final controller = await launch(tester, bridge: bridge);
+      await tap(tester, 'selectMedia');
+      await tap(tester, 'importFiles');
+      expect(controller.batchSelection, hasLength(2));
+      expect(controller.isBatchMode, isTrue);
+      expect(
+        tester.widget<MetadataForm>(find.byType(MetadataForm)).batch,
+        isTrue,
+      );
+      await tap(tester, 'backToHome');
+      expect(controller.selected, isNull);
+      expect(controller.isBatchMode, isFalse);
+      expect(controller.batchSelection, isEmpty);
+      expect(controller.sessions, hasLength(2));
+      expect(bridge.clears, 0);
+      expect(bridge.deletedIds, isEmpty);
+      expect(find.byKey(const Key('selectMedia')), findsOneWidget);
+    },
+  );
+
+  testWidgets('appearance changes preserve exact editor state and selection', (
+    tester,
+  ) async {
+    final controller = await launch(tester);
+    await tap(tester, 'selectMedia');
+    await tap(tester, 'importFiles');
+    final formState = tester.state(find.byType(MetadataForm));
+    final selected = controller.selected;
+    await controller.setAppearance('light');
+    await tester.pumpAndSettle();
+    expect(
+      Theme.of(tester.element(find.byType(MetadataForm))).brightness,
+      Brightness.light,
+    );
+    expect(tester.state(find.byType(MetadataForm)), same(formState));
+    expect(controller.selected, same(selected));
+    await tap(tester, 'openSettings');
+    await controller.setAppearance('dark');
+    await tester.pumpAndSettle();
+    await tap(tester, 'settingsBackButton');
+    expect(
+      Theme.of(tester.element(find.byType(MetadataForm))).brightness,
+      Brightness.dark,
+    );
+    expect(tester.state(find.byType(MetadataForm)), same(formState));
+    expect(controller.selected, same(selected));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('system appearance follows platform changes on Home', (
+    tester,
+  ) async {
+    await launch(tester);
+    tester.platformDispatcher.platformBrightnessTestValue = Brightness.light;
+    addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+    await tester.pumpAndSettle();
+    expect(
+      Theme.of(tester.element(find.byKey(const Key('selectMedia')))).brightness,
+      Brightness.light,
+    );
+    tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
+    await tester.pumpAndSettle();
+    expect(
+      Theme.of(tester.element(find.byKey(const Key('selectMedia')))).brightness,
+      Brightness.dark,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final sameSelection in [false, true]) {
+    testWidgets(
+      'resume stored batch resets mounted ${sameSelection ? 'same' : 'different'} review',
+      (tester) async {
+        const otherId = '00000000-0000-4000-8000-000000000004';
+        const fourthId = '00000000-0000-4000-8000-000000000005';
+        final bridge = FakeMediaBridge()
+          ..sessions = [
+            fixture(),
+            fixture(id: nextOutputId),
+            fixture(id: otherId),
+            fixture(id: fourthId),
+          ]
+          ..processError = const FormatException('Temporary write failure.');
+        final controller = await launch(tester, bridge: bridge);
+        controller.batchSelection.addAll([sourceId, nextOutputId]);
+        controller.startBatchEditing();
+        await controller.processBatch({
+          sourceId: MetadataPatch(values: {'make': 'Apple'}),
+          nextOutputId: MetadataPatch(values: {'make': 'Apple'}),
+        });
+        await tester.pumpAndSettle();
+        bridge.processError = null;
+        if (sameSelection) {
+          await tap(tester, 'primaryresultAction');
+        } else {
+          controller.batchSelection
+            ..clear()
+            ..addAll([otherId, fourthId]);
+          controller.startBatchEditing();
+          await tester.pumpAndSettle();
+        }
+        await tap(tester, 'primaryeditAction');
+        final priorState = tester.state(find.byType(MetadataForm));
+        expect(find.byKey(const Key('primaryreviewAction')), findsOneWidget);
+        await tap(tester, 'openSettings');
+        await tap(tester, 'localProjectsRow');
+        await tap(tester, 'resumeStoredBatch');
+        expect(controller.batchSelection, {sourceId, nextOutputId});
+        expect(
+          tester.state(find.byType(MetadataForm)),
+          isNot(same(priorState)),
+        );
+        expect(find.byKey(const Key('primaryreviewAction')), findsNothing);
+        expect(find.byKey(const Key('retryUnfinishedBatch')), findsOneWidget);
+        expect(bridge.processes, 2);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 }

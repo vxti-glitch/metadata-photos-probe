@@ -246,7 +246,8 @@ class EditorPackagingTests(unittest.TestCase):
     def test_mark_svg_and_brand_theme_color(self):
         svg_path = package.ROOT / "editor/branding/mark.svg"
         svg_content = svg_path.read_text(encoding="utf-8")
-        self.assertIn("#9CB5FF", svg_content.upper())
+        self.assertIn("#0A84FF", svg_content.upper())
+        self.assertIn("#1C1C1E", svg_content.upper())
         self.assertNotIn("#84E4C7", svg_content.upper(), "Legacy green theme must not be in mark.svg")
 
     def test_native_bridge_and_store_contracts(self):
@@ -262,13 +263,16 @@ class EditorPackagingTests(unittest.TestCase):
         writer_swift = (package.ROOT / "Sources/ProbeCore/VideoMetadataWriter.swift").read_text(encoding="utf-8")
         self.assertIn('"csgm"', writer_swift, "csgm box must be qualified in validateSampleTable")
 
-    def test_photos_workflow_card_green_palette_restoration(self):
+    def test_photos_workflow_card_uses_shared_readable_light_and_dark_styles(self):
         app_dart = (package.ROOT / "editor/lib/editor_app.dart").read_text(encoding="utf-8")
         self.assertIn("0xFF132720", app_dart, "WorkflowNote background must be #132720")
         self.assertIn("0xFF224436", app_dart, "WorkflowNote border must be #224436")
         self.assertIn("0xFF84E4C7", app_dart, "WorkflowNote accent must be #84E4C7")
+        self.assertIn("0xFFEAF5EE", app_dart, "Light WorkflowNote must have its own readable surface")
+        self.assertIn("Theme.of(context).brightness == Brightness.dark", app_dart)
         form_dart = (package.ROOT / "editor/lib/metadata_form.dart").read_text(encoding="utf-8")
-        self.assertIn("0xFF132720", form_dart, "Post-processing WorkflowNote background must be #132720")
+        self.assertIn("import 'editor_app.dart' show WorkflowNote;", form_dart)
+        self.assertIn("WorkflowNote()", form_dart, "Post-processing guidance must reuse the qualified shared card")
 
     def test_batch_editing_navigation_and_queue_layout(self):
         ctrl_dart = (package.ROOT / "editor/lib/editor_controller.dart").read_text(encoding="utf-8")
@@ -277,8 +281,11 @@ class EditorPackagingTests(unittest.TestCase):
         self.assertIn("void exitBatchEditing()", ctrl_dart)
         app_dart = (package.ROOT / "editor/lib/editor_app.dart").read_text(encoding="utf-8")
         self.assertIn("controller.isBatchMode", app_dart)
-        self.assertIn("Back to projects", app_dart)
-        self.assertIn("Retry unfinished files", app_dart)
+        self.assertIn("key: const Key('backToHome')", app_dart)
+        self.assertIn("tooltip: 'Back to Home'", app_dart)
+        form_dart = (package.ROOT / "editor/lib/metadata_form.dart").read_text(encoding="utf-8")
+        self.assertIn("Retry unfinished files", form_dart)
+        self.assertIn("controller.retryBatch", form_dart)
 
     def test_metadata_form_unconstrained_tab_and_compact_dropdowns(self):
         form_dart = (package.ROOT / "editor/lib/metadata_form.dart").read_text(encoding="utf-8")

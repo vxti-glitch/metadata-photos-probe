@@ -15,6 +15,90 @@ void main() {
   tearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
   test(
+    'review reserves opaque source IDs and decodes exact native names',
+    () async {
+      MethodCall? received;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        received = call;
+        return {sourceId: 'IMG_4827.HEIC'};
+      });
+      expect(await bridge.reserveOutputNames([sourceId]), {
+        sourceId: 'IMG_4827.HEIC',
+      });
+      expect(received?.method, 'reserveOutputNames');
+      expect(received?.arguments, {
+        'sessionIds': [sourceId],
+      });
+    },
+  );
+
+  test(
+    'review refuses missing, duplicate, unsafe and foreign native names',
+    () async {
+      for (final response in <Object?>[
+        {},
+        {outputId: 'IMG_4827.HEIC'},
+        {sourceId: '../outside.HEIC'},
+        {sourceId: 'IMG_4827.heic'},
+        {sourceId: 4827},
+        {sourceId: 'IMG_4827.HEIC', outputId: 'IMG_4827.HEIC'},
+      ]) {
+        messenger.setMockMethodCallHandler(channel, (_) async => response);
+        final ids = response is Map && response.length == 2
+            ? [sourceId, outputId]
+            : [sourceId];
+        await expectLater(
+          bridge.reserveOutputNames(ids),
+          throwsFormatException,
+        );
+      }
+      await expectLater(bridge.reserveOutputNames([]), throwsFormatException);
+      await expectLater(
+        bridge.reserveOutputNames([sourceId, sourceId]),
+        throwsFormatException,
+      );
+    },
+  );
+
+  test(
+    'support handoff uses a fixed native method without user data',
+    () async {
+      MethodCall? received;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        received = call;
+        return null;
+      });
+      await bridge.openSupportEmail();
+      expect(received?.method, 'openSupportEmail');
+      expect(received?.arguments, isNull);
+      expect(AppBrand.supportEmail, 'vxti.dev@gmail.com');
+      expect(AppBrand.supportSubject, 'Metadata Editor Support');
+    },
+  );
+
+  test(
+    'support handoff propagates the native email unavailable message',
+    () async {
+      messenger.setMockMethodCallHandler(channel, (_) async {
+        throw PlatformException(
+          code: 'email_unavailable',
+          message: 'Install or configure an email app, then try again.',
+        );
+      });
+      await expectLater(
+        bridge.openSupportEmail(),
+        throwsA(
+          isA<PlatformException>().having(
+            (error) => error.code,
+            'code',
+            'email_unavailable',
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
     'protocol version mismatch fails before accepting engine capabilities',
     () async {
       messenger.setMockMethodCallHandler(

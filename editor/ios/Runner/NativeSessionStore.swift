@@ -32,6 +32,7 @@ struct NativeSession: Codable, Sendable {
     let details: [String: String]
     var notes: [String]
     var previewName: String? = nil
+    var reservedOutputDisplayName: String? = nil
     var processing: NativeProcessing?
     var history: [NativeProcessing]
 
@@ -227,6 +228,34 @@ actor NativeSessionStore {
         return try await processInternal(sessionID: sessionID, cameraPatch: patch, metadataPatch: nil)
     }
 
+    /// Freeze native-generated consumer names before Flutter displays a review.
+    /// This journal transaction accepts identifiers only, never supplied paths.
+    func reserveOutputNames(sessionIDs: [UUID]) throws -> [String: String] {
+        try load()
+        guard !sessionIDs.isEmpty, sessionIDs.count <= 50,
+              Set(sessionIDs).count == sessionIDs.count else { throw NativeMediaError.invalidArgument }
+        var replacement = sessions
+        var names = [String: String]()
+        var allocated = Set<String>()
+        for id in sessionIDs {
+            guard let index = replacement.firstIndex(where: { $0.id == id }) else { throw NativeMediaError.notFound }
+            let session = replacement[index]
+            let ext = Self.outputExtension(kind: session.inspection.kind, original: URL(fileURLWithPath: session.sourceName).pathExtension)
+            let name: String
+            if let reserved = session.reservedOutputDisplayName {
+                try requireAvailableReservation(reserved, sessionID: id)
+                name = reserved
+            } else {
+                name = try nextOutputDisplayName(extension: ext, additionallyUsed: allocated)
+                replacement[index].reservedOutputDisplayName = name
+            }
+            allocated.insert(name)
+            names[id.uuidString] = name
+        }
+        try persist(replacement)
+        return names
+    }
+
     func processMetadata(sessionID: UUID, patch: MetadataPatch) async throws -> NativeSession {
         try patch.validate()
         return try await processInternal(sessionID: sessionID, cameraPatch: nil, metadataPatch: patch)
@@ -236,6 +265,7 @@ actor NativeSessionStore {
         try load()
         guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else { throw NativeMediaError.notFound }
         let original = sessions[index]
+        if let reserved = original.reservedOutputDisplayName { try requireAvailableReservation(reserved, sessionID: sessionID) }
         guard original.inspection.kind.isImage || cameraPatch?.lens == nil else { throw NativeMediaError.invalidArgument }
         let source = try ownedFile(sessionID, name: original.sourceName)
         guard try WholeFileDigest.sha256(source) == original.sourceSHA256 else { throw NativeMediaError.processing }
@@ -275,7 +305,11 @@ actor NativeSessionStore {
               result.integrity.status != .verified || Self.isFullyVerified(result.integrity) else {
             throw ProbeError.integrityMismatch("Processing returned an inconsistent integrity report")
         }
-        let outputDisplayName = try nextOutputDisplayName(extension: outputExtension)
+        let outputDisplayName: String
+        if let reserved = original.reservedOutputDisplayName {
+            try requireAvailableReservation(reserved, sessionID: sessionID)
+            outputDisplayName = reserved
+        } else { outputDisplayName = try nextOutputDisplayName(extension: outputExtension) }
         let processing = NativeProcessing(id: processingID, createdAt: Date(), patch: cameraPatch,
             metadataPatch: metadataPatch, outputDisplayName: outputDisplayName,
             outputName: outputName, outputInspection: result.outputInspection, integrity: result.integrity,
@@ -289,6 +323,7 @@ actor NativeSessionStore {
         }
         var final = sessions[finalIndex]
         final.processing = processing
+        final.reservedOutputDisplayName = nil
         let discarded = Array(final.history.dropLast(10))
         final.history = Array(final.history.suffix(10))
         replacement = sessions; replacement[finalIndex] = final
@@ -501,17 +536,30 @@ actor NativeSessionStore {
         return folder
     }
 
-    private func nextOutputDisplayName(extension ext: String) throws -> String {
-        let safe = try allowedExtension(ext).uppercased()
-        var used = Set(sessions.flatMap { $0.history + ($0.processing.map { [$0] } ?? []) }.compactMap(\.outputDisplayName))
-        let folder = try exportsDirectory()
-        let names = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+    private func usedOutputNames(excludingReservation sessionID: UUID? = nil) throws -> Set<String> {
+        var used = Set(sessions.flatMap { $0.history + ($0.processing.map { [$0] } ?? []) }.compactMap(\.outputDisplayName).map { $0.uppercased() })
+        used.formUnion(sessions.filter { $0.id != sessionID }.compactMap(\.reservedOutputDisplayName).map { $0.uppercased() })
+        let names = try FileManager.default.contentsOfDirectory(atPath: exportsDirectory().path)
         guard names.count <= 1200 else { throw NativeMediaError.storage }
-        used.formUnion(names)
+        used.formUnion(names.map { $0.uppercased() })
         if let autoExportRoot, NativeFileSystem.samePath(autoExportRoot.resolvingSymlinksInPath(), autoExportRoot),
            let autoNames = try? FileManager.default.contentsOfDirectory(atPath: autoExportRoot.path) {
             used.formUnion(autoNames.map { $0.uppercased() })
         }
+        return used
+    }
+
+    private func requireAvailableReservation(_ name: String, sessionID: UUID) throws {
+        try Self.validateOutputDisplayName(name)
+        guard !(try usedOutputNames(excludingReservation: sessionID)).contains(name.uppercased()) else {
+            throw NativeMediaError.storage
+        }
+    }
+
+    private func nextOutputDisplayName(extension ext: String, additionallyUsed: Set<String> = []) throws -> String {
+        let safe = try allowedExtension(ext).uppercased()
+        var used = try usedOutputNames()
+        used.formUnion(additionallyUsed.map { $0.uppercased() })
         let start = Int.random(in: 1000...9999)
         for offset in 0..<9000 {
             let digits = 1000 + (start - 1000 + offset) % 9000
@@ -626,10 +674,18 @@ actor NativeSessionStore {
             catch { throw NativeMediaError.storage }
             guard manifest.schemaVersion == 1, manifest.sessions.count <= Self.maximumSessions,
                   Set(manifest.sessions.map(\.id)).count == manifest.sessions.count else { throw NativeMediaError.storage }
+            var reservedNames = Set<String>()
+            let outputNames = Set(manifest.sessions.flatMap { $0.history + ($0.processing.map { [$0] } ?? []) }.compactMap(\.outputDisplayName))
             for session in manifest.sessions {
                 guard session.history.count <= 10, session.notes.count <= 100 else { throw NativeMediaError.storage }
                 _ = try ownedFile(session.id, name: session.sourceName)
                 if let previewName = session.previewName { _ = try confinedPreview(session.id, name: previewName) }
+                if let name = session.reservedOutputDisplayName {
+                    try Self.validateOutputDisplayName(name)
+                    let ext = Self.outputExtension(kind: session.inspection.kind, original: URL(fileURLWithPath: session.sourceName).pathExtension).uppercased()
+                    guard name.hasSuffix(".\(ext)"), reservedNames.insert(name).inserted,
+                          !outputNames.contains(name) else { throw NativeMediaError.storage }
+                }
                 for processing in session.history + (session.processing.map { [$0] } ?? []) {
                     guard (processing.patch != nil) != (processing.metadataPatch != nil) else { throw NativeMediaError.storage }
                     if let patch = processing.metadataPatch { try patch.validate() }

@@ -31,6 +31,9 @@ final class NativeOperationGate {
 
 @MainActor
 final class NativeMediaBridge: NSObject {
+    // A fixed destination keeps arbitrary mail recipients, attachments and body
+    // content out of the bridge. Spaces are percent encoded for mailto handlers.
+    static let supportEmailURL = URL(string: "mailto:vxti.dev@gmail.com?subject=Metadata%20Editor%20Support")!
     private let channel: FlutterMethodChannel
     private let store: NativeSessionStore
     private let gate = NativeOperationGate()
@@ -99,6 +102,10 @@ final class NativeMediaBridge: NSObject {
                     let session = try await self.store.processMetadata(sessionID: id, patch: patch)
                     return try await self.store.bridgeMap(session)
                 }
+            case "reserveOutputNames":
+                let arguments = try Self.arguments(call.arguments)
+                let ids = try Self.reservationIdentifiers(arguments)
+                try perform(result: result) { try await self.store.reserveOutputNames(sessionIDs: ids) }
             case "verifyOriginal":
                 let arguments = try Self.arguments(call.arguments)
                 let id = try Self.identifier(arguments, "sessionId")
@@ -205,6 +212,12 @@ final class NativeMediaBridge: NSObject {
                 UIApplication.shared.open(url, options: [:]) { opened in
                     result(opened ? nil : FlutterError(code: "unsupported", message: "Could not open URL.", details: nil))
                 }
+            case "openSupportEmail":
+                guard !gate.busy else { throw NativeMediaError.busy }
+                UIApplication.shared.open(Self.supportEmailURL, options: [:]) { opened in
+                    result(opened ? nil : FlutterError(code: "email_unavailable",
+                        message: "No email app could open. Install or configure an email app, then try again, or email vxti.dev@gmail.com with the subject Metadata Editor Support.", details: nil))
+                }
             case "openLocationPicker":
                 guard !gate.busy else { throw NativeMediaError.busy }
                 let args = (call.arguments as? [String: Any]) ?? [:]
@@ -222,6 +235,14 @@ final class NativeMediaBridge: NSObject {
         let token = try gate.begin()
         pendingResult = result
         return token
+    }
+
+    static func reservationIdentifiers(_ arguments: [String: Any]) throws -> [UUID] {
+        guard Set(arguments.keys) == ["sessionIds"], let raw = arguments["sessionIds"] as? [String],
+              !raw.isEmpty, raw.count <= 50 else { throw NativeMediaError.invalidArgument }
+        let ids = try raw.map { try identifier(["sessionId": $0], "sessionId") }
+        guard Set(ids).count == ids.count else { throw NativeMediaError.invalidArgument }
+        return ids
     }
 
     private func perform(result: @escaping FlutterResult, operation: @escaping @MainActor () async throws -> Any?) throws {

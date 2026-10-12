@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:metadata_editor/editor_controller.dart';
 import 'package:metadata_editor/settings_screen.dart';
+import 'package:metadata_editor/settings_destinations.dart';
 
 import 'fake_media_bridge.dart';
 
@@ -45,15 +46,16 @@ void main() {
     tester,
   ) async {
     await pumpScreen(tester, SettingsScreen(controller: controller));
-    expect(find.text('STORAGE & PRESETS'), findsOneWidget);
+    expect(find.text('GENERAL'), findsOneWidget);
     expect(find.text('Swift Media Engine'), findsNothing);
     await tester.scrollUntilVisible(
       find.byKey(const Key('engineDetails')),
       180,
       scrollable: find.byType(Scrollable).first,
     );
-    await tester.ensureVisible(find.text('Engine & diagnostics'));
-    await tester.tap(find.text('Engine & diagnostics'));
+    await tester.ensureVisible(find.byKey(const Key('engineDetails')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('engineDetails')));
     await tester.pumpAndSettle();
     expect(find.text('Swift Media Engine'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -482,7 +484,7 @@ void main() {
       );
       await tester.ensureVisible(find.byKey(const Key('engineDetails')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Engine & diagnostics'));
+      await tester.tap(find.byKey(const Key('engineDetails')));
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
         find.byKey(const Key('privacyGuaranteeRow')),
@@ -493,46 +495,62 @@ void main() {
     });
   }
 
-  testWidgets('Busy and unavailable engine disable actual settings handlers', (
-    tester,
-  ) async {
-    for (final busy in [true, false]) {
-      controller.operation = busy ? EditorOperation.processing : null;
-      if (!busy) controller.capabilities = null;
-      await pumpScreen(
-        tester,
-        SettingsScreen(key: UniqueKey(), controller: controller),
-      );
-      for (final key in [
-        'visitWebsiteRow',
-        'clearCacheRow',
-        'resetPresetsRow',
-      ]) {
-        tester
-            .state<ScrollableState>(find.byType(Scrollable).first)
-            .position
-            .jumpTo(0);
-        await tester.pumpAndSettle();
+  testWidgets(
+    'Busy and unavailable engine disable destructive destination handlers',
+    (tester) async {
+      for (final busy in [true, false]) {
+        controller.operation = busy ? EditorOperation.processing : null;
+        if (!busy) controller.capabilities = null;
+        await pumpScreen(
+          tester,
+          SettingsScreen(key: UniqueKey(), controller: controller),
+        );
         await tester.scrollUntilVisible(
-          find.byKey(Key(key)),
+          find.byKey(const Key('visitWebsiteRow')),
           180,
           scrollable: find.byType(Scrollable).first,
         );
-        expect(tester.widget<InkWell>(find.byKey(Key(key))).onTap, isNull);
-      }
-      for (final key in ['clearCacheButton', 'resetPresetsButton']) {
         expect(
-          tester.widget<OutlinedButton>(find.byKey(Key(key))).onPressed,
+          tester
+                  .widget<SettingsItem>(
+                    find.byKey(const Key('visitWebsiteRow')),
+                  )
+                  .onTap ==
+              null,
+          busy,
+        );
+        await tester.drag(find.byType(ListView).first, const Offset(0, 4000));
+        await tester.pumpAndSettle();
+        await tapKey(tester, 'localProjectsRow');
+        await tester.scrollUntilVisible(
+          find.byKey(const Key('clearCacheButton')),
+          180,
+          scrollable: find.byType(Scrollable).first,
+        );
+        expect(
+          tester
+              .widget<SettingsItem>(find.byKey(const Key('clearCacheButton')))
+              .onTap,
           isNull,
         );
+        await tapKey(tester, 'settingsDestinationBack');
+        await tapKey(tester, 'savedPresetsRow');
+        expect(
+          tester
+              .widget<SettingsItem>(find.byKey(const Key('resetPresetsButton')))
+              .onTap,
+          isNull,
+        );
+        await tapKey(tester, 'settingsDestinationBack');
       }
-    }
-    expect(bridge.clears, 0);
-    expect(bridge.openedUrls, isEmpty);
-  });
+      expect(bridge.clears, 0);
+      expect(bridge.openedUrls, isEmpty);
+    },
+  );
 
   testWidgets('Settings displays cache success locally', (tester) async {
     await pumpScreen(tester, SettingsScreen(controller: controller));
+    await tapKey(tester, 'localProjectsRow');
     await tester.scrollUntilVisible(
       find.byKey(const Key('clearCacheButton')),
       180,
@@ -585,7 +603,7 @@ void main() {
     );
     expect(find.text('ERR_UNKNOWN_TEST'), findsOneWidget);
     expect(find.text('ACTIVE FIX AVAILABLE'), findsNothing);
-    expect(find.text('DIAGNOSTIC STEPS'), findsOneWidget);
+    expect(find.text('View diagnostic steps'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -607,13 +625,17 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('photosAttributionRow')));
       await tester.pumpAndSettle();
-      expect(
-        tester.widget<AlertDialog>(find.byType(AlertDialog)).scrollable,
-        isTrue,
+      expect(find.byType(ListView), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.textContaining(
+          'does not directly write processed copies to Photos',
+        ),
+        240,
+        scrollable: find.byType(Scrollable).first,
       );
       expect(
         find.textContaining(
-          'does not write processed copies directly to Photos',
+          'does not directly write processed copies to Photos',
         ),
         findsOneWidget,
       );

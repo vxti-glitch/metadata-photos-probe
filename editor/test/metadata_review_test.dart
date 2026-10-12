@@ -3,15 +3,18 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:metadata_editor/editor_controller.dart';
+import 'package:metadata_editor/camera_profiles.dart';
 import 'package:metadata_editor/media_models.dart';
 import 'package:metadata_editor/metadata_form.dart';
 
 import 'fake_media_bridge.dart';
+import 'form_test_helpers.dart';
 
 void main() {
   testWidgets(
     'review freezes the resolved patch and supports returning to edit',
     (tester) async {
+      await tester.runAsync(loadCameraProfiles);
       final bridge = FakeMediaBridge()..sessions = [fixture()];
       final controller = EditorController(bridge);
       addTearDown(controller.dispose);
@@ -38,6 +41,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Review changes'), findsOneWidget);
+      await expandManualEditing(tester);
       final advanced = find.byKey(const Key('advancedMetadata'));
       await tester.ensureVisible(advanced);
       await tester.tap(find.text('Advanced metadata'));
@@ -56,6 +60,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('primaryreviewAction')), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const Key('reviewFile-$sourceId')));
+      await tester.tap(find.byKey(const Key('reviewFile-$sourceId')));
+      await tester.pumpAndSettle();
       expect(find.textContaining('Original Make'), findsWidgets);
       expect(find.textContaining('Changed Make'), findsWidgets);
 
@@ -82,7 +89,7 @@ void main() {
       );
       expect(
         controller.sessions.single.processing?.metadataPatch?.values.keys,
-        isNot(contains('dateTimeOriginal')),
+        contains('dateTimeOriginal'),
       );
       expect(find.byKey(const Key('primaryresultAction')), findsOneWidget);
       expect(tester.takeException(), isNull);
@@ -92,6 +99,7 @@ void main() {
   testWidgets('randomized dates stay frozen when returning to edit', (
     tester,
   ) async {
+    await tester.runAsync(loadCameraProfiles);
     final bridge = FakeMediaBridge()..sessions = [fixture()];
     final controller = EditorController(bridge);
     addTearDown(controller.dispose);
@@ -115,11 +123,17 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await expandManualEditing(tester);
+    await tester.ensureVisible(find.text('Randomize').last);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Randomize').last);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('primaryeditAction')));
     await tester.pumpAndSettle();
 
+    await tester.ensureVisible(find.byKey(const Key('reviewFile-$sourceId')));
+    await tester.tap(find.byKey(const Key('reviewFile-$sourceId')));
+    await tester.pumpAndSettle();
     String captureDate() {
       final dateTile = find.ancestor(
         of: find.text('Captured date'),
@@ -133,12 +147,19 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('primaryeditAction')));
     await tester.pumpAndSettle();
+    final reviewFile = find.byKey(const Key('reviewFile-$sourceId'));
+    if (find.text('Captured date').evaluate().isEmpty) {
+      await tester.ensureVisible(reviewFile);
+      await tester.tap(reviewFile);
+      await tester.pumpAndSettle();
+    }
     expect(captureDate(), firstReviewDate);
   });
 
   testWidgets('canceling Set date preserves the current draft intent', (
     tester,
   ) async {
+    await tester.runAsync(loadCameraProfiles);
     final bridge = FakeMediaBridge()..sessions = [fixture()];
     final controller = EditorController(bridge);
     addTearDown(controller.dispose);
@@ -162,6 +183,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await expandManualEditing(tester);
     final advanced = find.byKey(const Key('advancedMetadata'));
     await tester.ensureVisible(advanced);
     await tester.tap(find.text('Advanced metadata'));
@@ -182,11 +204,13 @@ void main() {
     await tester.pumpAndSettle();
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pumpAndSettle();
+    await expandManualEditing(tester);
     final setIntent = find.descendant(
       of: find.byKey(const Key('dateIntentSegment')),
       matching: find.text('Set'),
     );
     await tester.ensureVisible(setIntent);
+    await tester.pumpAndSettle();
     await tester.tap(setIntent);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Cancel').last);
@@ -206,6 +230,7 @@ void main() {
   testWidgets(
     'mixed video-first batch skips unchanged files and resets acknowledgment',
     (tester) async {
+      await tester.runAsync(loadCameraProfiles);
       final bridge = FakeMediaBridge()
         ..sessions = [
           fixture(kind: MediaKind.mp4, status: IntegrityStatus.verified),
@@ -216,7 +241,7 @@ void main() {
           ),
         ]
         ..fieldsByFormat = {
-          'mp4': ['make', 'model', 'trackCreateDate'],
+          'mp4': [],
           'heic': ['make', 'model', 'lensModel', 'dateTimeOriginal'],
         }
         ..nextProcessingId = 'processing-first';
@@ -244,6 +269,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await expandManualEditing(tester);
       final advanced = find.byKey(const Key('advancedMetadata'));
       await tester.ensureVisible(advanced);
       await tester.tap(find.text('Advanced metadata'));
@@ -260,7 +286,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('primaryeditAction')));
       await tester.pumpAndSettle();
-      expect(find.text('Unchanged — no copy will be created'), findsOneWidget);
+      expect(find.text('No supported changes — skipped'), findsOneWidget);
       await tester.tap(find.byKey(const Key('primaryreviewAction')));
       await tester.pumpAndSettle();
       expect(bridge.processes, 1);
@@ -303,6 +329,7 @@ void main() {
   testWidgets('removing a date shows a custom intent, not Keep', (
     tester,
   ) async {
+    await tester.runAsync(loadCameraProfiles);
     final bridge = FakeMediaBridge()..sessions = [fixture()];
     final controller = EditorController(bridge);
     addTearDown(controller.dispose);
@@ -326,6 +353,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await expandManualEditing(tester);
     final advanced = find.byKey(const Key('advancedMetadata'));
     await tester.ensureVisible(advanced);
     await tester.tap(find.text('Advanced metadata'));
@@ -357,6 +385,7 @@ void main() {
   });
 
   testWidgets('busy processing disables Back to edit', (tester) async {
+    await tester.runAsync(loadCameraProfiles);
     final bridge = FakeMediaBridge()..sessions = [fixture()];
     bridge.metadataLease = Completer<void>();
     final controller = EditorController(bridge);
@@ -381,7 +410,10 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('advancedMetadata')));
+    await expandManualEditing(tester);
+    await tester.ensureVisible(find.text('Advanced metadata'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Advanced metadata'));
     await tester.pumpAndSettle();
     final mode = find.byKey(const Key('makeMode'));
     await tester.ensureVisible(mode);
@@ -412,6 +444,7 @@ void main() {
   testWidgets('failed reprocessing never labels retained output as new', (
     tester,
   ) async {
+    await tester.runAsync(loadCameraProfiles);
     final bridge = FakeMediaBridge()
       ..sessions = [fixture(status: IntegrityStatus.verified)]
       ..processError = const FormatException('Processing failed.');
@@ -437,7 +470,13 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('advancedMetadata')));
+    expect(find.text('Saved copy'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('primaryresultAction')));
+    await tester.pumpAndSettle();
+    await expandManualEditing(tester);
+    await tester.ensureVisible(find.text('Advanced metadata'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Advanced metadata'));
     await tester.pumpAndSettle();
     final mode = find.byKey(const Key('makeMode'));
     await tester.ensureVisible(mode);
@@ -471,6 +510,7 @@ void main() {
   testWidgets('accepted quick Set date remains selected and can be changed', (
     tester,
   ) async {
+    await tester.runAsync(loadCameraProfiles);
     final bridge = FakeMediaBridge()..sessions = [fixture()];
     final controller = EditorController(bridge);
     addTearDown(controller.dispose);
@@ -494,10 +534,13 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await expandManualEditing(tester);
     final setIntent = find.descendant(
       of: find.byKey(const Key('dateIntentSegment')),
       matching: find.text('Set'),
     );
+    await tester.ensureVisible(setIntent);
+    await tester.pumpAndSettle();
     await tester.tap(setIntent);
     await tester.pumpAndSettle();
     await tester.tap(find.text('OK').last);

@@ -11,6 +11,8 @@ import 'media_models.dart';
 import 'metadata_patch.dart';
 import 'metadata_dates.dart';
 import 'editor_app.dart' show WorkflowNote;
+import 'app_theme.dart';
+import 'media_preview.dart';
 
 enum _FormStage { edit, review, result }
 
@@ -60,9 +62,14 @@ class _MetadataFormState extends State<MetadataForm>
   _FormStage _stage = _FormStage.edit;
   Map<String, MetadataPatch>? _reviewedPatches;
   String? _reviewedDraftSignature;
-  Map<String, String?> _processingIdsBefore = const {};
-  Set<String> _attemptedBatchIds = const {};
+  Map<String, String> _reviewedNames = {};
+  bool _preparingDraft = false;
+  bool _autoMatched = false;
+  bool _viewingExistingCopy = false;
+  Map<String, String?> _processingIdsBefore = {};
+  Set<String> _attemptedBatchIds = {};
   bool _acknowledgeBatchExport = false;
+  String? _acknowledgedBatchOutputs;
   bool _quickDateSelected = false;
   int _batchStaggerSeconds = 0;
   CameraProfile? profile;
@@ -71,15 +78,37 @@ class _MetadataFormState extends State<MetadataForm>
   late RandomizationSettings settings;
   String? formError;
   MetadataPatch? profileBaseline;
+  MetadataPatch? _generatedDateFamily;
   final explicitOverrides = <String>{};
   bool _appliedFeedback = false;
   Timer? _appliedTimer;
   @override
   void initState() {
     super.initState();
-    settings = RandomizationSettings(
-      randomizeDates: !widget.fillAvailableSpace,
-    );
+    settings = const RandomizationSettings();
+    _preparingDraft = widget.fillAvailableSpace;
+    if (widget.fillAvailableSpace &&
+        !widget.batch &&
+        widget.session.processing != null) {
+      _viewingExistingCopy = true;
+      _stage = _FormStage.result;
+      _processingIdsBefore = {widget.session.id: null};
+    }
+    if (widget.fillAvailableSpace &&
+        widget.batch &&
+        widget.controller.queue.any(
+          (item) => widget.controller.batchSelection.contains(item.sessionId),
+        )) {
+      _viewingExistingCopy = true;
+      _stage = _FormStage.result;
+      _attemptedBatchIds = widget.controller.queue
+          .where(
+            (item) => widget.controller.batchSelection.contains(item.sessionId),
+          )
+          .map((item) => item.sessionId)
+          .toSet();
+      _processingIdsBefore = {for (final id in _attemptedBatchIds) id: null};
+    }
     _tabIndex = widget.fillAvailableSpace ? 1 : 0;
     _tabController = TabController(
       length: 2,
@@ -103,11 +132,71 @@ class _MetadataFormState extends State<MetadataForm>
       modes[f.key] = 'keep';
     }
     final patch = widget.session.processing?.metadataPatch;
-    if (patch != null) _apply(patch, notify: false);
+    if (patch != null && !widget.fillAvailableSpace) {
+      _apply(patch, notify: false);
+    }
 
-    catalog = loadCameraProfiles().then((profiles) {
-      if (mounted) _restoreSavedProfile(profiles);
-      return profiles;
+    catalog = loadCameraProfiles()
+        .then((profiles) async {
+          if (mounted) {
+            if (widget.fillAvailableSpace) {
+              await _prepareAutomaticDraft(profiles);
+            } else {
+              await _restoreSavedProfile(profiles);
+            }
+          }
+          return profiles;
+        })
+        .catchError((Object failure) {
+          if (mounted) {
+            setState(() {
+              _preparingDraft = false;
+              formError = 'The camera catalog is unavailable. Use Manual editing or try opening the file again.';
+              if (widget.fillAvailableSpace && profileBaseline == null) {
+                _apply(
+                  _standaloneAutomaticDates(MetadataPatch(), widget.session),
+                  notify: false,
+                );
+              }
+            });
+          }
+          return <CameraProfile>[];
+        });
+  }
+
+  Future<void> _prepareAutomaticDraft(List<CameraProfile> profiles) async {
+    Map<String, String>? host;
+    try {
+      host = await widget.controller.getHostDevice();
+    } catch (_) {
+      // An unknown phone never becomes an invented camera profile.
+    }
+    if (!mounted) return;
+    final matched = profiles
+        .where((p) => p.id == host?['profileId'])
+        .firstOrNull;
+    final saved = profiles
+        .where((p) => p.id == widget.controller.selectedProfileId)
+        .firstOrNull;
+    setState(() {
+      profile ??= matched ?? saved;
+      brand = profile?.brand;
+      _autoMatched = matched != null && profile?.id == matched.id;
+      final savedCamera = profile?.id == widget.controller.selectedProfileId
+          ? profile?.cameras
+                .where((c) => c.id == widget.controller.selectedCameraId)
+                .firstOrNull
+          : null;
+      camera ??= savedCamera ?? profile?.cameras.firstOrNull;
+      if (profile != null && camera != null) {
+        _applySelectedProfile();
+      } else {
+        _apply(
+          _standaloneAutomaticDates(MetadataPatch(), widget.session),
+          notify: false,
+        );
+      }
+      _preparingDraft = false;
     });
   }
 
@@ -170,7 +259,34 @@ class _MetadataFormState extends State<MetadataForm>
   }
 
   void _refresh() {
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() {
+        if (_acknowledgeBatchExport &&
+            _acknowledgedBatchOutputs != _batchOutputSignature()) {
+          _acknowledgeBatchExport = false;
+          _acknowledgedBatchOutputs = null;
+        }
+      });
+    }
+  }
+
+  String _batchOutputSignature() =>
+      (_newBatchOutputs()
+              .map((session) => '${session.id}:${session.processing!.id}')
+              .toList()
+            ..sort())
+          .join('|');
+
+  void _applySelectedProfile() {
+    final keptOverrides = Set<String>.of(explicitOverrides);
+    final oldInputs = {for (final key in keptOverrides) key: inputs[key]?.text};
+    final oldModes = {for (final key in keptOverrides) key: modes[key]};
+    _apply(_profilePatch(widget.session), notify: false, fromProfile: true);
+    for (final key in keptOverrides) {
+      if (oldInputs[key] != null) inputs[key]!.text = oldInputs[key]!;
+      if (oldModes[key] != null) modes[key] = oldModes[key]!;
+    }
+    explicitOverrides.addAll(keptOverrides);
   }
 
   @override
@@ -265,6 +381,7 @@ class _MetadataFormState extends State<MetadataForm>
       date,
       image: source.inspection.kind.isImage,
     );
+    _generatedDateFamily = rawGenerated;
     final kept = explicitOverrides.where((key) => modes[key] == 'keep').toSet();
     final generated = source.inspection.kind.isImage
         ? randomDatesWithKeptZones(
@@ -291,16 +408,27 @@ class _MetadataFormState extends State<MetadataForm>
   }
 
   MetadataPatch _profilePatch(MediaSession source) {
-    final fields = widget.controller.capabilities!.fieldsFor(
-      source.inspection.kind,
-    );
-    final patch = settings.generate(
+    final fields = widget.batch
+        ? supported
+        : widget.controller.capabilities!.fieldsFor(source.inspection.kind);
+    final raw = settings.generate(
       profile!,
       camera!,
       source.inspection.kind,
       random,
       DateTime.now(),
-      supportedFields: fields,
+    );
+    _generatedDateFamily = MetadataPatch(
+      values: {
+        for (final entry in raw.values.entries)
+          if (_dateFieldKeys.contains(entry.key)) entry.key: entry.value,
+      },
+    );
+    final patch = MetadataPatch(
+      values: {
+        for (final entry in raw.values.entries)
+          if (fields.contains(entry.key)) entry.key: entry.value,
+      },
     );
     final removals = <String>[];
     final hasCompeting =
@@ -312,7 +440,12 @@ class _MetadataFormState extends State<MetadataForm>
               n.contains('competing'),
         );
     if (!hasCompeting) {
-      final presentKeys = source.inspection.metadata.keys.toSet();
+      final presentKeys = widget.batch
+          ? widget.controller.sessions
+                .where((s) => widget.controller.batchSelection.contains(s.id))
+                .expand((s) => s.inspection.metadata.keys)
+                .toSet()
+          : source.inspection.metadata.keys.toSet();
       // Unknown specifications must not become an incompatible mix of two phones.
       for (final key in [
         ...profile!.clearFields,
@@ -375,6 +508,13 @@ class _MetadataFormState extends State<MetadataForm>
   };
 
   String get _dateIntent {
+    if (_dateFieldKeys.any(
+      (key) =>
+          explicitOverrides.contains(key) &&
+          (modes[key] == 'set' || modes[key] == 'remove'),
+    )) {
+      return _quickDateSelected ? 'set' : 'custom';
+    }
     if (settings.randomizeDates) return 'randomize';
     if (_quickDateSelected) return 'set';
     if (_dateFieldKeys.any(
@@ -486,7 +626,7 @@ class _MetadataFormState extends State<MetadataForm>
             ButtonSegment(value: 'randomize', label: Text('Randomize')),
           ],
           emptySelectionAllowed: true,
-          selected: _dateIntent == 'custom' ? const {} : {_dateIntent},
+          selected: _dateIntent == 'custom' ? {} : {_dateIntent},
           onSelectionChanged: widget.controller.busy
               ? null
               : (selection) {
@@ -502,7 +642,7 @@ class _MetadataFormState extends State<MetadataForm>
           'custom' =>
             'Custom date edits or removals are staged in Advanced metadata.',
           _ => 'Preserve each original date and time.',
-        }, style: const TextStyle(color: Colors.white60, fontSize: 12)),
+        }, style: TextStyle(color: AppTheme.of(context).muted, fontSize: 12)),
         if (_dateIntent == 'set')
           Align(
             alignment: Alignment.centerLeft,
@@ -577,146 +717,59 @@ class _MetadataFormState extends State<MetadataForm>
   }
 
   Future<Map<String, MetadataPatch>> _resolvePatches() async {
-    if (widget.batch) {
-      final sources = widget.controller.sessions
-          .where((s) => widget.controller.batchSelection.contains(s.id))
-          .toList();
-      final manual = _patch(
-        allowEmpty: settings.randomizeDates,
-        fields: sources
-            .expand(
-              (s) =>
-                  widget.controller.capabilities!.fieldsFor(s.inspection.kind),
-            )
-            .toSet(),
+    // Values have already been generated into the draft. Resolving a review
+    // shapes the same frozen patch for every file; it never draws new values.
+    final sources = widget.batch
+        ? widget.controller.sessions
+              .where((s) => widget.controller.batchSelection.contains(s.id))
+              .toList()
+        : [widget.session];
+    var manual = _patch(allowEmpty: true, fields: supported);
+    if (settings.randomizeDates && _generatedDateFamily != null) {
+      manual = MetadataPatch(
+        values: {
+          for (final entry in _generatedDateFamily!.values.entries)
+            if (!manual.removals.contains(entry.key) &&
+                !(explicitOverrides.contains(entry.key) &&
+                    modes[entry.key] == 'keep'))
+              entry.key: entry.value,
+          ...manual.values,
+        },
+        removals: manual.removals,
       );
-      final patches = <String, MetadataPatch>{};
-      for (var i = 0; i < sources.length; i++) {
-        final source = sources[i];
-        final itemManual = datesForMedia(
-          manual,
-          image: source.inspection.kind.isImage,
-          keptOffsets: source.inspection.kind.isImage
-              ? source.inspection.metadata
-              : widget.session.inspection.metadata,
-          keepFields: explicitOverrides
-              .where((key) => modes[key] == 'keep')
-              .toSet(),
-        );
-        MetadataPatch itemPatch;
-        if (profile != null && camera != null && profileBaseline != null) {
-          final kept = explicitOverrides
-              .where((key) => modes[key] == 'keep')
-              .toSet();
-          final fixedDates = sharedDateOffsets.keys
-              .where(
-                (key) =>
-                    manual.values.containsKey(key) &&
-                    (explicitOverrides.contains(key) ||
-                        manual.values[key] != profileBaseline!.values[key]),
-              )
-              .toSet();
-          final rawGenerated = _profilePatch(source);
-          final generated = source.inspection.kind.isImage
-              ? randomDatesWithKeptZones(
-                  rawGenerated,
-                  keepFields: kept,
-                  destinationMetadata: source.inspection.metadata,
-                  fixedDates: fixedDates,
-                )
-              : rawGenerated;
-          final dateOverride =
-              {...sharedDateOffsets.keys, ...sharedDateOffsets.values}.any(
-                (key) =>
-                    manual.values.containsKey(key) &&
-                    (explicitOverrides.contains(key) ||
-                        manual.values[key] != profileBaseline!.values[key]),
-              );
-          // Manual overrides after choosing a profile are retained; newly
-          // randomized small values remain independent for each batch item.
-          final values = {...generated.values};
-          final removals = {...generated.removals};
-          final fields = widget.controller.capabilities!.fieldsFor(
-            source.inspection.kind,
-          );
-          for (final key in fields) {
-            final intent = modes[key];
-            if (intent == 'keep' &&
-                (explicitOverrides.contains(key) ||
-                    profileBaseline!.values.containsKey(key) ||
-                    profileBaseline!.removals.contains(key))) {
-              values.remove(key);
-              removals.remove(key);
-            } else if (itemManual.values.containsKey(key) &&
-                ((intent == 'set' &&
-                        (explicitOverrides.contains(key) ||
-                            manual.values[key] !=
-                                profileBaseline!.values[key])) ||
-                    (dateOverride && !manual.values.containsKey(key)))) {
-              values[key] = itemManual.values[key]!;
-              removals.remove(key);
-            } else if (intent == 'remove') {
-              values.remove(key);
-              removals.add(key);
-            }
-          }
-          itemPatch = MetadataPatch(values: values, removals: removals);
-        } else {
-          itemPatch = _standaloneAutomaticDates(itemManual, source);
-        }
-        patches[source.id] = itemPatch;
-      }
-      final staggeredPatches = offsetBatchDatePatches(
-        patches,
-        Duration(seconds: _batchStaggerSeconds),
-      );
-      final sanitizedPatches = <String, MetadataPatch>{};
-      for (final entry in staggeredPatches.entries) {
-        final source = sources.firstWhere((s) => s.id == entry.key);
-        final fields = widget.controller.capabilities!.fieldsFor(
-          source.inspection.kind,
-        );
-        sanitizedPatches[entry.key] = MetadataPatch(
-          values: {
-            for (final v in entry.value.values.entries)
-              if (fields.contains(v.key)) v.key: v.value,
-          },
-          removals: entry.value.removals
-              .where((k) => fields.contains(k))
-              .toList(),
-        );
-      }
-      return sanitizedPatches;
-    } else {
-      final rawManual = _patch(allowEmpty: settings.randomizeDates);
-      final kept = explicitOverrides
-          .where((key) => modes[key] == 'keep')
-          .toSet();
-      var shaped = rawManual;
-      if (profileBaseline != null && widget.session.inspection.kind.isImage) {
-        final fixedDates = sharedDateOffsets.keys
-            .where(
-              (key) =>
-                  rawManual.values.containsKey(key) &&
-                  (explicitOverrides.contains(key) ||
-                      rawManual.values[key] != profileBaseline!.values[key]),
-            )
-            .toSet();
+    }
+    if (!widget.fillAvailableSpace && profileBaseline == null) {
+      manual = _standaloneAutomaticDates(manual, widget.session);
+    }
+    final kept = explicitOverrides.where((key) => modes[key] == 'keep').toSet();
+    final fixedDates = sharedDateOffsets.keys
+        .where(
+          (key) =>
+              manual.values.containsKey(key) &&
+              (explicitOverrides.contains(key) ||
+                  (profileBaseline != null &&
+                      manual.values[key] != profileBaseline!.values[key])),
+        )
+        .toSet();
+    final patches = <String, MetadataPatch>{};
+    for (final source in sources) {
+      var shaped = manual;
+      if (profileBaseline != null && source.inspection.kind.isImage) {
         final withZones = MetadataPatch(
           values: {
-            ...rawManual.values,
+            ...manual.values,
             for (final key in sharedDateOffsets.values)
               if (kept.contains(key) &&
-                  !rawManual.values.containsKey(key) &&
+                  !manual.values.containsKey(key) &&
                   profileBaseline!.values.containsKey(key))
                 key: profileBaseline!.values[key]!,
           },
-          removals: rawManual.removals,
+          removals: manual.removals,
         );
         final normalized = randomDatesWithKeptZones(
           withZones,
           keepFields: kept,
-          destinationMetadata: widget.session.inspection.metadata,
+          destinationMetadata: source.inspection.metadata,
           fixedDates: {...fixedDates, ...kept},
         );
         shaped = MetadataPatch(
@@ -727,20 +780,29 @@ class _MetadataFormState extends State<MetadataForm>
           removals: normalized.removals,
         );
       }
-      final manual = datesForMedia(
+      final item = datesForMedia(
         shaped,
-        image: widget.session.inspection.kind.isImage,
-        keptOffsets: widget.session.inspection.metadata,
-        keepFields: explicitOverrides
-            .where((key) => modes[key] == 'keep')
-            .toSet(),
+        image: source.inspection.kind.isImage,
+        keptOffsets: source.inspection.kind.isImage
+            ? source.inspection.metadata
+            : widget.session.inspection.metadata,
+        keepFields: kept,
       );
-      return {
-        widget.session.id: profileBaseline == null
-            ? _standaloneAutomaticDates(manual, widget.session)
-            : manual,
-      };
+      final fields = widget.controller.capabilities!.fieldsFor(
+        source.inspection.kind,
+      );
+      patches[source.id] = MetadataPatch(
+        values: {
+          for (final e in item.values.entries)
+            if (fields.contains(e.key)) e.key: e.value,
+        },
+        removals: item.removals.where(fields.contains),
+      );
     }
+    return offsetBatchDatePatches(
+      patches,
+      Duration(seconds: _batchStaggerSeconds),
+    );
   }
 
   Future<void> _reviewChanges() async {
@@ -760,8 +822,32 @@ class _MetadataFormState extends State<MetadataForm>
       )) {
         throw const FormatException('Choose at least one metadata change.');
       }
+      final signature = _draftSignature();
+      final changedIds = patches.entries
+          .where(
+            (e) => e.value.values.isNotEmpty || e.value.removals.isNotEmpty,
+          )
+          .map((e) => e.key)
+          .toList();
+      final names = await widget.controller.reserveOutputNames(changedIds);
       if (!mounted) return;
+      if (names.length != changedIds.length) {
+        setState(
+          () => formError =
+              widget.controller.error ??
+              'Output names could not be prepared. Try reviewing again.',
+        );
+        return;
+      }
+      if (signature != _draftSignature()) {
+        setState(
+          () => formError =
+              'Your edits changed while preparing copies. Review them again.',
+        );
+        return;
+      }
       setState(() {
+        _reviewedNames = Map.unmodifiable(names);
         _reviewedPatches = Map.unmodifiable(patches);
         _reviewedDraftSignature = _draftSignature();
         _acknowledgeBatchExport = false;
@@ -779,6 +865,7 @@ class _MetadataFormState extends State<MetadataForm>
     if (patches == null || widget.controller.busy) return;
     try {
       _acknowledgeBatchExport = false;
+      _viewingExistingCopy = false;
       _processingIdsBefore = {
         for (final session in widget.controller.sessions)
           session.id: session.processing?.id,
@@ -821,6 +908,11 @@ class _MetadataFormState extends State<MetadataForm>
   }
 
   void _returnToEdit() => setState(() {
+    if (_stage == _FormStage.result) {
+      _reviewedPatches = null;
+      _reviewedDraftSignature = null;
+      _reviewedNames = {};
+    }
     _stage = _FormStage.edit;
   });
 
@@ -831,7 +923,7 @@ class _MetadataFormState extends State<MetadataForm>
     final selected = await showModalBottomSheet<CameraProfile>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF121214),
+      backgroundColor: AppTheme.of(context).raised,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
@@ -844,9 +936,10 @@ class _MetadataFormState extends State<MetadataForm>
       setState(() {
         brand = selected.brand;
         profile = selected;
+        _autoMatched = false;
         camera = profile!.cameras.first;
         _appliedFeedback = false;
-        _apply(_profilePatch(widget.session), notify: false, fromProfile: true);
+        _applySelectedProfile();
       });
       widget.controller.rememberSelectedProfile(
         brand: selected.brand,
@@ -864,7 +957,7 @@ class _MetadataFormState extends State<MetadataForm>
     final selected = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF121214),
+      backgroundColor: AppTheme.of(context).raised,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
@@ -877,6 +970,7 @@ class _MetadataFormState extends State<MetadataForm>
     if (selected != null && mounted) {
       setState(() {
         brand = selected;
+        _autoMatched = false;
         profile = null;
         camera = null;
         profileBaseline = null;
@@ -897,7 +991,7 @@ class _MetadataFormState extends State<MetadataForm>
     final selected = await showModalBottomSheet<ProfileCamera>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF121214),
+      backgroundColor: AppTheme.of(context).raised,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
@@ -911,7 +1005,7 @@ class _MetadataFormState extends State<MetadataForm>
       setState(() {
         camera = selected;
         _appliedFeedback = false;
-        _apply(_profilePatch(widget.session), notify: false, fromProfile: true);
+        _applySelectedProfile();
       });
       widget.controller.rememberSelectedProfile(
         brand: brand ?? profile?.brand,
@@ -935,9 +1029,9 @@ class _MetadataFormState extends State<MetadataForm>
     return Container(
       constraints: const BoxConstraints(minHeight: 52.0),
       decoration: BoxDecoration(
-        color: const Color(0xFF1C1C1E),
+        color: AppTheme.of(context).surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF2C2C2E), width: 1),
+        border: Border.all(color: AppTheme.of(context).border, width: 1),
       ),
       clipBehavior: Clip.antiAlias,
       child: Material(
@@ -957,11 +1051,11 @@ class _MetadataFormState extends State<MetadataForm>
                     children: [
                       Text(
                         label,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
                           letterSpacing: 0.2,
-                          color: Color(0xFF8E8E93),
+                          color: AppTheme.of(context).muted,
                         ),
                       ),
                       const SizedBox(height: 2),
@@ -971,8 +1065,10 @@ class _MetadataFormState extends State<MetadataForm>
                           fontSize: 14,
                           fontWeight: FontWeight.w500,
                           color: enabled
-                              ? (isPlaceholder ? Colors.white38 : Colors.white)
-                              : Colors.white24,
+                              ? (isPlaceholder
+                                    ? AppTheme.of(context).subtle
+                                    : AppTheme.of(context).text)
+                              : AppTheme.of(context).subtle,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -985,7 +1081,9 @@ class _MetadataFormState extends State<MetadataForm>
                     Icon(
                       Icons.keyboard_arrow_down_rounded,
                       size: 20,
-                      color: enabled ? const Color(0xFF0A84FF) : Colors.white24,
+                      color: enabled
+                          ? AppTheme.of(context).accent
+                          : AppTheme.of(context).subtle,
                     ),
               ],
             ),
@@ -1003,10 +1101,14 @@ class _MetadataFormState extends State<MetadataForm>
       margin: const EdgeInsets.only(top: 20),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: isMismatch ? const Color(0xFF2C1518) : const Color(0xFF1C1C1E),
+        color: isMismatch
+            ? AppTheme.of(context).errorSurface
+            : AppTheme.of(context).surface,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: isMismatch ? const Color(0xFF5A2026) : const Color(0xFF2C2C2E),
+          color: isMismatch
+              ? AppTheme.of(context).errorBorder
+              : AppTheme.of(context).border,
         ),
       ),
       child: Column(
@@ -1018,7 +1120,9 @@ class _MetadataFormState extends State<MetadataForm>
                 isMismatch
                     ? Icons.error_outline_rounded
                     : Icons.check_circle_outline_rounded,
-                color: isMismatch ? Colors.redAccent : const Color(0xFF0A84FF),
+                color: isMismatch
+                    ? AppTheme.of(context).error
+                    : AppTheme.of(context).accent,
                 size: 22,
               ),
               const SizedBox(width: 10),
@@ -1030,7 +1134,9 @@ class _MetadataFormState extends State<MetadataForm>
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w700,
-                    color: isMismatch ? Colors.redAccent : Colors.white,
+                    color: isMismatch
+                        ? AppTheme.of(context).error
+                        : AppTheme.of(context).text,
                   ),
                 ),
               ),
@@ -1040,7 +1146,7 @@ class _MetadataFormState extends State<MetadataForm>
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: const Color(0xFF121214),
+              color: AppTheme.of(context).raised,
               borderRadius: BorderRadius.circular(10),
             ),
             child: Column(
@@ -1048,18 +1154,21 @@ class _MetadataFormState extends State<MetadataForm>
               children: [
                 Row(
                   children: [
-                    const Expanded(
+                    Expanded(
                       child: Text(
                         'Output File',
-                        style: TextStyle(color: Colors.white60, fontSize: 12),
+                        style: TextStyle(
+                          color: AppTheme.of(context).muted,
+                          fontSize: 12,
+                        ),
                       ),
                     ),
                     Flexible(
                       child: Text(
                         '${output.inspection.kind.label} · ${output.inspection.sizeLabel}',
                         textAlign: TextAlign.end,
-                        style: const TextStyle(
-                          color: Colors.white60,
+                        style: TextStyle(
+                          color: AppTheme.of(context).muted,
                           fontSize: 12,
                         ),
                       ),
@@ -1069,14 +1178,14 @@ class _MetadataFormState extends State<MetadataForm>
                 const SizedBox(height: 4),
                 Text(
                   output.outputDisplayName ?? 'Processed copy',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontWeight: FontWeight.w600,
                     fontSize: 15,
-                    color: Colors.white,
+                    color: AppTheme.of(context).text,
                   ),
                 ),
                 const SizedBox(height: 8),
-                const Divider(height: 1, color: Color(0xFF2C2C2E)),
+                Divider(height: 1, color: AppTheme.of(context).border),
                 const SizedBox(height: 8),
                 Row(
                   children: [
@@ -1085,7 +1194,7 @@ class _MetadataFormState extends State<MetadataForm>
                           ? Icons.phone_iphone_outlined
                           : Icons.folder_outlined,
                       size: 16,
-                      color: const Color(0xFF0A84FF),
+                      color: AppTheme.of(context).accent,
                     ),
                     const SizedBox(width: 6),
                     Expanded(
@@ -1093,9 +1202,9 @@ class _MetadataFormState extends State<MetadataForm>
                         output.autoExportFolder == null
                             ? 'Held in the app. Export to Files after reviewing the checks.'
                             : 'Saved to: ${output.autoExportFolder}',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11,
-                          color: Color(0xFF8E8E93),
+                          color: AppTheme.of(context).muted,
                         ),
                       ),
                     ),
@@ -1107,9 +1216,9 @@ class _MetadataFormState extends State<MetadataForm>
           _buildMetadataDiffCard(context, widget.session, output),
           if (isMismatch) ...[
             const SizedBox(height: 12),
-            const Text(
+            Text(
               'A preservation check failed. Export blocked.',
-              style: TextStyle(color: Colors.redAccent, fontSize: 13),
+              style: TextStyle(color: AppTheme.of(context).error, fontSize: 13),
             ),
           ],
           if (needsAck) ...[
@@ -1129,7 +1238,10 @@ class _MetadataFormState extends State<MetadataForm>
                 ),
                 subtitle: Text(
                   output.integrity.limitations.join('\n'),
-                  style: const TextStyle(fontSize: 12, color: Colors.white60),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppTheme.of(context).muted,
+                  ),
                 ),
               ),
             ),
@@ -1170,10 +1282,10 @@ class _MetadataFormState extends State<MetadataForm>
             label: const Text('Open iCloud Photos'),
           ),
           const SizedBox(height: 6),
-          const Text(
+          Text(
             'Upload the exported file in Safari, then let it sync to Photos.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white60, fontSize: 11),
+            style: TextStyle(color: AppTheme.of(context).muted, fontSize: 11),
           ),
           const SizedBox(height: 14),
           const WorkflowNote(),
@@ -1209,9 +1321,9 @@ class _MetadataFormState extends State<MetadataForm>
     top: false,
     child: Container(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-      decoration: const BoxDecoration(
-        color: Color(0xFF121214),
-        border: Border(top: BorderSide(color: Color(0xFF2C2C2E))),
+      decoration: BoxDecoration(
+        color: AppTheme.of(context).raised,
+        border: Border(top: BorderSide(color: AppTheme.of(context).border)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1221,7 +1333,9 @@ class _MetadataFormState extends State<MetadataForm>
             : [
                 FilledButton.icon(
                   key: Key('primary${_stage.name}Action'),
-                  onPressed: widget.controller.busy
+                  onPressed:
+                      widget.controller.busy ||
+                          (_stage == _FormStage.edit && _preparingDraft)
                       ? null
                       : () {
                           switch (_stage) {
@@ -1239,11 +1353,32 @@ class _MetadataFormState extends State<MetadataForm>
                     _FormStage.result => Icons.edit_outlined,
                   }),
                   label: Text(switch (_stage) {
-                    _FormStage.edit => 'Review changes',
-                    _FormStage.review => 'Create edited copy',
+                    _FormStage.edit =>
+                      widget.batch
+                          ? 'Review ${widget.controller.batchSelection.length} files'
+                          : 'Review changes',
+                    _FormStage.review =>
+                      widget.batch
+                          ? 'Create ${_reviewedNames.length} copies'
+                          : 'Create edited copy',
                     _FormStage.result => 'Edit changes',
                   }),
                 ),
+                if (_stage == _FormStage.edit) ...[
+                  TextButton(
+                    key: const Key('savingGuide'),
+                    onPressed: _showSavingGuide,
+                    child: const Text('How saving works'),
+                  ),
+                  Text(
+                    'Your originals stay unchanged.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: AppTheme.of(context).muted,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
                 if (_stage == _FormStage.review)
                   TextButton(
                     key: const Key('returnToEdit'),
@@ -1373,20 +1508,52 @@ class _MetadataFormState extends State<MetadataForm>
           widget.batch
               ? '${patches.values.where((patch) => patch.values.isNotEmpty || patch.removals.isNotEmpty).length} copies planned · unchanged files will be skipped'
               : 'Check the requested changes before creating a copy.',
-          style: const TextStyle(color: Colors.white60),
+          style: TextStyle(color: AppTheme.of(context).muted),
         ),
         const SizedBox(height: 16),
+        if (widget.batch)
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Shared metadata',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  for (final key in ['model', 'iso', 'dateTimeOriginal'])
+                    if (patches.values.first.values.containsKey(key))
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(
+                          '${_fieldLabel(key)}: ${patches.values.first.values[key]}',
+                        ),
+                      ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'The same supported changes apply to every selected file. Kept fields and unavailable format fields can differ.',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+          ),
         for (final session in sessions)
           _reviewSessionCard(session, patches[session.id]!),
         const SizedBox(height: 8),
-        const Text(
+        Text(
           'Fields omitted from this review remain unchanged, including dates and location.',
-          style: TextStyle(color: Colors.white60, fontSize: 12, height: 1.4),
+          style: TextStyle(
+            color: AppTheme.of(context).muted,
+            fontSize: 12,
+            height: 1.4,
+          ),
         ),
         const SizedBox(height: 12),
-        const Text(
+        Text(
           'Creating a copy leaves the selected original untouched.',
-          style: TextStyle(color: Colors.white70, fontSize: 13),
+          style: TextStyle(color: AppTheme.of(context).muted, fontSize: 13),
         ),
       ],
     );
@@ -1417,8 +1584,35 @@ class _MetadataFormState extends State<MetadataForm>
           ),
         ),
     ];
+    if (widget.fillAvailableSpace) {
+      return Card(
+        margin: const EdgeInsets.only(bottom: 10),
+        child: ExpansionTile(
+          key: ValueKey('reviewFile-${session.id}'),
+          leading: MediaPreview(
+            session: session,
+            height: 48,
+            width: 48,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          title: Text(session.displayName),
+          subtitle: Text(
+            _reviewedNames[session.id] == null
+                ? 'No supported changes — skipped'
+                : '→ ${_reviewedNames[session.id]}',
+          ),
+          children: changes.isEmpty
+              ? [
+                  const ListTile(
+                    title: Text('Unchanged — no copy will be created'),
+                  ),
+                ]
+              : changes,
+        ),
+      );
+    }
     return Card(
-      color: const Color(0xFF1C1C1E),
+      color: AppTheme.of(context).surface,
       margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
@@ -1462,7 +1656,7 @@ class _MetadataFormState extends State<MetadataForm>
             padding: const EdgeInsets.only(top: 4),
             child: Text(
               '${check.name}: ${check.status} — ${check.detail}',
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
+              style: TextStyle(color: AppTheme.of(context).muted, fontSize: 12),
             ),
           ),
         for (final limitation in report.limitations)
@@ -1470,7 +1664,10 @@ class _MetadataFormState extends State<MetadataForm>
             padding: const EdgeInsets.only(top: 4),
             child: Text(
               'Limitation: $limitation',
-              style: const TextStyle(color: Colors.orangeAccent, fontSize: 12),
+              style: TextStyle(
+                color: AppTheme.of(context).warning,
+                fontSize: 12,
+              ),
             ),
           ),
       ],
@@ -1495,7 +1692,11 @@ class _MetadataFormState extends State<MetadataForm>
           children: [
             Text(
               output.integrity.hasMismatch
-                  ? 'New output failed integrity checks'
+                  ? _viewingExistingCopy
+                        ? 'Saved copy failed integrity checks'
+                        : 'New output failed integrity checks'
+                  : _viewingExistingCopy
+                  ? 'Saved copy'
                   : 'Copy created',
               style: Theme.of(context).textTheme.headlineSmall,
             ),
@@ -1520,13 +1721,13 @@ class _MetadataFormState extends State<MetadataForm>
         Text('Batch results', style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 4),
         Text(
-          '${withOutput.length} new copies created · ${_attemptedBatchIds.length - withOutput.length} attempted files need attention',
-          style: const TextStyle(color: Colors.white60),
+          '${withOutput.length} ${_viewingExistingCopy ? 'saved copies available' : 'new copies created'} · ${_attemptedBatchIds.length - withOutput.length} attempted files need attention',
+          style: TextStyle(color: AppTheme.of(context).muted),
         ),
         const SizedBox(height: 12),
         for (final session in sessions)
           Card(
-            color: const Color(0xFF1C1C1E),
+            color: AppTheme.of(context).surface,
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: Column(
@@ -1554,13 +1755,13 @@ class _MetadataFormState extends State<MetadataForm>
                           ? Icons.check_circle_outline
                           : Icons.error_outline,
                       color: !_attemptedBatchIds.contains(session.id)
-                          ? Colors.white54
+                          ? AppTheme.of(context).muted
                           : queueById[session.id]?.status == 'completed' &&
                                 session.processing != null &&
                                 session.processing!.id !=
                                     _processingIdsBefore[session.id]
-                          ? const Color(0xFF0A84FF)
-                          : Colors.orangeAccent,
+                          ? AppTheme.of(context).accent
+                          : AppTheme.of(context).warning,
                     ),
                   ),
                   if (_attemptedBatchIds.contains(session.id) &&
@@ -1572,6 +1773,25 @@ class _MetadataFormState extends State<MetadataForm>
               ),
             ),
           ),
+        if (controller.queue.any(
+          (item) =>
+              _attemptedBatchIds.contains(item.sessionId) &&
+              item.status != 'completed',
+        ))
+          OutlinedButton.icon(
+            key: const Key('retryUnfinishedBatch'),
+            onPressed: controller.busy || !controller.ready
+                ? null
+                : () {
+                    setState(() {
+                      _acknowledgeBatchExport = false;
+                      _acknowledgedBatchOutputs = null;
+                    });
+                    controller.retryBatch();
+                  },
+            icon: const Icon(Icons.refresh),
+            label: const Text('Retry unfinished files'),
+          ),
         if (withOutput.any(
           (session) => session.processing!.integrity.needsAcknowledgment,
         ))
@@ -1580,8 +1800,12 @@ class _MetadataFormState extends State<MetadataForm>
             value: _acknowledgeBatchExport,
             onChanged: controller.busy
                 ? null
-                : (value) =>
-                      setState(() => _acknowledgeBatchExport = value ?? false),
+                : (value) => setState(() {
+                    _acknowledgeBatchExport = value ?? false;
+                    _acknowledgedBatchOutputs = _acknowledgeBatchExport
+                        ? _batchOutputSignature()
+                        : null;
+                  }),
             title: const Text('Accept the listed limitations for ready copies'),
             subtitle: const Text(
               'Review each copy’s checks and limitations below before exporting.',
@@ -1591,11 +1815,245 @@ class _MetadataFormState extends State<MetadataForm>
     );
   }
 
+  Widget _minimalEditContent(BuildContext context) {
+    final controller = widget.controller;
+    final sources = widget.batch
+        ? controller.sessions
+              .where((s) => controller.batchSelection.contains(s.id))
+              .toList()
+        : [widget.session];
+    final colors = AppTheme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (widget.batch)
+          Row(
+            children: [
+              for (final item in sources.take(3))
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 3),
+                    child: MediaPreview(session: item, height: 120),
+                  ),
+                ),
+            ],
+          )
+        else
+          MediaPreview(session: widget.session, height: 200),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.batch
+                        ? '${sources.length} files selected'
+                        : widget.session.displayName,
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Text(
+                    widget.batch
+                        ? 'One shared metadata plan'
+                        : '${widget.session.inspection.kind.label} · ${widget.session.inspection.sizeLabel}',
+                    style: TextStyle(color: colors.muted, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            TextButton(
+              onPressed: controller.busy
+                  ? null
+                  : () => _showSelectionInfo(context, sources),
+              child: Text(widget.batch ? 'Change selection' : 'Change'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        Card(
+          margin: EdgeInsets.zero,
+          child: Column(
+            children: [
+              ListTile(
+                key: const Key('chooseHostProfile'),
+                leading: const Icon(Icons.phone_iphone),
+                title: const Text('Your phone'),
+                subtitle: Text(
+                  profile == null
+                      ? 'Choose a supported phone profile'
+                      : '${profile!.brand} · ${profile!.model}${_autoMatched ? '\nAuto-matched' : ''}',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: controller.busy || _preparingDraft
+                    ? null
+                    : () async {
+                        final profiles = await catalog;
+                        if (mounted && context.mounted) {
+                          _openModelSearchSheet(context, profiles);
+                        }
+                      },
+              ),
+              const Divider(height: 1, indent: 56),
+              ListTile(
+                key: const Key('chooseMainCamera'),
+                leading: const Icon(Icons.camera_alt_outlined),
+                title: const Text('Camera'),
+                subtitle: Text(camera?.name ?? 'Choose a model first'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: controller.busy || profile == null
+                    ? null
+                    : () => _openCameraPickerSheet(context, profile!.cameras),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          margin: EdgeInsets.zero,
+          child: ExpansionTile(
+            key: const Key('manualEditing'),
+            maintainState: true,
+            leading: const Icon(Icons.tune_rounded),
+            title: const Text('Manual editing'),
+            subtitle: const Text('Adjust the prepared changes'),
+            enabled: !_preparingDraft,
+            childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            children: [
+              _presets(context),
+              const SizedBox(height: 12),
+              _manual(context),
+              if (widget.batch) _batchTimestampControl(),
+              ListTile(
+                key: const Key('privacyScrubFromManual'),
+                leading: const Icon(Icons.delete_outline),
+                title: const Text('Remove selected metadata'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: controller.busy
+                    ? null
+                    : () => _openQuickPrivacyScrubber(context),
+              ),
+              _metadataDetails(context),
+              if (!widget.batch && widget.session.processing != null)
+                ListTile(
+                  key: const Key('viewExistingCopy'),
+                  leading: const Icon(Icons.file_present_outlined),
+                  title: const Text('View saved copy'),
+                  onTap: controller.busy
+                      ? null
+                      : () => setState(() {
+                          _viewingExistingCopy = true;
+                          _processingIdsBefore = {widget.session.id: null};
+                          _stage = _FormStage.result;
+                        }),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (_preparingDraft)
+          const LinearProgressIndicator()
+        else
+          Text(
+            widget.batch
+                ? 'The same randomized metadata is prepared for all ${sources.length} files. Each copy gets a unique IMG_#### filename.'
+                : 'Randomized changes are ready to review.',
+            style: TextStyle(color: colors.muted, fontSize: 12, height: 1.5),
+          ),
+        if (profile == null && !_preparingDraft)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              'This phone could not be matched. Choose a profile, or use Manual editing.',
+              style: TextStyle(color: colors.muted),
+            ),
+          ),
+        if (formError != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Text(formError!, style: TextStyle(color: colors.error)),
+          ),
+      ],
+    );
+  }
+
+  void _showSelectionInfo(BuildContext context, List<MediaSession> sources) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const ListTile(title: Text('Selected files')),
+            for (final source in sources)
+              ListTile(
+                title: Text(source.displayName),
+                subtitle: Text(source.inspection.kind.label),
+              ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Choose from Photos'),
+              onTap: () {
+                Navigator.of(context).pop();
+                widget.controller.importBatch(photos: true);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_outlined),
+              title: const Text('Choose from Files'),
+              onTap: () {
+                Navigator.of(context).pop();
+                widget.controller.importBatch(photos: false);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _batchTimestampControl() => ListTile(
+    title: const Text('Timestamp spacing'),
+    subtitle: const Text('Off keeps the same timestamps across the batch'),
+    trailing: DropdownButton<int>(
+      key: const Key('batchTimestampStagger'),
+      value: _batchStaggerSeconds,
+      onChanged: widget.controller.busy
+          ? null
+          : (value) => setState(() => _batchStaggerSeconds = value ?? 0),
+      items: [
+        for (final seconds in [0, 1, 5, 10, 30, 60])
+          DropdownMenuItem(
+            value: seconds,
+            child: Text(seconds == 0 ? 'Off' : '+${seconds}s'),
+          ),
+      ],
+    ),
+  );
+
+  void _showSavingGuide() => showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    isScrollControlled: true,
+    builder: (context) => const SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.all(20),
+        child: WorkflowNote(),
+      ),
+    ),
+  );
+
   Widget _stageContent(BuildContext context) {
     if (_stage == _FormStage.review && _reviewedPatches != null) {
       return _reviewContent(context);
     }
     if (_stage == _FormStage.result) return _resultContent(context);
+    if (widget.fillAvailableSpace) return _minimalEditContent(context);
     final controller = widget.controller;
     final source = widget.session;
     final output = source.processing;
@@ -1610,8 +2068,8 @@ class _MetadataFormState extends State<MetadataForm>
           const SizedBox(height: 4),
           Text(
             '${controller.batchSelection.length} files selected · Settings apply across all batch items',
-            style: const TextStyle(
-              color: Color(0xFF0A84FF),
+            style: TextStyle(
+              color: AppTheme.of(context).accent,
               fontSize: 13,
               fontWeight: FontWeight.w500,
             ),
@@ -1620,22 +2078,25 @@ class _MetadataFormState extends State<MetadataForm>
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
-              color: const Color(0xFF1C1C1E),
+              color: AppTheme.of(context).surface,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFF2C2C2E)),
+              border: Border.all(color: AppTheme.of(context).border),
             ),
             child: Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.auto_awesome_motion_outlined,
-                  color: Color(0xFF0A84FF),
+                  color: AppTheme.of(context).accent,
                   size: 20,
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     'Selected files: ${controller.sessions.where((s) => controller.batchSelection.contains(s.id)).map((s) => s.displayName).take(3).join(', ')}${controller.batchSelection.length > 3 ? ' +${controller.batchSelection.length - 3} more' : ''}',
-                    style: const TextStyle(fontSize: 12, color: Colors.white70),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppTheme.of(context).muted,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -1646,35 +2107,35 @@ class _MetadataFormState extends State<MetadataForm>
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
-              color: const Color(0xFF1C1C1E),
+              color: AppTheme.of(context).surface,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFF2C2C2E)),
+              border: Border.all(color: AppTheme.of(context).border),
             ),
             child: Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.schedule_rounded,
-                  color: Color(0xFF0A84FF),
+                  color: AppTheme.of(context).accent,
                   size: 18,
                 ),
                 const SizedBox(width: 10),
-                const Expanded(
+                Expanded(
                   child: Text(
                     'Timestamp Spacing',
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
-                      color: Colors.white,
+                      color: AppTheme.of(context).text,
                     ),
                   ),
                 ),
                 DropdownButton<int>(
                   key: const Key('batchTimestampStagger'),
                   value: _batchStaggerSeconds,
-                  dropdownColor: const Color(0xFF1C1C1E),
+                  dropdownColor: AppTheme.of(context).surface,
                   underline: const SizedBox(),
-                  style: const TextStyle(
-                    color: Color(0xFF0A84FF),
+                  style: TextStyle(
+                    color: AppTheme.of(context).accent,
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
                   ),
@@ -1702,7 +2163,7 @@ class _MetadataFormState extends State<MetadataForm>
           const SizedBox(height: 8),
           Text(
             '${source.inspection.kind.label} · ${source.inspection.sizeLabel}',
-            style: const TextStyle(color: Colors.white60),
+            style: TextStyle(color: AppTheme.of(context).muted),
           ),
           const SizedBox(height: 12),
           if (!widget.fillAvailableSpace)
@@ -1713,16 +2174,16 @@ class _MetadataFormState extends State<MetadataForm>
             margin: const EdgeInsets.symmetric(vertical: 12),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             decoration: BoxDecoration(
-              color: const Color(0xFF261215),
+              color: AppTheme.of(context).errorSurface,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFF591C22)),
+              border: Border.all(color: AppTheme.of(context).errorBorder),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(
+                Icon(
                   Icons.error_outline_rounded,
-                  color: Color(0xFFFF453A),
+                  color: AppTheme.of(context).error,
                   size: 20,
                 ),
                 const SizedBox(width: 10),
@@ -1730,10 +2191,10 @@ class _MetadataFormState extends State<MetadataForm>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
+                      Text(
                         'Attention Needed',
                         style: TextStyle(
-                          color: Color(0xFFFF453A),
+                          color: AppTheme.of(context).error,
                           fontWeight: FontWeight.w700,
                           fontSize: 13,
                         ),
@@ -1741,8 +2202,8 @@ class _MetadataFormState extends State<MetadataForm>
                       const SizedBox(height: 3),
                       Text(
                         simplifyUserError(formError!),
-                        style: const TextStyle(
-                          color: Color(0xFFFFB4AB),
+                        style: TextStyle(
+                          color: AppTheme.of(context).error,
                           fontSize: 12.5,
                           height: 1.35,
                         ),
@@ -1751,10 +2212,10 @@ class _MetadataFormState extends State<MetadataForm>
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(
+                  icon: Icon(
                     Icons.close_rounded,
                     size: 16,
-                    color: Color(0xFFFFB4AB),
+                    color: AppTheme.of(context).error,
                   ),
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(
@@ -1784,9 +2245,9 @@ class _MetadataFormState extends State<MetadataForm>
                 setState(() => _tabIndex = index);
               }
             },
-            indicatorColor: const Color(0xFF0A84FF),
-            labelColor: const Color(0xFF0A84FF),
-            unselectedLabelColor: Colors.white60,
+            indicatorColor: AppTheme.of(context).accent,
+            labelColor: AppTheme.of(context).accent,
+            unselectedLabelColor: AppTheme.of(context).muted,
             tabs: const [
               Tab(text: 'Profile & presets'),
               Tab(text: 'Edit'),
@@ -1894,6 +2355,85 @@ class _MetadataFormState extends State<MetadataForm>
     );
   }
 
+  Widget _metadataDetails(BuildContext context) {
+    final controller = widget.controller;
+    final source = widget.session;
+    final output = source.processing;
+    return ExpansionTile(
+      title: const Text('Details'),
+      children: [
+        const ListTile(title: Text('Original metadata')),
+        for (final e in {
+          ...source.inspection.metadata,
+          ...source.inspection.structure,
+          ...source.details,
+        }.entries)
+          ListTile(
+            dense: true,
+            title: Text(e.key),
+            subtitle: SelectableText(e.value),
+          ),
+        for (final note in [...source.notes, ...source.inspection.notes])
+          Padding(padding: const EdgeInsets.all(8), child: Text(note)),
+        if (output != null) ...[
+          const Divider(),
+          const ListTile(title: Text('Requested changes')),
+          for (final e
+              in (output.metadataPatch?.values ??
+                      <String, Object>{
+                        'make': output.patch.make,
+                        'model': output.patch.model,
+                        if (output.patch.lens != null)
+                          'lensModel': output.patch.lens!,
+                      })
+                  .entries)
+            ListTile(
+              dense: true,
+              title: Text('Requested · ${e.key}'),
+              subtitle: SelectableText(e.value.toString()),
+            ),
+          for (final key in output.metadataPatch?.removals ?? <String>{})
+            ListTile(dense: true, title: Text('Removed · $key')),
+          const ListTile(title: Text('Processed metadata read back')),
+          for (final e in output.inspection.metadata.entries)
+            ListTile(
+              dense: true,
+              title: Text('Read back · ${e.key}'),
+              subtitle: SelectableText(e.value),
+            ),
+          for (final e in output.inspection.structure.entries)
+            ListTile(
+              dense: true,
+              title: Text('Processed structure · ${e.key}'),
+              subtitle: SelectableText(e.value),
+            ),
+          for (final check in output.integrity.checks)
+            ListTile(
+              dense: true,
+              title: Text('${check.name}: ${check.status}'),
+              subtitle: Text(check.detail),
+            ),
+          for (final limitation in output.integrity.limitations)
+            Padding(padding: const EdgeInsets.all(8), child: Text(limitation)),
+          TextButton(
+            onPressed: controller.busy ? null : controller.verifyOriginal,
+            child: const Text('Verify downloaded iCloud original'),
+          ),
+        ],
+        if (profile != null && camera != null) ...[
+          const ListTile(title: Text('Camera profile evidence')),
+          for (final e in camera!.evidence.entries)
+            ListTile(dense: true, title: Text(e.key), subtitle: Text(e.value)),
+          for (final url in profile!.sources)
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: SelectableText(url),
+            ),
+        ],
+      ],
+    );
+  }
+
   Widget _presets(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
@@ -1927,13 +2467,13 @@ class _MetadataFormState extends State<MetadataForm>
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Expanded(
+                      Expanded(
                         child: Text(
                           'Device Profile',
                           style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
-                            color: Color(0xFF8E8E93),
+                            color: AppTheme.of(context).muted,
                           ),
                         ),
                       ),
@@ -1946,7 +2486,7 @@ class _MetadataFormState extends State<MetadataForm>
                             horizontal: 8,
                             vertical: 4,
                           ),
-                          foregroundColor: const Color(0xFF0A84FF),
+                          foregroundColor: AppTheme.of(context).accent,
                         ),
                         onPressed: widget.controller.busy
                             ? null
@@ -2033,10 +2573,10 @@ class _MetadataFormState extends State<MetadataForm>
                             ),
                             visualDensity: VisualDensity.compact,
                             splashRadius: 16,
-                            icon: const Icon(
+                            icon: Icon(
                               Icons.search_rounded,
                               size: 18,
-                              color: Color(0xFF0A84FF),
+                              color: AppTheme.of(context).accent,
                             ),
                             onPressed: widget.controller.busy
                                 ? null
@@ -2051,8 +2591,8 @@ class _MetadataFormState extends State<MetadataForm>
                           Icons.keyboard_arrow_down_rounded,
                           size: 18,
                           color: brand != null
-                              ? const Color(0xFF0A84FF)
-                              : Colors.white24,
+                              ? AppTheme.of(context).accent
+                              : AppTheme.of(context).subtle,
                         ),
                       ],
                     ),
@@ -2079,11 +2619,11 @@ class _MetadataFormState extends State<MetadataForm>
                     key: const Key('applyProfile'),
                     style: FilledButton.styleFrom(
                       backgroundColor: _appliedFeedback
-                          ? const Color(0xFF2C2C2E)
-                          : const Color(0xFF1C1C1E),
+                          ? AppTheme.of(context).border
+                          : AppTheme.of(context).surface,
                       foregroundColor: _appliedFeedback
-                          ? const Color(0xFF0A84FF)
-                          : Colors.white,
+                          ? AppTheme.of(context).accent
+                          : AppTheme.of(context).text,
                     ),
                     onPressed:
                         profile == null ||
@@ -2148,26 +2688,29 @@ class _MetadataFormState extends State<MetadataForm>
                         vertical: 8,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF132720),
+                        color: AppTheme.of(context).surface,
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFF224436)),
+                        border: Border.all(
+                          color: AppTheme.of(context).success
+                              .withValues(alpha: 0.12),
+                        ),
                       ),
                       child: Row(
                         children: [
                           Icon(
                             Icons.check_circle_outline_rounded,
                             size: 16,
-                            color: Color(0xFF84E4C7),
+                            color: AppTheme.of(context).success,
                           ),
-                          SizedBox(width: 8),
+                          const SizedBox(width: 8),
                           Expanded(
                             child: Text(
                               widget.fillAvailableSpace
                                   ? 'Profile values staged. Review changes before creating a copy.'
                                   : 'Settings applied. Press "Process" below to generate your file.',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 12,
-                                color: Color(0xFF84E4C7),
+                                color: AppTheme.of(context).success,
                                 fontWeight: FontWeight.w500,
                               ),
                             ),
@@ -2185,13 +2728,19 @@ class _MetadataFormState extends State<MetadataForm>
                   ),
                   if (camera?.evidence.values.contains('descriptive-label') ??
                       false)
-                    const Text(
+                    Text(
                       'Lens label is descriptive; exact capture wording has not been verified.',
-                      style: TextStyle(color: Colors.white60, fontSize: 12),
+                      style: TextStyle(
+                        color: AppTheme.of(context).muted,
+                        fontSize: 12,
+                      ),
                     ),
                   Text(
                     '${profiles.length} researched models. Unknown hardware fields are cleared rather than invented.',
-                    style: const TextStyle(color: Colors.white60, fontSize: 12),
+                    style: TextStyle(
+                      color: AppTheme.of(context).muted,
+                      fontSize: 12,
+                    ),
                   ),
                 ],
               );
@@ -2206,14 +2755,14 @@ class _MetadataFormState extends State<MetadataForm>
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: const Color(0xFF1C1C1E),
+            color: AppTheme.of(context).surface,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFF2C2C2E)),
+            border: Border.all(color: AppTheme.of(context).border),
           ),
-          child: const Center(
+          child: Center(
             child: Text(
               'No saved presets. Save current edits or import a recipe.',
-              style: TextStyle(color: Color(0xFF8E8E93), fontSize: 13),
+              style: TextStyle(color: AppTheme.of(context).muted, fontSize: 13),
             ),
           ),
         )
@@ -2222,18 +2771,18 @@ class _MetadataFormState extends State<MetadataForm>
           clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFF2C2C2E)),
+            border: Border.all(color: AppTheme.of(context).border),
           ),
           child: Material(
-            color: const Color(0xFF1C1C1E),
+            color: AppTheme.of(context).surface,
             child: Column(
               children: [
                 for (var i = 0; i < widget.controller.presets.length; i++) ...[
                   if (i > 0)
-                    const Divider(
+                    Divider(
                       height: 1,
                       thickness: 1,
-                      color: Color(0xFF2C2C2E),
+                      color: AppTheme.of(context).border,
                       indent: 52,
                     ),
                   ListTile(
@@ -2246,8 +2795,9 @@ class _MetadataFormState extends State<MetadataForm>
                       height: 32,
                       decoration: BoxDecoration(
                         color: widget.controller.presets[i].recipe == null
-                            ? const Color(0xFF2C2C2E)
-                            : const Color(0xFF1E2A3E),
+                            ? AppTheme.of(context).border
+                            : AppTheme.of(context).accent
+                                  .withValues(alpha: 0.10),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Icon(
@@ -2256,8 +2806,8 @@ class _MetadataFormState extends State<MetadataForm>
                             : Icons.auto_awesome_rounded,
                         size: 16,
                         color: widget.controller.presets[i].recipe == null
-                            ? const Color(0xFF8E8E93)
-                            : const Color(0xFF0A84FF),
+                            ? AppTheme.of(context).muted
+                            : AppTheme.of(context).accent,
                       ),
                     ),
                     title: Text(
@@ -2271,9 +2821,9 @@ class _MetadataFormState extends State<MetadataForm>
                       widget.controller.presets[i].recipe == null
                           ? 'Fixed metadata values'
                           : 'Camera & randomization recipe',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
-                        color: Color(0xFF8E8E93),
+                        color: AppTheme.of(context).muted,
                       ),
                     ),
                     onTap: widget.controller.busy
@@ -2291,12 +2841,12 @@ class _MetadataFormState extends State<MetadataForm>
                           );
                         }
                       },
-                      itemBuilder: (_) => const [
-                        PopupMenuItem(
+                      itemBuilder: (_) => [
+                        const PopupMenuItem(
                           value: 'export',
                           child: Text('Export preset'),
                         ),
-                        PopupMenuItem(
+                        const PopupMenuItem(
                           value: 'delete',
                           child: Text('Delete preset'),
                         ),
@@ -2341,21 +2891,24 @@ class _MetadataFormState extends State<MetadataForm>
     margin: const EdgeInsets.only(bottom: 12),
     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
     decoration: BoxDecoration(
-      color: const Color(0xFF1C1C1E),
+      color: AppTheme.of(context).surface,
       borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: const Color(0xFF2C2C2E)),
+      border: Border.all(color: AppTheme.of(context).border),
     ),
     child: Row(
       children: [
-        const Icon(Icons.camera_alt_outlined, color: Color(0xFF0A84FF)),
+        Icon(Icons.camera_alt_outlined, color: AppTheme.of(context).accent),
         const SizedBox(width: 10),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 'Camera profile',
-                style: TextStyle(color: Colors.white60, fontSize: 12),
+                style: TextStyle(
+                  color: AppTheme.of(context).muted,
+                  fontSize: 12,
+                ),
               ),
               Text(
                 profile == null
@@ -2422,9 +2975,9 @@ class _MetadataFormState extends State<MetadataForm>
               }),
             ),
         ],
-        const Text(
+        Text(
           'Keep retains the original. Set changes a value. Remove deletes the selected field.',
-          style: TextStyle(color: Colors.white60, fontSize: 12),
+          style: TextStyle(color: AppTheme.of(context).muted, fontSize: 12),
         ),
         if (widget.fillAvailableSpace)
           ExpansionTile(
@@ -2796,7 +3349,7 @@ class _MetadataFormState extends State<MetadataForm>
                   if (dialogError != null)
                     Text(
                       dialogError!,
-                      style: const TextStyle(color: Colors.redAccent),
+                      style: TextStyle(color: AppTheme.of(context).error),
                     ),
                 ],
               ),
@@ -2907,9 +3460,9 @@ class _MetadataFormState extends State<MetadataForm>
       key: const Key('mediaInspectorHUD'),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFF1C1C1E),
+        color: AppTheme.of(context).surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFF2C2C2E)),
+        border: Border.all(color: AppTheme.of(context).border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2920,7 +3473,7 @@ class _MetadataFormState extends State<MetadataForm>
                 source.inspection.kind.isImage
                     ? Icons.camera_alt_outlined
                     : Icons.videocam_outlined,
-                color: const Color(0xFF0A84FF),
+                color: AppTheme.of(context).accent,
                 size: 16,
               ),
               const SizedBox(width: 8),
@@ -2929,10 +3482,10 @@ class _MetadataFormState extends State<MetadataForm>
                   cameraName.isNotEmpty
                       ? cameraName
                       : 'Original Hardware Unspecified',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
-                    color: Colors.white,
+                    color: AppTheme.of(context).text,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -2954,7 +3507,7 @@ class _MetadataFormState extends State<MetadataForm>
                     horizontal: 10,
                     vertical: 4,
                   ),
-                  side: const BorderSide(color: Color(0xFF3A3A3C)),
+                  side: BorderSide(color: AppTheme.of(context).border),
                 ),
               ),
             ],
@@ -2963,7 +3516,7 @@ class _MetadataFormState extends State<MetadataForm>
             const SizedBox(height: 2),
             Text(
               lens,
-              style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93)),
+              style: TextStyle(fontSize: 11, color: AppTheme.of(context).muted),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -2995,13 +3548,13 @@ class _MetadataFormState extends State<MetadataForm>
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: hasGps
-                      ? const Color(0xFF132720)
-                      : const Color(0xFF121214),
+                      ? AppTheme.of(context).surface
+                      : AppTheme.of(context).raised,
                   borderRadius: BorderRadius.circular(6),
                   border: Border.all(
                     color: hasGps
-                        ? const Color(0xFF224436)
-                        : const Color(0xFF2C2C2E),
+                        ? AppTheme.of(context).success.withValues(alpha: 0.12)
+                        : AppTheme.of(context).border,
                   ),
                 ),
                 child: Row(
@@ -3011,8 +3564,8 @@ class _MetadataFormState extends State<MetadataForm>
                       hasGps ? Icons.location_on : Icons.location_off_outlined,
                       size: 12,
                       color: hasGps
-                          ? const Color(0xFF84E4C7)
-                          : const Color(0xFF8E8E93),
+                          ? AppTheme.of(context).success
+                          : AppTheme.of(context).muted,
                     ),
                     const SizedBox(width: 4),
                     Text(
@@ -3021,8 +3574,8 @@ class _MetadataFormState extends State<MetadataForm>
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
                         color: hasGps
-                            ? const Color(0xFF84E4C7)
-                            : const Color(0xFF8E8E93),
+                            ? AppTheme.of(context).success
+                            : AppTheme.of(context).muted,
                       ),
                     ),
                   ],
@@ -3039,9 +3592,9 @@ class _MetadataFormState extends State<MetadataForm>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF121214),
+        color: AppTheme.of(context).raised,
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: const Color(0xFF2C2C2E)),
+        border: Border.all(color: AppTheme.of(context).border),
       ),
       child: Text(
         label,
@@ -3049,7 +3602,9 @@ class _MetadataFormState extends State<MetadataForm>
           fontSize: 11,
           fontFamily: 'monospace',
           fontWeight: FontWeight.w600,
-          color: active ? Colors.white : const Color(0xFF8E8E93),
+          color: active
+              ? AppTheme.of(context).text
+              : AppTheme.of(context).muted,
         ),
       ),
     );
@@ -3059,7 +3614,7 @@ class _MetadataFormState extends State<MetadataForm>
     final scrubbed = await showModalBottomSheet<Set<String>>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF121214),
+      backgroundColor: AppTheme.of(context).raised,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
@@ -3076,9 +3631,9 @@ class _MetadataFormState extends State<MetadataForm>
         ScaffoldMessenger.of(this.context).showSnackBar(
           SnackBar(
             content: Text(
-              'Privacy scrub queued for ${scrubbed.length} fields. Tap "Process file" to write cleaned media.',
+              'Removal prepared for ${scrubbed.length} fields. Review the changes before creating a copy.',
             ),
-            backgroundColor: const Color(0xFF1C1C1E),
+            backgroundColor: AppTheme.of(this.context).surface,
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -3119,10 +3674,10 @@ class _MetadataFormState extends State<MetadataForm>
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFF2C2C2E)),
+        border: Border.all(color: AppTheme.of(context).border),
       ),
       child: Material(
-        color: const Color(0xFF121214),
+        color: AppTheme.of(context).raised,
         child: Theme(
           data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
           child: ExpansionTile(
@@ -3131,21 +3686,21 @@ class _MetadataFormState extends State<MetadataForm>
               horizontal: 12,
               vertical: 2,
             ),
-            title: const Row(
+            title: Row(
               children: [
                 Icon(
                   Icons.compare_arrows_rounded,
-                  color: Color(0xFF0A84FF),
+                  color: AppTheme.of(context).accent,
                   size: 18,
                 ),
-                SizedBox(width: 8),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     'Metadata Diff (Before vs After)',
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
-                      color: Colors.white,
+                      color: AppTheme.of(context).text,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -3155,7 +3710,7 @@ class _MetadataFormState extends State<MetadataForm>
             ),
             subtitle: Text(
               '${changed.length} changed · ${removals.length} removed · ${preserved.length} preserved',
-              style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93)),
+              style: TextStyle(fontSize: 11, color: AppTheme.of(context).muted),
             ),
             children: [
               Padding(
@@ -3163,16 +3718,16 @@ class _MetadataFormState extends State<MetadataForm>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Divider(color: Color(0xFF2C2C2E), height: 1),
+                    Divider(color: AppTheme.of(context).border, height: 1),
                     const SizedBox(height: 8),
                     if (changed.isNotEmpty) ...[
-                      const Text(
+                      Text(
                         'CHANGED / ADDED',
                         style: TextStyle(
                           fontSize: 10,
                           fontWeight: FontWeight.w700,
                           letterSpacing: 0.5,
-                          color: Color(0xFF0A84FF),
+                          color: AppTheme.of(context).accent,
                         ),
                       ),
                       const SizedBox(height: 4),
@@ -3184,19 +3739,19 @@ class _MetadataFormState extends State<MetadataForm>
                             children: [
                               Text(
                                 '${entry.key}: ',
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 11,
                                   fontWeight: FontWeight.w600,
-                                  color: Colors.white70,
+                                  color: AppTheme.of(context).muted,
                                 ),
                               ),
                               Expanded(
                                 child: Text(
                                   '${entry.value.$1}  ➔  ${entry.value.$2}',
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontSize: 11,
                                     fontFamily: 'monospace',
-                                    color: Color(0xFF84E4C7),
+                                    color: AppTheme.of(context).success,
                                   ),
                                 ),
                               ),
@@ -3206,13 +3761,13 @@ class _MetadataFormState extends State<MetadataForm>
                       const SizedBox(height: 8),
                     ],
                     if (removals.isNotEmpty) ...[
-                      const Text(
+                      Text(
                         'REMOVED',
                         style: TextStyle(
                           fontSize: 10,
                           fontWeight: FontWeight.w700,
                           letterSpacing: 0.5,
-                          color: Color(0xFFFF453A),
+                          color: AppTheme.of(context).error,
                         ),
                       ),
                       const SizedBox(height: 4),
@@ -3221,17 +3776,17 @@ class _MetadataFormState extends State<MetadataForm>
                           padding: const EdgeInsets.symmetric(vertical: 2),
                           child: Row(
                             children: [
-                              const Icon(
+                              Icon(
                                 Icons.remove_circle_outline,
                                 size: 12,
-                                color: Color(0xFFFF453A),
+                                color: AppTheme.of(context).error,
                               ),
                               const SizedBox(width: 4),
                               Text(
                                 key,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 11,
-                                  color: Color(0xFFFFB4AB),
+                                  color: AppTheme.of(context).error,
                                 ),
                               ),
                             ],
@@ -3242,19 +3797,19 @@ class _MetadataFormState extends State<MetadataForm>
                     if (preserved.isNotEmpty) ...[
                       Text(
                         'PRESERVED (${preserved.length} tags unchanged)',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 10,
                           fontWeight: FontWeight.w700,
                           letterSpacing: 0.5,
-                          color: Color(0xFF8E8E93),
+                          color: AppTheme.of(context).muted,
                         ),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         preserved.join(', '),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11,
-                          color: Color(0xFF8E8E93),
+                          color: AppTheme.of(context).muted,
                         ),
                       ),
                     ],
@@ -3331,7 +3886,7 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                 height: 5,
                 margin: const EdgeInsets.only(bottom: 14),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF3A3A3C),
+                  color: AppTheme.of(context).border,
                   borderRadius: BorderRadius.circular(2.5),
                 ),
               ),
@@ -3346,15 +3901,15 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                           style: Theme.of(context).textTheme.titleMedium
                               ?.copyWith(
                                 fontWeight: FontWeight.w700,
-                                color: Colors.white,
+                                color: AppTheme.of(context).text,
                               ),
                         ),
                         const SizedBox(height: 2),
                         Text(
                           '$brandName catalog · ${widget.availableProfiles.length} profiles',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 11,
-                            color: Color(0xFF8E8E93),
+                            color: AppTheme.of(context).muted,
                           ),
                         ),
                       ],
@@ -3372,14 +3927,14 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                         child: Container(
                           width: 28,
                           height: 28,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFF2C2C2E),
+                          decoration: BoxDecoration(
+                            color: AppTheme.of(context).border,
                             shape: BoxShape.circle,
                           ),
-                          child: const Icon(
+                          child: Icon(
                             Icons.close_rounded,
                             size: 16,
-                            color: Color(0xFF8E8E93),
+                            color: AppTheme.of(context).muted,
                           ),
                         ),
                       ),
@@ -3392,23 +3947,26 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                 height: 38,
                 clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1C1C1E),
+                  color: AppTheme.of(context).surface,
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFF2C2C2E)),
+                  border: Border.all(color: AppTheme.of(context).border),
                 ),
                 child: TextField(
                   controller: _searchController,
                   autofocus: false,
                   textAlignVertical: TextAlignVertical.center,
-                  cursorColor: const Color(0xFF0A84FF),
+                  cursorColor: AppTheme.of(context).accent,
                   cursorWidth: 1.5,
                   cursorHeight: 16,
-                  style: const TextStyle(fontSize: 13, color: Colors.white),
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: AppTheme.of(context).text,
+                  ),
                   decoration: InputDecoration(
                     hintText: 'Search $brandName models…',
-                    hintStyle: const TextStyle(
+                    hintStyle: TextStyle(
                       fontSize: 13,
-                      color: Color(0xFF636366),
+                      color: AppTheme.of(context).subtle,
                     ),
                     filled: false,
                     fillColor: Colors.transparent,
@@ -3416,12 +3974,12 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                       minWidth: 36,
                       minHeight: 38,
                     ),
-                    prefixIcon: const Padding(
-                      padding: EdgeInsets.only(left: 10, right: 6),
+                    prefixIcon: Padding(
+                      padding: const EdgeInsets.only(left: 10, right: 6),
                       child: Icon(
                         Icons.search_rounded,
                         size: 16,
-                        color: Color(0xFF0A84FF),
+                        color: AppTheme.of(context).accent,
                       ),
                     ),
                     isDense: true,
@@ -3446,10 +4004,10 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                               minWidth: 28,
                               minHeight: 28,
                             ),
-                            icon: const Icon(
+                            icon: Icon(
                               Icons.clear_rounded,
                               size: 16,
-                              color: Color(0xFF8E8E93),
+                              color: AppTheme.of(context).muted,
                             ),
                             onPressed: () {
                               _searchController.clear();
@@ -3465,28 +4023,28 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
               Expanded(
                 child: Container(
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1C1C1E),
+                    color: AppTheme.of(context).surface,
                     borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: const Color(0xFF2C2C2E)),
+                    border: Border.all(color: AppTheme.of(context).border),
                   ),
                   clipBehavior: Clip.antiAlias,
                   child: filtered.isEmpty
-                      ? const Center(
+                      ? Center(
                           child: Padding(
-                            padding: EdgeInsets.all(24),
+                            padding: const EdgeInsets.all(24),
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Icon(
                                   Icons.search_off_rounded,
                                   size: 32,
-                                  color: Color(0xFF636366),
+                                  color: AppTheme.of(context).subtle,
                                 ),
-                                SizedBox(height: 8),
+                                const SizedBox(height: 8),
                                 Text(
                                   'No matching models found.',
                                   style: TextStyle(
-                                    color: Color(0xFF8E8E93),
+                                    color: AppTheme.of(context).muted,
                                     fontSize: 13,
                                   ),
                                 ),
@@ -3498,12 +4056,12 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                           controller: scrollController,
                           padding: EdgeInsets.zero,
                           itemCount: filtered.length,
-                          separatorBuilder: (context, index) => const Divider(
+                          separatorBuilder: (context, index) => Divider(
                             height: 1,
                             thickness: 1,
                             indent: 16,
                             endIndent: 16,
-                            color: Color(0xFF2C2C2E),
+                            color: AppTheme.of(context).border,
                           ),
                           itemBuilder: (context, index) {
                             final p = filtered[index];
@@ -3515,7 +4073,7 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                               onTap: () => Navigator.of(context).pop(p),
                               child: Container(
                                 color: isSelected
-                                    ? const Color(0xFF2C2C2E)
+                                    ? AppTheme.of(context).border
                                     : Colors.transparent,
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 16,
@@ -3536,16 +4094,16 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                                                   ? FontWeight.w700
                                                   : FontWeight.w600,
                                               color: isSelected
-                                                  ? const Color(0xFF0A84FF)
-                                                  : Colors.white,
+                                                  ? AppTheme.of(context).accent
+                                                  : AppTheme.of(context).text,
                                             ),
                                           ),
                                           const SizedBox(height: 2),
                                           Text(
                                             '${p.brand} · $cameraSummary',
-                                            style: const TextStyle(
+                                            style: TextStyle(
                                               fontSize: 11,
-                                              color: Color(0xFF8E8E93),
+                                              color: AppTheme.of(context).muted,
                                             ),
                                           ),
                                         ],
@@ -3555,14 +4113,14 @@ class _ModelSearchSheetState extends State<_ModelSearchSheet> {
                                       Container(
                                         width: 20,
                                         height: 20,
-                                        decoration: const BoxDecoration(
-                                          color: Color(0xFF0A84FF),
+                                        decoration: BoxDecoration(
+                                          color: AppTheme.of(context).accent,
                                           shape: BoxShape.circle,
                                         ),
-                                        child: const Icon(
+                                        child: Icon(
                                           Icons.check_rounded,
                                           size: 13,
-                                          color: Color(0xFFFFFFFF),
+                                          color: AppTheme.of(context).text,
                                         ),
                                       ),
                                   ],
@@ -3637,7 +4195,7 @@ class _BrandPickerSheet extends StatelessWidget {
               height: 5,
               margin: const EdgeInsets.only(bottom: 14),
               decoration: BoxDecoration(
-                color: const Color(0xFF3A3A3C),
+                color: AppTheme.of(context).border,
                 borderRadius: BorderRadius.circular(2.5),
               ),
             ),
@@ -3652,15 +4210,15 @@ class _BrandPickerSheet extends StatelessWidget {
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(
                               fontWeight: FontWeight.w700,
-                              color: Colors.white,
+                              color: AppTheme.of(context).text,
                             ),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         '${brands.length} camera manufacturers available',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11,
-                          color: Color(0xFF8E8E93),
+                          color: AppTheme.of(context).muted,
                         ),
                       ),
                     ],
@@ -3678,14 +4236,14 @@ class _BrandPickerSheet extends StatelessWidget {
                       child: Container(
                         width: 28,
                         height: 28,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFF2C2C2E),
+                        decoration: BoxDecoration(
+                          color: AppTheme.of(context).border,
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(
+                        child: Icon(
                           Icons.close_rounded,
                           size: 16,
-                          color: Color(0xFF8E8E93),
+                          color: AppTheme.of(context).muted,
                         ),
                       ),
                     ),
@@ -3697,9 +4255,9 @@ class _BrandPickerSheet extends StatelessWidget {
             Flexible(
               child: Container(
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1C1C1E),
+                  color: AppTheme.of(context).surface,
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFF2C2C2E)),
+                  border: Border.all(color: AppTheme.of(context).border),
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: ListView.separated(
@@ -3707,12 +4265,12 @@ class _BrandPickerSheet extends StatelessWidget {
                   physics: const ClampingScrollPhysics(),
                   padding: EdgeInsets.zero,
                   itemCount: brands.length,
-                  separatorBuilder: (context, index) => const Divider(
+                  separatorBuilder: (context, index) => Divider(
                     height: 1,
                     thickness: 1,
                     indent: 56,
                     endIndent: 16,
-                    color: Color(0xFF2C2C2E),
+                    color: AppTheme.of(context).border,
                   ),
                   itemBuilder: (context, index) {
                     final b = brands[index];
@@ -3721,7 +4279,7 @@ class _BrandPickerSheet extends StatelessWidget {
                       onTap: () => Navigator.of(context).pop(b),
                       child: Container(
                         color: isSelected
-                            ? const Color(0xFF2C2C2E)
+                            ? AppTheme.of(context).border
                             : Colors.transparent,
                         padding: const EdgeInsets.symmetric(
                           horizontal: 16,
@@ -3733,16 +4291,16 @@ class _BrandPickerSheet extends StatelessWidget {
                               width: 28,
                               height: 28,
                               decoration: BoxDecoration(
-                                color: const Color(0xFF2C2C2E),
+                                color: AppTheme.of(context).border,
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               alignment: Alignment.center,
                               child: Text(
                                 _brandGlyph(b),
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 13,
                                   fontWeight: FontWeight.bold,
-                                  color: Colors.white,
+                                  color: AppTheme.of(context).text,
                                 ),
                               ),
                             ),
@@ -3759,16 +4317,16 @@ class _BrandPickerSheet extends StatelessWidget {
                                           ? FontWeight.w700
                                           : FontWeight.w600,
                                       color: isSelected
-                                          ? const Color(0xFF0A84FF)
-                                          : Colors.white,
+                                          ? AppTheme.of(context).accent
+                                          : AppTheme.of(context).text,
                                     ),
                                   ),
                                   const SizedBox(height: 1),
                                   Text(
                                     _brandSubtitle(b),
-                                    style: const TextStyle(
+                                    style: TextStyle(
                                       fontSize: 11,
-                                      color: Color(0xFF8E8E93),
+                                      color: AppTheme.of(context).muted,
                                     ),
                                   ),
                                 ],
@@ -3778,14 +4336,14 @@ class _BrandPickerSheet extends StatelessWidget {
                               Container(
                                 width: 20,
                                 height: 20,
-                                decoration: const BoxDecoration(
-                                  color: Color(0xFF0A84FF),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.of(context).accent,
                                   shape: BoxShape.circle,
                                 ),
-                                child: const Icon(
+                                child: Icon(
                                   Icons.check_rounded,
                                   size: 13,
-                                  color: Color(0xFFFFFFFF),
+                                  color: AppTheme.of(context).text,
                                 ),
                               ),
                           ],
@@ -3848,7 +4406,7 @@ class _CameraPickerSheet extends StatelessWidget {
               height: 5,
               margin: const EdgeInsets.only(bottom: 14),
               decoration: BoxDecoration(
-                color: const Color(0xFF3A3A3C),
+                color: AppTheme.of(context).border,
                 borderRadius: BorderRadius.circular(2.5),
               ),
             ),
@@ -3863,7 +4421,7 @@ class _CameraPickerSheet extends StatelessWidget {
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(
                               fontWeight: FontWeight.w700,
-                              color: Colors.white,
+                              color: AppTheme.of(context).text,
                             ),
                       ),
                       if (profileModel != null) ...[
@@ -3872,16 +4430,16 @@ class _CameraPickerSheet extends StatelessWidget {
                           children: [
                             Text(
                               profileModel!,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 11,
-                                color: Color(0xFF8E8E93),
+                                color: AppTheme.of(context).muted,
                               ),
                             ),
                             Text(
                               ' · $lensSummary',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 11,
-                                color: Color(0xFF8E8E93),
+                                color: AppTheme.of(context).muted,
                               ),
                             ),
                           ],
@@ -3902,14 +4460,14 @@ class _CameraPickerSheet extends StatelessWidget {
                       child: Container(
                         width: 28,
                         height: 28,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFF2C2C2E),
+                        decoration: BoxDecoration(
+                          color: AppTheme.of(context).border,
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(
+                        child: Icon(
                           Icons.close_rounded,
                           size: 16,
-                          color: Color(0xFF8E8E93),
+                          color: AppTheme.of(context).muted,
                         ),
                       ),
                     ),
@@ -3921,9 +4479,9 @@ class _CameraPickerSheet extends StatelessWidget {
             Flexible(
               child: Container(
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1C1C1E),
+                  color: AppTheme.of(context).surface,
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFF2C2C2E)),
+                  border: Border.all(color: AppTheme.of(context).border),
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: ListView.separated(
@@ -3931,12 +4489,12 @@ class _CameraPickerSheet extends StatelessWidget {
                   physics: const ClampingScrollPhysics(),
                   padding: EdgeInsets.zero,
                   itemCount: cameras.length,
-                  separatorBuilder: (context, index) => const Divider(
+                  separatorBuilder: (context, index) => Divider(
                     height: 1,
                     thickness: 1,
                     indent: 16,
                     endIndent: 16,
-                    color: Color(0xFF2C2C2E),
+                    color: AppTheme.of(context).border,
                   ),
                   itemBuilder: (context, index) {
                     final c = cameras[index];
@@ -3946,7 +4504,7 @@ class _CameraPickerSheet extends StatelessWidget {
                       onTap: () => Navigator.of(context).pop(c),
                       child: Container(
                         color: isSelected
-                            ? const Color(0xFF2C2C2E)
+                            ? AppTheme.of(context).border
                             : Colors.transparent,
                         padding: const EdgeInsets.symmetric(
                           horizontal: 16,
@@ -3966,17 +4524,17 @@ class _CameraPickerSheet extends StatelessWidget {
                                           ? FontWeight.w700
                                           : FontWeight.w600,
                                       color: isSelected
-                                          ? const Color(0xFF0A84FF)
-                                          : Colors.white,
+                                          ? AppTheme.of(context).accent
+                                          : AppTheme.of(context).text,
                                     ),
                                   ),
                                   if (subtitle != null) ...[
                                     const SizedBox(height: 2),
                                     Text(
                                       subtitle,
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                         fontSize: 11,
-                                        color: Color(0xFF8E8E93),
+                                        color: AppTheme.of(context).muted,
                                       ),
                                     ),
                                   ],
@@ -3987,14 +4545,14 @@ class _CameraPickerSheet extends StatelessWidget {
                               Container(
                                 width: 20,
                                 height: 20,
-                                decoration: const BoxDecoration(
-                                  color: Color(0xFF0A84FF),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.of(context).accent,
                                   shape: BoxShape.circle,
                                 ),
-                                child: const Icon(
+                                child: Icon(
                                   Icons.check_rounded,
                                   size: 13,
-                                  color: Color(0xFFFFFFFF),
+                                  color: AppTheme.of(context).text,
                                 ),
                               ),
                           ],
@@ -4086,7 +4644,7 @@ class _QuickPrivacyScrubberSheetState
                 width: 36,
                 height: 5,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF3A3A3C),
+                  color: AppTheme.of(context).border,
                   borderRadius: BorderRadius.circular(2.5),
                 ),
               ),
@@ -4100,17 +4658,18 @@ class _QuickPrivacyScrubberSheetState
                     width: 36,
                     height: 36,
                     decoration: BoxDecoration(
-                      color: const Color(0xFF1E2A3E),
+                      color: AppTheme.of(context).accent
+                          .withValues(alpha: 0.10),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: const Icon(
+                    child: Icon(
                       Icons.shield_outlined,
-                      color: Color(0xFF0A84FF),
+                      color: AppTheme.of(context).accent,
                       size: 20,
                     ),
                   ),
                   const SizedBox(width: 12),
-                  const Expanded(
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -4120,15 +4679,15 @@ class _QuickPrivacyScrubberSheetState
                             fontSize: 17,
                             fontWeight: FontWeight.w700,
                             letterSpacing: -0.4,
-                            color: Colors.white,
+                            color: AppTheme.of(context).text,
                           ),
                         ),
-                        SizedBox(height: 2),
+                        const SizedBox(height: 2),
                         Text(
                           'Select categories to strip before sharing',
                           style: TextStyle(
                             fontSize: 12,
-                            color: Color(0xFF8E8E93),
+                            color: AppTheme.of(context).muted,
                           ),
                         ),
                       ],
@@ -4142,14 +4701,14 @@ class _QuickPrivacyScrubberSheetState
                       child: Container(
                         width: 30,
                         height: 30,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFF2C2C2E),
+                        decoration: BoxDecoration(
+                          color: AppTheme.of(context).border,
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(
+                        child: Icon(
                           Icons.close_rounded,
                           size: 16,
-                          color: Color(0xFF8E8E93),
+                          color: AppTheme.of(context).muted,
                         ),
                       ),
                     ),
@@ -4162,9 +4721,9 @@ class _QuickPrivacyScrubberSheetState
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Container(
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1C1C1E),
+                  color: AppTheme.of(context).surface,
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFF2C2C2E)),
+                  border: Border.all(color: AppTheme.of(context).border),
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: Column(
@@ -4176,10 +4735,10 @@ class _QuickPrivacyScrubberSheetState
                       value: _stripLocation,
                       onChanged: (v) => setState(() => _stripLocation = v),
                     ),
-                    const Divider(
+                    Divider(
                       height: 1,
                       thickness: 1,
-                      color: Color(0xFF2C2C2E),
+                      color: AppTheme.of(context).border,
                       indent: 52,
                     ),
                     _buildToggleRow(
@@ -4189,10 +4748,10 @@ class _QuickPrivacyScrubberSheetState
                       value: _stripHardware,
                       onChanged: (v) => setState(() => _stripHardware = v),
                     ),
-                    const Divider(
+                    Divider(
                       height: 1,
                       thickness: 1,
-                      color: Color(0xFF2C2C2E),
+                      color: AppTheme.of(context).border,
                       indent: 52,
                     ),
                     _buildToggleRow(
@@ -4202,10 +4761,10 @@ class _QuickPrivacyScrubberSheetState
                       value: _stripAuthor,
                       onChanged: (v) => setState(() => _stripAuthor = v),
                     ),
-                    const Divider(
+                    Divider(
                       height: 1,
                       thickness: 1,
-                      color: Color(0xFF2C2C2E),
+                      color: AppTheme.of(context).border,
                       indent: 52,
                     ),
                     _buildToggleRow(
@@ -4248,32 +4807,36 @@ class _QuickPrivacyScrubberSheetState
     return SwitchListTile.adaptive(
       value: value,
       onChanged: onChanged,
-      activeTrackColor: const Color(0xFF0A84FF),
+      activeTrackColor: AppTheme.of(context).accent,
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       secondary: Container(
         width: 32,
         height: 32,
         decoration: BoxDecoration(
-          color: value ? const Color(0xFF1E2A3E) : const Color(0xFF2C2C2E),
+          color: value
+              ? AppTheme.of(context).accent.withValues(alpha: 0.10)
+              : AppTheme.of(context).border,
           borderRadius: BorderRadius.circular(8),
         ),
         child: Icon(
           icon,
           size: 16,
-          color: value ? const Color(0xFF0A84FF) : const Color(0xFF8E8E93),
+          color: value
+              ? AppTheme.of(context).accent
+              : AppTheme.of(context).muted,
         ),
       ),
       title: Text(
         title,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 14,
           fontWeight: FontWeight.w600,
-          color: Colors.white,
+          color: AppTheme.of(context).text,
         ),
       ),
       subtitle: Text(
         subtitle,
-        style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E93)),
+        style: TextStyle(fontSize: 11, color: AppTheme.of(context).muted),
       ),
     );
   }

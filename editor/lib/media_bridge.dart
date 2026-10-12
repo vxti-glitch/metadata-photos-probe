@@ -7,6 +7,7 @@ import 'metadata_patch.dart';
 abstract interface class MediaBridge {
   Future<MediaCapabilities> capabilities();
   Future<List<MediaSession>> listSessions();
+  Future<Map<String, String>> reserveOutputNames(List<String> sessionIds);
   Future<MediaSession?> importMedia({required bool photos});
   Future<MediaSession> process(String sessionId, CameraPatch patch);
   Future<bool> exportFiles(
@@ -19,6 +20,7 @@ abstract interface class MediaBridge {
   Future<void> clearSessions();
   Future<void> openICloud();
   Future<void> openUrl(String url);
+  Future<void> openSupportEmail();
   Future<Map<String, Object?>> loadEditorState();
   Future<void> saveEditorState(Map<String, Object?> state);
   Future<BatchImport> importBatch({required bool photos});
@@ -47,6 +49,39 @@ class NativeMediaBridge implements MediaBridge {
   NativeMediaBridge({MethodChannel? channel})
     : _channel = channel ?? const MethodChannel(AppBrand.bridgeChannel);
   final MethodChannel _channel;
+
+  @override
+  Future<Map<String, String>> reserveOutputNames(
+    List<String> sessionIds,
+  ) async {
+    if (sessionIds.isEmpty ||
+        sessionIds.length > 50 ||
+        sessionIds.toSet().length != sessionIds.length) {
+      throw const FormatException('Invalid output name selection.');
+    }
+    final raw = objectMap(
+      await _channel.invokeMethod<Object?>('reserveOutputNames', {
+        'sessionIds': sessionIds,
+      }),
+    );
+    if (raw.length != sessionIds.length || !sessionIds.every(raw.containsKey)) {
+      throw const FormatException('Invalid output name reservation.');
+    }
+    final names = <String, String>{};
+    for (final id in sessionIds) {
+      final name = raw[id];
+      if (name is! String ||
+          !RegExp(r'^IMG_[0-9]{4}\.(JPG|JPEG|HEIC|HEIF|PNG|MP4|MOV)$')
+              .hasMatch(name)) {
+        throw const FormatException('Invalid output name reservation.');
+      }
+      names[id] = name;
+    }
+    if (names.values.toSet().length != names.length) {
+      throw const FormatException('Invalid output name reservation.');
+    }
+    return names;
+  }
 
   @override
   Future<MediaCapabilities> capabilities() async => MediaCapabilities.decode(
@@ -194,6 +229,9 @@ class NativeMediaBridge implements MediaBridge {
   @override
   Future<void> openUrl(String url) =>
       _channel.invokeMethod<void>('openUrl', {'url': url});
+  @override
+  Future<void> openSupportEmail() =>
+      _channel.invokeMethod<void>('openSupportEmail');
   @override
   Future<Map<String, double>?> openLocationPicker({
     double? latitude,

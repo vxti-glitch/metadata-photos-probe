@@ -1,359 +1,326 @@
 import 'package:flutter/material.dart';
 
 import 'app_brand.dart';
+import 'app_theme.dart';
 import 'editor_app.dart';
 import 'editor_controller.dart';
 import 'legal_documents.dart';
+import 'settings_destinations.dart';
 
-const _background = Color(0xFF000000);
-const _panel = Color(0xFF1C1C1E);
-const _cardBorder = Color(0xFF2C2C2E);
-const _accent = Color(0xFF0A84FF);
-const _activeGreen = Color(0xFF34C759);
-const _activeGreenBg = Color(0xFF132720);
-const _activeGreenBorder = Color(0xFF2A5B44);
-const _muted = Color(0xFF8E8E93);
-const _subtle = Color(0xFF636366);
-const _iconBg = Color(0xFF2C2C2E);
-
-/// Grouped iOS Settings screen for Metadata Editor.
+/// Simple grouped Settings; every tool opens a focused destination.
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({
     super.key,
     required this.controller,
     this.isTab = false,
     this.onOpenEditor,
+    this.onBack,
   });
-
   final EditorController controller;
   final bool isTab;
   final VoidCallback? onOpenEditor;
+  final VoidCallback? onBack;
+
+  void _open(BuildContext context, Widget page) =>
+      Navigator.of(context)
+          .push<void>(MaterialPageRoute<void>(builder: (_) => page));
+
+  void _legal(BuildContext context, String title, String content) =>
+      showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (_) => _LegalDocumentSheet(title: title, content: content),
+      );
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    backgroundColor: _background,
-    appBar: AppBar(
-      backgroundColor: _background,
-      elevation: 0,
-      leading: isTab
-          ? null
-          : IconButton(
-              key: const Key('settingsBackButton'),
-              tooltip: 'Back',
-              icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-      title: const Text(
-        'Settings',
-        style: TextStyle(
-          fontSize: 18,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.3,
+  Widget build(BuildContext context) {
+    final theme = AppTheme.of(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'Settings',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
         ),
+        leading: isTab && onBack == null
+            ? null
+            : IconButton(
+                key: const Key('settingsBackButton'),
+                tooltip: 'Back to Home',
+                icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
+                onPressed: onBack ?? () => Navigator.of(context).pop(),
+              ),
       ),
-      centerTitle: true,
-    ),
-    body: SafeArea(
-      top: false,
-      child: Align(
-        alignment: Alignment.topCenter,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 720),
-          child: AnimatedBuilder(
-            animation: controller,
-            builder: (context, _) => ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
-              children: [
-                if (controller.statePersistenceError != null) ...[
-                  _buildOperationFeedback(
-                    'Local history could not be saved. Your latest settings or diagnostics may not survive a restart.',
-                    isError: true,
-                    key: const Key('settingsPersistenceWarning'),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                if (controller.error != null) ...[
-                  _buildOperationFeedback(controller.error!, isError: true),
-                  const SizedBox(height: 12),
-                ] else if (controller.notice != null) ...[
-                  _buildOperationFeedback(controller.notice!),
-                  const SizedBox(height: 12),
-                ],
-                if (controller.busy) ...[
-                  _buildOperationFeedback(
-                    controller.progressLabel,
-                    key: const Key('settingsOperationProgress'),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                _buildIdentityHero(context),
-                const SizedBox(height: 20),
-                _buildSectionHeader('STORAGE & PRESETS'),
-                const SizedBox(height: 8),
-                _buildDataStorageCard(context),
-                const SizedBox(height: 20),
-                _buildSectionHeader('HELP'),
-                const SizedBox(height: 8),
-                if (controller.lastErrorCode != null) ...[
-                  _buildRecentErrorBanner(context),
-                  const SizedBox(height: 8),
-                ],
-                _buildTroubleshootingCard(context),
-                const SizedBox(height: 8),
-                _buildDisclosure(
-                  key: const Key('mediaExportDetails'),
-                  title: 'Media & export',
-                  subtitle: 'Formats, originals and Photos workflow',
-                  icon: Icons.photo_library_outlined,
-                  child: _buildMediaEngineCard(context),
-                ),
-                const SizedBox(height: 20),
-                _buildSectionHeader('ABOUT'),
-                const SizedBox(height: 8),
-                _buildGeneralCard(context),
-                const SizedBox(height: 8),
-                _buildDisclosure(
-                  key: const Key('engineDetails'),
-                  title: 'Engine & diagnostics',
-                  subtitle: controller.ready
-                      ? 'Ready · processing stays on this device'
-                      : 'Startup required before editing',
-                  icon: Icons.info_outline_rounded,
-                  child: _buildDiagnosticsCard(context),
-                ),
-                const SizedBox(height: 20),
-                _buildFooter(),
-              ],
-            ),
-          ),
-        ),
-      ),
-    ),
-  );
-
-  Widget _buildOperationFeedback(
-    String message, {
-    bool isError = false,
-    Key? key,
-  }) => Container(
-    key:
-        key ??
-        Key(isError ? 'settingsOperationError' : 'settingsOperationNotice'),
-    padding: const EdgeInsets.all(12),
-    decoration: BoxDecoration(
-      color: isError ? const Color(0xFF261215) : _panel,
-      borderRadius: BorderRadius.circular(12),
-      border: Border.all(
-        color: isError ? const Color(0xFF591C22) : _cardBorder,
-      ),
-    ),
-    child: Text(
-      message,
-      style: TextStyle(
-        color: isError ? const Color(0xFFFFD4CE) : Colors.white,
-        height: 1.4,
-      ),
-    ),
-  );
-
-  Widget _buildIdentityHero(BuildContext context) => _buildCard(
-    children: [
-      Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            const MetadataMark(size: 40),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+      body: SafeArea(
+        top: false,
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 720),
+            child: AnimatedBuilder(
+              animation: controller,
+              builder: (context, _) => ListView(
+                key: const Key('settingsScroll'),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
                 children: [
-                  const Text(
-                    AppBrand.name,
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                  if (controller.statePersistenceError != null)
+                    const SettingsMessage(
+                      key: Key('settingsPersistenceWarning'),
+                      message: 'Your latest preferences could not be saved. Try again before closing the app.',
+                      isError: true,
+                    ),
+                  if (controller.error != null)
+                    SettingsMessage(
+                      key: const Key('settingsOperationError'),
+                      message: controller.error!,
+                      isError: true,
+                    )
+                  else if (controller.notice != null)
+                    SettingsMessage(
+                      key: const Key('settingsOperationNotice'),
+                      message: controller.notice!,
+                    ),
+                  if (controller.busy)
+                    SettingsMessage(
+                      key: const Key('settingsOperationProgress'),
+                      message: controller.progressLabel,
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                    child: Column(
+                      children: [
+                        const MetadataMark(size: 80),
+                        const SizedBox(height: 14),
+                        const Text(
+                          AppBrand.name,
+                          style: TextStyle(
+                            fontSize: 23,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          'by ${AppBrand.developer}',
+                          style: TextStyle(fontSize: 13, color: theme.muted),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          'Version ${AppBrand.version}',
+                          style: TextStyle(fontSize: 12, color: theme.subtle),
+                        ),
+                      ],
+                    ),
                   ),
-                  const SizedBox(height: 3),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 3,
+                  settingsHeading(context, 'GENERAL'),
+                  SettingsGroup(
                     children: [
-                      Text(
-                        'Version ${AppBrand.version}',
-                        style: const TextStyle(fontSize: 12, color: _muted),
+                      SettingsItem(
+                        key: const Key('appearanceRow'),
+                        title: 'Appearance',
+                        icon: Icons.contrast_rounded,
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              switch (controller.appearance) {
+                                'light' => 'Light',
+                                'dark' => 'Dark',
+                                _ => 'System',
+                              },
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: theme.muted,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.chevron_right_rounded,
+                              size: 20,
+                              color: theme.subtle,
+                            ),
+                          ],
+                        ),
+                        onTap: () => _open(
+                          context,
+                          AppearanceSettingsPage(controller: controller),
+                        ),
                       ),
-                      Text(
-                        'by ${AppBrand.developer}',
-                        style: const TextStyle(fontSize: 12, color: _muted),
+                      SettingsItem(
+                        key: const Key('localProjectsRow'),
+                        title: 'Local projects',
+                        icon: Icons.folder_outlined,
+                        onTap: () => _open(
+                          context,
+                          LocalProjectsSettingsPage(
+                            controller: controller,
+                            onOpenEditor: onOpenEditor,
+                          ),
+                        ),
+                      ),
+                      SettingsItem(
+                        key: const Key('savedPresetsRow'),
+                        title: 'Saved presets',
+                        icon: Icons.bookmark_outline_rounded,
+                        onTap: () => _open(
+                          context,
+                          SavedPresetsSettingsPage(controller: controller),
+                        ),
+                      ),
+                    ],
+                  ),
+                  settingsHeading(context, 'HELP'),
+                  if (controller.lastErrorCode != null) _recentIssue(context),
+                  SettingsGroup(
+                    children: [
+                      SettingsItem(
+                        key: const Key('errorGuideRow'),
+                        title: 'Error Codes & Fixes',
+                        icon: Icons.menu_book_outlined,
+                        onTap: () => openErrorGuidePage(
+                          context,
+                          controller: controller,
+                          highlightedCode: controller.lastErrorCode,
+                          onOpenEditor: onOpenEditor,
+                        ),
+                      ),
+                      SettingsItem(
+                        key: const Key('photosAttributionRow'),
+                        title: 'Photos guide',
+                        icon: Icons.photo_library_outlined,
+                        onTap: () => _open(
+                          context,
+                          PhotosGuideSettingsPage(controller: controller),
+                        ),
+                      ),
+                      SettingsItem(
+                        key: const Key('contactSupportRow'),
+                        title: 'Contact support',
+                        icon: Icons.mail_outline_rounded,
+                        onTap: controller.busy
+                            ? null
+                            : controller.openSupportEmail,
+                      ),
+                    ],
+                  ),
+                  settingsHeading(context, 'ABOUT'),
+                  SettingsGroup(
+                    children: [
+                      SettingsItem(
+                        key: const Key('mediaExportDetails'),
+                        title: 'Media & export',
+                        icon: Icons.perm_media_outlined,
+                        onTap: () => _open(
+                          context,
+                          MediaExportSettingsPage(controller: controller),
+                        ),
+                      ),
+                      SettingsItem(
+                        key: const Key('engineDetails'),
+                        title: 'Diagnostics',
+                        icon: Icons.monitor_heart_outlined,
+                        onTap: () => _open(
+                          context,
+                          DiagnosticsSettingsPage(controller: controller),
+                        ),
+                      ),
+                      SettingsItem(
+                        key: const Key('appInformationRow'),
+                        title: 'App information',
+                        icon: Icons.info_outline_rounded,
+                        onTap: () => _open(
+                          context,
+                          AppInformationSettingsPage(controller: controller),
+                        ),
+                      ),
+                      SettingsItem(
+                        key: const Key('visitWebsiteRow'),
+                        title: 'Visit Website',
+                        icon: Icons.language_rounded,
+                        onTap: controller.busy ? null : controller.openWebsite,
+                      ),
+                    ],
+                  ),
+                  SettingsGroup(
+                    children: [
+                      SettingsItem(
+                        key: const Key('privacyPolicyRow'),
+                        title: 'Privacy Policy',
+                        icon: Icons.shield_outlined,
+                        onTap: () => _legal(
+                          context,
+                          'Privacy Policy',
+                          LegalDocuments.privacyPolicy,
+                        ),
+                      ),
+                      SettingsItem(
+                        key: const Key('termsOfUseRow'),
+                        title: 'Terms of Use',
+                        icon: Icons.description_outlined,
+                        onTap: () => _legal(
+                          context,
+                          'Terms of Use',
+                          LegalDocuments.termsOfUse,
+                        ),
                       ),
                     ],
                   ),
                 ],
               ),
             ),
-          ],
-        ),
-      ),
-    ],
-  );
-
-  Widget _buildDisclosure({
-    required Key key,
-    required String title,
-    required String subtitle,
-    required IconData icon,
-    required Widget child,
-  }) => _buildCard(
-    children: [
-      Material(
-        color: _panel,
-        child: ExpansionTile(
-          key: key,
-          tilePadding: const EdgeInsets.symmetric(horizontal: 16),
-          leading: Icon(icon, color: _accent, size: 22),
-          title: Text(
-            title,
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
           ),
-          subtitle: Text(
-            subtitle,
-            style: const TextStyle(fontSize: 12, color: _muted),
-          ),
-          children: [child],
         ),
       ),
-    ],
-  );
+    );
+  }
 
-  Widget _buildSectionHeader(String title) => Padding(
-    padding: const EdgeInsets.only(left: 12, bottom: 2),
-    child: Text(
-      title,
-      style: const TextStyle(
-        fontSize: 11,
-        fontWeight: FontWeight.w700,
-        color: _muted,
-        letterSpacing: 1.2,
-      ),
-    ),
-  );
-
-  Widget _buildCard({required List<Widget> children}) => Container(
-    decoration: BoxDecoration(
-      color: _panel,
-      borderRadius: BorderRadius.circular(16),
-      border: Border.all(color: _cardBorder),
-    ),
-    clipBehavior: Clip.antiAlias,
-    child: Column(children: children),
-  );
-
-  Widget _buildGeneralCard(BuildContext context) => _buildCard(
-    children: [
-      _buildRow(
-        key: const Key('visitWebsiteRow'),
-        icon: Icons.language_rounded,
-        iconColor: _accent,
-        title: 'Visit Website',
-        trailing: const Icon(
-          Icons.arrow_outward_rounded,
-          size: 16,
-          color: _muted,
-        ),
-        onTap: controller.busy || !controller.ready
-            ? null
-            : () => controller.openWebsite(),
-      ),
-      const _IndentedDivider(),
-      _buildRow(
-        key: const Key('privacyPolicyRow'),
-        icon: Icons.shield_outlined,
-        iconColor: _accent,
-        title: 'Privacy Policy',
-        trailing: const Icon(
-          Icons.chevron_right_rounded,
-          size: 20,
-          color: _muted,
-        ),
-        onTap: () => _openLegalSheet(
-          context,
-          title: 'Privacy Policy',
-          content: LegalDocuments.privacyPolicy,
-        ),
-      ),
-      const _IndentedDivider(),
-      _buildRow(
-        key: const Key('termsOfUseRow'),
-        icon: Icons.description_outlined,
-        iconColor: _accent,
-        title: 'Terms of Use',
-        trailing: const Icon(
-          Icons.chevron_right_rounded,
-          size: 20,
-          color: _muted,
-        ),
-        onTap: () => _openLegalSheet(
-          context,
-          title: 'Terms of Use',
-          content: LegalDocuments.termsOfUse,
-        ),
-      ),
-    ],
-  );
-
-  Widget _buildRecentErrorBanner(BuildContext context) {
+  Widget _recentIssue(BuildContext context) {
+    final theme = AppTheme.of(context);
     final code = controller.lastErrorCode!;
-    final item = kErrorGuideCatalog
+    final entry = kErrorGuideCatalog
         .where((entry) => entry.code == code)
         .firstOrNull;
     return Container(
       key: const Key('recentErrorBanner'),
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.fromLTRB(16, 12, 6, 12),
+      margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: const Color(0xFF261215),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFF591C22)),
+        color: theme.errorSurface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: theme.errorBorder),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(
-            Icons.warning_amber_rounded,
-            color: Color(0xFFFF9B9B),
-            size: 22,
-          ),
-          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  item?.title ?? 'Unexpected Processing Error',
-                  style: const TextStyle(fontWeight: FontWeight.w600),
+                  entry?.title ?? 'Recent issue',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: theme.text,
+                  ),
                 ),
                 const SizedBox(height: 4),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 4,
-                  children: [
-                    Text(
-                      code,
-                      key: const Key('recentErrorCodeBadge'),
-                      style: const TextStyle(
-                        fontFamily: 'monospace',
-                        color: Color(0xFFFF9B9B),
-                        fontSize: 11,
-                      ),
-                    ),
-                    const Text(
-                      'DIAGNOSTIC STEPS',
-                      style: TextStyle(fontSize: 10, color: _muted),
-                    ),
-                  ],
+                Text(
+                  code,
+                  key: const Key('recentErrorCodeBadge'),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: theme.error,
+                    fontFamily: 'monospace',
+                  ),
                 ),
                 TextButton(
                   key: const Key('viewRecentErrorFixButton'),
-                  onPressed: () =>
-                      _openErrorGuidePage(context, highlightedCode: code),
+                  onPressed: () => openErrorGuidePage(
+                    context,
+                    controller: controller,
+                    highlightedCode: code,
+                    onOpenEditor: onOpenEditor,
+                  ),
                   child: const Text('View diagnostic steps'),
                 ),
               ],
@@ -363,519 +330,10 @@ class SettingsScreen extends StatelessWidget {
             key: const Key('dismissRecentErrorButton'),
             tooltip: 'Clear error history',
             onPressed: controller.clearLastError,
-            icon: const Icon(Icons.close_rounded, size: 18, color: _muted),
+            icon: Icon(Icons.close_rounded, color: theme.muted, size: 18),
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildTroubleshootingCard(BuildContext context) {
-    final hasActiveError = controller.lastErrorCode != null;
-    return _buildCard(
-      children: [
-        _buildRow(
-          key: const Key('errorGuideRow'),
-          icon: Icons.menu_book_rounded,
-          iconColor: _accent,
-          title: 'Error Codes & Fixes',
-          subtitle: hasActiveError
-              ? 'View steps for your latest issue'
-              : 'Find an error and its next steps',
-          trailing: const Icon(
-            Icons.chevron_right_rounded,
-            size: 20,
-            color: _muted,
-          ),
-          onTap: () => _openErrorGuidePage(
-            context,
-            highlightedCode: controller.lastErrorCode,
-          ),
-        ),
-        const _IndentedDivider(),
-        _buildRow(
-          key: const Key('photosAttributionRow'),
-          icon: Icons.lightbulb_outline_rounded,
-          iconColor: _activeGreen,
-          title: 'Photos Attribution Guide',
-          subtitle: 'Embedded metadata and Photos labels are separate',
-          trailing: const Icon(
-            Icons.chevron_right_rounded,
-            size: 20,
-            color: _muted,
-          ),
-          onTap: () => _showExplanationDialog(
-            context,
-            title: 'Photos Attribution Guide',
-            body:
-                'Embedded metadata and Photos app-origin labels are separate. Editing camera fields does not prove that a Photos attribution label is absent.\n\n'
-                'Create an edited copy, then use Export to Files. You can manually upload that file through Safari to iCloud Photos and allow it to sync. Apple controls the resulting Photos presentation.\n\n'
-                'This app does not write processed copies directly to Photos, alter Photos databases, or promise that Files, AirDrop, or iCloud imports suppress labels. Check the actual Photos information panel on your device.',
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildMediaEngineCard(BuildContext context) => _buildCard(
-    children: [
-      _buildRow(
-        key: const Key('photosWorkflowRow'),
-        icon: Icons.photo_library_outlined,
-        iconColor: _activeGreen,
-        title: 'The Photos Workflow',
-        subtitle: 'Manual Files & Safari export workflow',
-        trailing: _buildPill(
-          text: 'MANUAL',
-          bgColor: _activeGreenBg,
-          borderColor: _activeGreenBorder,
-          textColor: _activeGreen,
-        ),
-        onTap: () => _showExplanationDialog(
-          context,
-          title: 'The Photos Workflow',
-          body:
-              'Edits create a separate local copy while the imported original stays unchanged.\n\n'
-              'Review the requested changes, then create the edited copy. Fully verified copies may appear in the app’s Files folder; use Export to Files to choose a destination. If verification is incomplete, review the limitations and explicitly acknowledge them before export. Failed checks block export.\n\n'
-              'If you want the copy in iCloud Photos, upload it yourself through Safari and allow Photos to sync. The resulting Photos labels and presentation need a physical-device check.',
-        ),
-      ),
-      const _IndentedDivider(),
-      _buildRow(
-        key: const Key('preserveOriginalsRow'),
-        icon: Icons.lock_outline_rounded,
-        iconColor: _accent,
-        title: 'Preserve Source Originals',
-        subtitle: 'Source files are never modified in-place',
-        trailing: _buildPill(
-          text: 'LOCKED ON',
-          bgColor: _iconBg,
-          borderColor: _cardBorder,
-          textColor: _accent,
-        ),
-        onTap: () => _showExplanationDialog(
-          context,
-          title: 'Source File Immutability',
-          body:
-              'Metadata Editor guarantees that your original photos and videos are never altered or overwritten.\n\n'
-              'All metadata edits, EXIF writes, GPS modifications, and date adjustments create fresh output files in sandboxed storage, leaving your source media bit-for-bit identical.',
-        ),
-      ),
-      const _IndentedDivider(),
-      _buildRow(
-        key: const Key('supportedContainersRow'),
-        icon: Icons.category_outlined,
-        iconColor: _accent,
-        title: 'Supported Media Containers',
-        subtitle: controller.ready
-            ? '${controller.capabilities!.formats.map((format) => format.toUpperCase()).join(' · ')} · Field and file-layout limits apply'
-            : 'Format support is available after startup',
-        trailing: const Icon(
-          Icons.check_circle_outline_rounded,
-          size: 18,
-          color: _activeGreen,
-        ),
-      ),
-    ],
-  );
-
-  Widget _buildDataStorageCard(BuildContext context) => _buildCard(
-    children: [
-      _buildRow(
-        key: const Key('clearCacheRow'),
-        icon: Icons.delete_outline_rounded,
-        iconColor: const Color(0xFFFF9B9B),
-        title: 'Local Projects & Copies',
-        subtitle: 'Private working copies; published files stay unchanged',
-        trailing: OutlinedButton(
-          key: const Key('clearCacheButton'),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: const Color(0xFFFF9B9B),
-            side: const BorderSide(color: Color(0x55FF9B9B)),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            minimumSize: Size.zero,
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-          onPressed: controller.busy || !controller.ready
-              ? null
-              : () => _confirmClearCache(context),
-          child: const Text(
-            'Clear',
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-          ),
-        ),
-        onTap: controller.busy || !controller.ready
-            ? null
-            : () => _confirmClearCache(context),
-      ),
-      const _IndentedDivider(),
-      _buildRow(
-        key: const Key('resetPresetsRow'),
-        icon: Icons.tune_rounded,
-        iconColor: _accent,
-        title: 'Saved Camera Presets',
-        subtitle:
-            '${controller.presets.length} custom preset(s) stored locally',
-        trailing: OutlinedButton(
-          key: const Key('resetPresetsButton'),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: _accent,
-            side: const BorderSide(color: _cardBorder),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            minimumSize: Size.zero,
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-          onPressed: controller.busy || !controller.ready
-              ? null
-              : () => _confirmResetPresets(context),
-          child: const Text(
-            'Reset',
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-          ),
-        ),
-        onTap: controller.busy || !controller.ready
-            ? null
-            : () => _confirmResetPresets(context),
-      ),
-    ],
-  );
-
-  Widget _buildDiagnosticsCard(BuildContext context) => _buildCard(
-    children: [
-      _buildRow(
-        key: const Key('photosAccessHealthRow'),
-        icon: Icons.photo_library_outlined,
-        iconColor: _accent,
-        title: 'Photos Access',
-        subtitle:
-            'Requested when importing from Photos; limited access is supported',
-        trailing: _buildPill(
-          text: 'ON IMPORT',
-          bgColor: const Color(0x1F0A84FF),
-          borderColor: const Color(0x660A84FF),
-          textColor: _accent,
-        ),
-      ),
-      const _IndentedDivider(),
-      _buildRow(
-        key: const Key('engineDiagnosticsRow'),
-        icon: Icons.memory_rounded,
-        iconColor: controller.ready ? _activeGreen : _muted,
-        title: 'Swift Media Engine',
-        subtitle:
-            '${AppBrand.engineCore} · ${controller.ready ? 'Ready' : 'Not ready'} · Sandboxed local engine',
-        trailing: Icon(
-          controller.ready ? Icons.check_rounded : Icons.hourglass_empty,
-          size: 18,
-          color: controller.ready ? _activeGreen : _muted,
-        ),
-      ),
-      const _IndentedDivider(),
-      _buildRow(
-        key: const Key('storageSandboxHealthRow'),
-        icon: Icons.folder_special_outlined,
-        iconColor: _activeGreen,
-        title: 'Storage Sandbox',
-        subtitle: 'Temporary working copies isolated in local sandbox',
-        trailing: _buildPill(
-          text: 'FILE-BACKED',
-          bgColor: _activeGreenBg,
-          borderColor: _activeGreenBorder,
-          textColor: _activeGreen,
-        ),
-      ),
-      const _IndentedDivider(),
-      _buildRow(
-        key: const Key('privacyGuaranteeRow'),
-        icon: Icons.verified_user_outlined,
-        iconColor: _activeGreen,
-        title: 'Privacy Guarantee',
-        subtitle: 'On-device processing · No analytics · Cloud-backed imports may download',
-        trailing: const Icon(
-          Icons.check_rounded,
-          size: 18,
-          color: _activeGreen,
-        ),
-      ),
-    ],
-  );
-
-  Widget _buildFooter() => Center(
-    child: Text(
-      '${AppBrand.name} ${AppBrand.version} (Build ${AppBrand.buildNumber}) · © 2026 ${AppBrand.developer}',
-      style: const TextStyle(
-        fontSize: 12,
-        fontWeight: FontWeight.w500,
-        color: _subtle,
-        letterSpacing: 0.2,
-      ),
-    ),
-  );
-
-  Widget _buildRow({
-    Key? key,
-    required IconData icon,
-    required Color iconColor,
-    required String title,
-    String? subtitle,
-    Widget? trailing,
-    VoidCallback? onTap,
-  }) => InkWell(
-    key: key,
-    onTap: onTap,
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final stackTrailing =
-              constraints.maxWidth < 340 ||
-              MediaQuery.textScalerOf(context).scale(15) > 21;
-          final details = Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: _iconBg,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                alignment: Alignment.center,
-                child: Icon(icon, size: 18, color: iconColor),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
-                    ),
-                    if (subtitle != null) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        subtitle,
-                        style: const TextStyle(fontSize: 12, color: _muted),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              if (trailing != null && !stackTrailing) ...[
-                const SizedBox(width: 8),
-                trailing,
-              ],
-            ],
-          );
-          if (trailing == null || !stackTrailing) return details;
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              details,
-              const SizedBox(height: 8),
-              Padding(
-                padding: const EdgeInsets.only(left: 46),
-                child: trailing,
-              ),
-            ],
-          );
-        },
-      ),
-    ),
-  );
-
-  Widget _buildPill({
-    required String text,
-    required Color bgColor,
-    required Color borderColor,
-    required Color textColor,
-  }) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-    decoration: BoxDecoration(
-      color: bgColor,
-      borderRadius: BorderRadius.circular(6),
-      border: Border.all(color: borderColor),
-    ),
-    child: Text(
-      text,
-      style: TextStyle(
-        fontSize: 10,
-        fontWeight: FontWeight.w800,
-        letterSpacing: 0.6,
-        color: textColor,
-      ),
-    ),
-  );
-
-  void _showExplanationDialog(
-    BuildContext context, {
-    required String title,
-    required String body,
-  }) {
-    showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: _panel,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: _cardBorder),
-        ),
-        title: Text(
-          title,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        scrollable: true,
-        content: Text(
-          body,
-          style: const TextStyle(color: _muted, fontSize: 14, height: 1.4),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Got it', style: TextStyle(color: _accent)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _confirmClearCache(BuildContext context) {
-    showDialog<void>(
-      context: context,
-      builder: (context) => AnimatedBuilder(
-        animation: controller,
-        builder: (context, _) => AlertDialog(
-          backgroundColor: _panel,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: const BorderSide(color: _cardBorder),
-          ),
-          scrollable: true,
-          title: const Text(
-            'Clear Local Projects?',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 17,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          content: const Text(
-            'Remove your local project history, imported working files, and private edited/export staging copies? Published Processed Media files and copies exported elsewhere stay unchanged.\n\n'
-            'Original files in Photos and Files are completely untouched.',
-            style: TextStyle(color: _muted, fontSize: 14, height: 1.4),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel', style: TextStyle(color: _muted)),
-            ),
-            FilledButton(
-              key: const Key('confirmClearCacheButton'),
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF8B2626),
-                foregroundColor: Colors.white,
-              ),
-              onPressed: controller.busy || !controller.ready
-                  ? null
-                  : () async {
-                      if (controller.busy || !controller.ready) return;
-                      Navigator.of(context).pop();
-                      await controller.clearCache();
-                    },
-              child: const Text('Clear Projects'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _confirmResetPresets(BuildContext context) {
-    showDialog<void>(
-      context: context,
-      builder: (context) => AnimatedBuilder(
-        animation: controller,
-        builder: (context, _) => AlertDialog(
-          backgroundColor: _panel,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: const BorderSide(color: _cardBorder),
-          ),
-          scrollable: true,
-          title: const Text(
-            'Reset Saved Presets?',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 17,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          content: const Text(
-            'Remove all custom saved camera recipes and presets?\n\n'
-            'This also clears the remembered profile selection. Default researched camera profiles remain available.',
-            style: TextStyle(color: _muted, fontSize: 14, height: 1.4),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel', style: TextStyle(color: _muted)),
-            ),
-            FilledButton(
-              key: const Key('confirmResetPresetsButton'),
-              style: FilledButton.styleFrom(
-                backgroundColor: _cardBorder,
-                foregroundColor: _accent,
-              ),
-              onPressed: controller.busy || !controller.ready
-                  ? null
-                  : () async {
-                      if (controller.busy || !controller.ready) return;
-                      Navigator.of(context).pop();
-                      await controller.resetPresets();
-                    },
-              child: const Text('Reset Presets'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _openLegalSheet(
-    BuildContext context, {
-    required String title,
-    required String content,
-  }) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => _LegalDocumentSheet(title: title, content: content),
-    );
-  }
-
-  void _openErrorGuidePage(BuildContext context, {String? highlightedCode}) {
-    openErrorGuidePage(
-      context,
-      highlightedCode: highlightedCode,
-      controller: controller,
-      onOpenEditor: onOpenEditor,
     );
   }
 }
@@ -1220,10 +678,12 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
       key: const Key('latestIssueCard'),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: _panel,
+        color: AppTheme.of(context).surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: hasIssue ? const Color(0xFF51403A) : _cardBorder,
+          color: hasIssue
+              ? AppTheme.of(context).errorBorder
+              : AppTheme.of(context).border,
         ),
       ),
       child: Column(
@@ -1237,7 +697,9 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
                     ? Icons.info_outline_rounded
                     : Icons.check_circle_outline_rounded,
                 size: 22,
-                color: hasIssue ? const Color(0xFFE5B495) : _muted,
+                color: hasIssue
+                    ? AppTheme.of(context).error
+                    : AppTheme.of(context).muted,
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -1246,7 +708,10 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
                   children: [
                     Text(
                       code == null ? 'No recent errors' : 'Latest issue',
-                      style: const TextStyle(fontSize: 12, color: _muted),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppTheme.of(context).muted,
+                      ),
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -1272,20 +737,20 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
                 : needsStartup
                 ? 'The editor needs to refresh local history before you can continue.'
                 : 'Your original is unchanged. Review the steps, then return to your edits.',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 13,
               height: 1.45,
-              color: Colors.white70,
+              color: AppTheme.of(context).muted,
             ),
           ),
           if (code != null) ...[
             const SizedBox(height: 8),
             Text(
               'Code: $code',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11,
                 fontFamily: 'monospace',
-                color: _muted,
+                color: AppTheme.of(context).muted,
               ),
             ),
           ],
@@ -1330,14 +795,18 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
           ],
           if (item == null && code != null) ...[
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'This code has no catalog entry. Keep the original and share the code with the developer; avoid sharing private media or location data.',
-              style: TextStyle(fontSize: 12, color: _muted, height: 1.4),
+              style: TextStyle(
+                fontSize: 12,
+                color: AppTheme.of(context).muted,
+                height: 1.4,
+              ),
             ),
           ],
           if (_latestExpanded && item != null) ...[
             const SizedBox(height: 16),
-            const Divider(height: 1, color: _cardBorder),
+            Divider(height: 1, color: AppTheme.of(context).border),
             Padding(
               key: _latestDetailsKey,
               padding: const EdgeInsets.only(top: 16),
@@ -1363,32 +832,35 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
       Container(
         constraints: const BoxConstraints(minHeight: 48),
         decoration: BoxDecoration(
-          color: _panel,
+          color: AppTheme.of(context).surface,
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: _cardBorder),
+          border: Border.all(color: AppTheme.of(context).border),
         ),
         child: TextField(
           key: const Key('errorSearchInput'),
           controller: _searchController,
-          style: const TextStyle(fontSize: 14, color: Colors.white),
+          style: TextStyle(fontSize: 14, color: AppTheme.of(context).text),
           textInputAction: TextInputAction.search,
           onChanged: (_) => setState(() {}),
           decoration: InputDecoration(
             hintText: 'Search code or symptom',
-            hintStyle: const TextStyle(fontSize: 13, color: _muted),
-            prefixIcon: const Icon(
+            hintStyle: TextStyle(
+              fontSize: 13,
+              color: AppTheme.of(context).muted,
+            ),
+            prefixIcon: Icon(
               Icons.search_rounded,
               size: 18,
-              color: _muted,
+              color: AppTheme.of(context).muted,
             ),
             suffixIcon: _searchController.text.isNotEmpty
                 ? IconButton(
                     key: const Key('clearSearchButton'),
                     tooltip: 'Clear search',
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.close_rounded,
                       size: 18,
-                      color: _muted,
+                      color: AppTheme.of(context).muted,
                     ),
                     onPressed: () {
                       _searchController.clear();
@@ -1438,10 +910,10 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.filter_list_rounded,
                     size: 18,
-                    color: _muted,
+                    color: AppTheme.of(context).muted,
                   ),
                   const SizedBox(width: 8),
                   Flexible(
@@ -1449,14 +921,17 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
                       _selectedCategory == 'All'
                           ? 'All categories'
                           : _selectedCategory,
-                      style: const TextStyle(fontSize: 13, color: _muted),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppTheme.of(context).muted,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 4),
-                  const Icon(
+                  Icon(
                     Icons.keyboard_arrow_down_rounded,
                     size: 18,
-                    color: _muted,
+                    color: AppTheme.of(context).muted,
                   ),
                 ],
               ),
@@ -1466,7 +941,7 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
             _hasFilters
                 ? '${items.length} ${items.length == 1 ? 'match' : 'matches'}'
                 : '${items.length} error codes',
-            style: const TextStyle(fontSize: 12, color: _muted),
+            style: TextStyle(fontSize: 12, color: AppTheme.of(context).muted),
           ),
           if (_hasFilters)
             TextButton(
@@ -1483,7 +958,7 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
   Widget build(BuildContext context) {
     final items = _filteredItems;
     final sheetContent = Material(
-      color: const Color(0xFF121214),
+      color: AppTheme.of(context).background,
       borderRadius: widget.isModal
           ? const BorderRadius.vertical(top: Radius.circular(28))
           : BorderRadius.zero,
@@ -1544,11 +1019,15 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
                 _catalogControls(items),
                 const SizedBox(height: 8),
                 if (items.isEmpty)
-                  const Padding(
+                  Padding(
                     padding: EdgeInsets.symmetric(vertical: 24),
                     child: Column(
                       children: [
-                        Icon(Icons.search_off_rounded, size: 28, color: _muted),
+                        Icon(
+                          Icons.search_off_rounded,
+                          size: 28,
+                          color: AppTheme.of(context).muted,
+                        ),
                         SizedBox(height: 10),
                         Text(
                           'No matching error codes found',
@@ -1558,7 +1037,10 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
                         Text(
                           'Try another code, symptom, or category.',
                           textAlign: TextAlign.center,
-                          style: TextStyle(fontSize: 13, color: _muted),
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: AppTheme.of(context).muted,
+                          ),
                         ),
                       ],
                     ),
@@ -1604,12 +1086,15 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
                 top: 10,
                 right: 12,
                 child: Material(
-                  color: _panel,
+                  color: AppTheme.of(context).surface,
                   borderRadius: BorderRadius.circular(24),
                   child: IconButton(
                     key: const Key('closeErrorGuideButton'),
                     tooltip: 'Close',
-                    icon: const Icon(Icons.close_rounded, color: _muted),
+                    icon: Icon(
+                      Icons.close_rounded,
+                      color: AppTheme.of(context).muted,
+                    ),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
                 ),
@@ -1623,11 +1108,13 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
 
   Widget _buildErrorCard(ErrorGuideItem item, bool isExpanded) => Material(
     key: Key('errorTile_${item.code}'),
-    color: _panel,
+    color: AppTheme.of(context).surface,
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(12),
       side: BorderSide(
-        color: isExpanded ? _accent.withValues(alpha: 0.4) : _cardBorder,
+        color: isExpanded
+            ? AppTheme.of(context).accent.withValues(alpha: 0.4)
+            : AppTheme.of(context).border,
       ),
     ),
     clipBehavior: Clip.antiAlias,
@@ -1661,9 +1148,9 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
                         const SizedBox(height: 6),
                         Text(
                           '${item.code} · ${item.category}',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 11,
-                            color: _muted,
+                            color: AppTheme.of(context).muted,
                             height: 1.4,
                           ),
                         ),
@@ -1675,7 +1162,7 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
                     isExpanded
                         ? Icons.keyboard_arrow_up_rounded
                         : Icons.keyboard_arrow_down_rounded,
-                    color: _muted,
+                    color: AppTheme.of(context).muted,
                     size: 20,
                   ),
                 ],
@@ -1684,7 +1171,7 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
           ),
         ),
         if (isExpanded) ...[
-          const Divider(height: 1, color: _cardBorder),
+          Divider(height: 1, color: AppTheme.of(context).border),
           Padding(
             padding: const EdgeInsets.all(14),
             child: _buildGuidance(item),
@@ -1697,30 +1184,30 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
   Widget _buildGuidance(ErrorGuideItem item) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      const Text(
+      Text(
         'Why this happens',
         style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w600,
-          color: _muted,
+          color: AppTheme.of(context).muted,
         ),
       ),
       const SizedBox(height: 6),
       Text(
         item.cause,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 13,
-          color: Color(0xFFE5E5EA),
+          color: AppTheme.of(context).text,
           height: 1.45,
         ),
       ),
       const SizedBox(height: 18),
-      const Text(
+      Text(
         'What to try',
         style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w600,
-          color: _accent,
+          color: AppTheme.of(context).accent,
         ),
       ),
       const SizedBox(height: 10),
@@ -1734,9 +1221,9 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
                 width: 26,
                 child: Text(
                   '${entry.key + 1}.',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
-                    color: _muted,
+                    color: AppTheme.of(context).muted,
                     height: 1.45,
                   ),
                 ),
@@ -1744,9 +1231,9 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
               Expanded(
                 child: Text(
                   entry.value,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
-                    color: Color(0xFFE5E5EA),
+                    color: AppTheme.of(context).text,
                     height: 1.45,
                   ),
                 ),
@@ -1756,33 +1243,24 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
         ),
       ),
       const SizedBox(height: 8),
-      const Text(
+      Text(
         'Keep in mind',
         style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w600,
-          color: _muted,
+          color: AppTheme.of(context).muted,
         ),
       ),
       const SizedBox(height: 6),
       Text(
         item.proTip,
-        style: const TextStyle(fontSize: 12, color: _muted, height: 1.45),
+        style: TextStyle(
+          fontSize: 12,
+          color: AppTheme.of(context).muted,
+          height: 1.45,
+        ),
       ),
     ],
-  );
-}
-
-class _IndentedDivider extends StatelessWidget {
-  const _IndentedDivider();
-
-  @override
-  Widget build(BuildContext context) => const Divider(
-    height: 1,
-    thickness: 1,
-    indent: 62,
-    endIndent: 0,
-    color: _cardBorder,
   );
 }
 
@@ -1796,14 +1274,15 @@ class _LegalDocumentSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final maxHeight = MediaQuery.sizeOf(context).height * 0.88;
     return Container(
+      key: const Key('legalDocumentSheet'),
       constraints: BoxConstraints(maxHeight: maxHeight),
-      decoration: const BoxDecoration(
-        color: Color(0xFF121214),
+      decoration: BoxDecoration(
+        color: AppTheme.of(context).surface,
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
         border: Border(
-          top: BorderSide(color: _cardBorder),
-          left: BorderSide(color: _cardBorder),
-          right: BorderSide(color: _cardBorder),
+          top: BorderSide(color: AppTheme.of(context).border),
+          left: BorderSide(color: AppTheme.of(context).border),
+          right: BorderSide(color: AppTheme.of(context).border),
         ),
       ),
       child: SafeArea(
@@ -1816,7 +1295,7 @@ class _LegalDocumentSheet extends StatelessWidget {
                 width: 36,
                 height: 5,
                 decoration: BoxDecoration(
-                  color: _cardBorder,
+                  color: AppTheme.of(context).border,
                   borderRadius: BorderRadius.circular(2.5),
                 ),
               ),
@@ -1828,31 +1307,34 @@ class _LegalDocumentSheet extends StatelessWidget {
                   Expanded(
                     child: Text(
                       title,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w700,
-                        color: Colors.white,
+                        color: AppTheme.of(context).text,
                       ),
                     ),
                   ),
                   IconButton(
                     key: const Key('closeLegalSheetButton'),
                     tooltip: 'Close',
-                    icon: const Icon(Icons.close_rounded, color: _muted),
+                    icon: Icon(
+                      Icons.close_rounded,
+                      color: AppTheme.of(context).muted,
+                    ),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
                 ],
               ),
             ),
-            const Divider(height: 1, color: _cardBorder),
+            Divider(height: 1, color: AppTheme.of(context).border),
             Expanded(
               child: Scrollbar(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
                   child: SelectableText(
                     content,
-                    style: const TextStyle(
-                      color: Color(0xFFE5E5EA),
+                    style: TextStyle(
+                      color: AppTheme.of(context).text,
                       fontSize: 13.5,
                       height: 1.55,
                       fontFamily: 'monospace',

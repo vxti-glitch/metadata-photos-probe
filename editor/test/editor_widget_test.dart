@@ -10,6 +10,7 @@ import 'package:metadata_editor/metadata_patch.dart';
 import 'package:metadata_editor/metadata_dates.dart';
 
 import 'fake_media_bridge.dart';
+import 'form_test_helpers.dart';
 
 void main() {
   late Future<void> Function(WidgetTester) chooseProfile;
@@ -32,6 +33,14 @@ void main() {
   }
 
   Future<void> tap(WidgetTester tester, String key) async {
+    if (key == 'importPhotos' || key == 'importFiles') {
+      await openImportSource(tester, key);
+    }
+    if (key == 'advancedMetadata' ||
+        key == 'quickRemoveSoftware' ||
+        key == 'profilesAndPresets') {
+      await expandManualEditing(tester);
+    }
     if (key == 'process') {
       final legacyAction = find.byKey(const Key('process'));
       if (legacyAction.evaluate().isNotEmpty) {
@@ -66,6 +75,7 @@ void main() {
   }
 
   Future<void> chooseDateIntent(WidgetTester tester, String intent) async {
+    await expandManualEditing(tester);
     final segment = find.byKey(const Key('dateIntentSegment'));
     if (segment.evaluate().isNotEmpty) {
       final label = switch (intent) {
@@ -127,6 +137,7 @@ void main() {
   }
 
   Future<void> setField(WidgetTester tester, String field, String value) async {
+    await expandManualEditing(tester);
     final advanced = find.byKey(const Key('advancedMetadata'));
     var mode = find.byKey(Key('${field}Mode'));
     if (advanced.evaluate().isNotEmpty && mode.evaluate().isEmpty) {
@@ -159,6 +170,7 @@ void main() {
   }
 
   switchToEditTab = (tester) async {
+    await expandManualEditing(tester);
     final tabs = find.text('Edit');
     if (tabs.evaluate().isEmpty) return;
     final tab = tabs.first;
@@ -171,7 +183,7 @@ void main() {
   testWidgets('automatic capture dates work without a camera preset', (
     tester,
   ) async {
-    final bridge = FakeMediaBridge();
+    final bridge = FakeMediaBridge()..nextHostDevice = {};
     await launch(tester, bridge);
     await tap(tester, 'importFiles');
     await chooseDateIntent(tester, 'randomize');
@@ -186,7 +198,7 @@ void main() {
   testWidgets('manual date picker works without choosing a camera preset', (
     tester,
   ) async {
-    final bridge = FakeMediaBridge();
+    final bridge = FakeMediaBridge()..nextHostDevice = {};
     await launch(tester, bridge);
     await tap(tester, 'importFiles');
     await chooseDateIntent(tester, 'set');
@@ -288,7 +300,12 @@ void main() {
       return;
     }
 
-    await tap(tester, 'configureProfileFromEdit');
+    await tap(
+      tester,
+      find.byKey(const Key('chooseHostProfile')).evaluate().isNotEmpty
+          ? 'chooseHostProfile'
+          : 'configureProfileFromEdit',
+    );
     final search = find.byWidgetPredicate(
       (widget) =>
           widget is TextField &&
@@ -738,6 +755,7 @@ void main() {
       final controller = await launch(tester, bridge);
       await tap(tester, 'importFiles');
       await chooseProfile(tester);
+      await expandManualEditing(tester);
       if (find.byKey(const Key('profilesAndPresets')).evaluate().isNotEmpty) {
         await tap(tester, 'profilesAndPresets');
       }
@@ -868,6 +886,8 @@ void main() {
     await launch(tester, bridge);
     await tap(tester, 'importFiles');
     await chooseProfile(tester);
+    await chooseDateIntent(tester, 'keep');
+    await expandManualEditing(tester);
     final advanced = find.byKey(const Key('advancedMetadata'));
     if (advanced.evaluate().isNotEmpty) await tap(tester, 'advancedMetadata');
     final dates = find.text('Dates');
@@ -900,7 +920,7 @@ void main() {
       expect(patch.values['dateTimeOriginal'], isNotNull);
       expect(patch.values['dateTimeOriginal'], patch.values['createDate']);
       expect(find.text('Copy created'), findsOneWidget);
-      expect(find.text('IMG_4827.heic'), findsWidgets);
+      expect(find.text('IMG_4827.HEIC'), findsWidgets);
       expect(tester.takeException(), isNull);
     },
   );
@@ -928,20 +948,24 @@ void main() {
     (tester) async {
       final bridge = FakeMediaBridge()..sessions = [fixture()];
       await launch(tester, bridge);
-      await tester.ensureVisible(find.byTooltip('Remove controlled.heic'));
+      await tap(tester, 'openSettings');
+      await tap(tester, 'localProjectsRow');
+      await tester.ensureVisible(
+        find.byKey(const Key('deleteLocalProject_$sourceId')),
+      );
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Remove controlled.heic'));
+      await tester.tap(find.byKey(const Key('deleteLocalProject_$sourceId')));
       await tester.pumpAndSettle();
-      expect(find.text('Remove local project?'), findsOneWidget);
-      await tester.tap(find.text('Keep'));
+      expect(find.text('Delete Local Project?'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
       await tester.pumpAndSettle();
       expect(bridge.deletedIds, isEmpty);
-      await tester.tap(find.byTooltip('Remove controlled.heic'));
+      await tester.tap(find.byKey(const Key('deleteLocalProject_$sourceId')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Remove'));
+      await tester.tap(find.text('Delete project'));
       await tester.pumpAndSettle();
       expect(bridge.deletedIds, [sourceId]);
-      expect(find.text('No projects yet'), findsOneWidget);
+      expect(find.text('No local projects'), findsOneWidget);
     },
   );
   testWidgets('phone layout supports increased text size without overflow', (
@@ -962,7 +986,7 @@ void main() {
     final bridge = FakeMediaBridge();
     final controller = await launch(tester, bridge);
     await tap(tester, 'importFiles');
-    final searchIcon = find.byKey(const Key('configureProfileFromEdit'));
+    final searchIcon = find.byKey(const Key('chooseHostProfile'));
     await tester.ensureVisible(searchIcon);
     expect(searchIcon, findsOneWidget);
     await tester.tap(searchIcon);
@@ -1060,7 +1084,7 @@ void main() {
       await tap(tester, 'process');
 
       expect(find.text('Copy created'), findsOneWidget);
-      expect(find.text('IMG_4827.jpeg'), findsWidgets);
+      expect(find.text('IMG_4827.JPG'), findsWidgets);
       expect(find.byKey(const Key('exportFiles')), findsOneWidget);
       expect(find.byKey(const Key('shareFiles')), findsOneWidget);
       expect(find.byKey(const Key('openICloud')), findsOneWidget);
@@ -1095,83 +1119,65 @@ void main() {
   });
 
   testWidgets(
-    'batch panel selection counts, deselect all, and select all work as expected',
+    'multiple selected sources appear in the batch editor selection sheet',
     (tester) async {
       final bridge = FakeMediaBridge()
-        ..sessions = [
+        ..batchImportResult = [
           fixture(id: 's-1', kind: MediaKind.jpeg),
           fixture(id: 's-2', kind: MediaKind.heic),
           fixture(id: 's-3', kind: MediaKind.png),
         ];
       final controller = await launch(tester, bridge);
-      expect(find.text('3 of 3 selected'), findsNothing);
-
-      for (final s in controller.sessions) {
-        controller.toggleBatch(s, true);
-      }
+      await tap(tester, 'importPhotos');
+      expect(controller.batchSelection, {'s-1', 's-2', 's-3'});
+      expect(find.text('3 files selected'), findsOneWidget);
+      await tester.tap(find.text('Change selection'));
       await tester.pumpAndSettle();
-      expect(find.text('3 of 3 selected'), findsOneWidget);
-
-      final deselectBtn = find.text('Deselect all');
-      await tester.ensureVisible(deselectBtn);
-      await tester.pumpAndSettle();
-      await tester.tap(deselectBtn);
-      await tester.pumpAndSettle();
-      expect(controller.batchSelection, isEmpty);
-      expect(find.text('0 of 3 selected'), findsOneWidget);
-
-      final selectBtn = find.text('Select all');
-      await tester.ensureVisible(selectBtn);
-      await tester.pumpAndSettle();
-      await tester.tap(selectBtn);
-      await tester.pumpAndSettle();
-      expect(controller.batchSelection.length, 3);
-      expect(find.text('3 of 3 selected'), findsOneWidget);
+      expect(find.text('controlled.jpeg'), findsOneWidget);
+      expect(find.text('controlled.heic'), findsOneWidget);
+      expect(find.text('controlled.png'), findsOneWidget);
+      expect(bridge.processes, 0);
+      expect(tester.takeException(), isNull);
     },
   );
 
-  testWidgets('THE PHOTOS WORKFLOW card has restored green color scheme', (
+  testWidgets('saving instructions are available before processing', (
     tester,
   ) async {
     final bridge = FakeMediaBridge();
     await launch(tester, bridge);
-    await tap(tester, 'homePhotosWorkflow');
-    final workflowTitle = find.text('THE PHOTOS WORKFLOW');
-    expect(workflowTitle, findsOneWidget);
-    final textWidget = tester.widget<Text>(workflowTitle);
-    expect(textWidget.style?.color, const Color(0xFF84E4C7));
-  });
-
-  testWidgets('importing multiple files navigates directly to batch editor', (
-    tester,
-  ) async {
-    final bridge = FakeMediaBridge()
-      ..batchImportResult = [
-        fixture(id: 's-1', kind: MediaKind.jpeg),
-        fixture(id: 's-2', kind: MediaKind.png),
-      ];
-    final controller = await launch(tester, bridge);
     await tap(tester, 'importPhotos');
-    await tester.pumpAndSettle();
-    expect(controller.isBatchMode, isTrue);
-    expect(find.text('Batch Editor'), findsOneWidget);
-    expect(find.textContaining('2 files selected'), findsWidgets);
-
-    final backBtn = find.byTooltip('Back to projects');
-    expect(backBtn, findsOneWidget);
-    await tester.tap(backBtn);
-    await tester.pumpAndSettle();
-    expect(controller.isBatchMode, isFalse);
-    expect(find.text('LOCAL PROJECTS'), findsOneWidget);
-
-    final editBtn = find.text('Edit selected files');
-    await tester.ensureVisible(editBtn);
-    await tester.pumpAndSettle();
-    await tester.tap(editBtn);
-    await tester.pumpAndSettle();
-    expect(controller.isBatchMode, isTrue);
-    expect(find.text('Batch Editor'), findsOneWidget);
+    await tap(tester, 'savingGuide');
+    expect(find.text('How saving works'), findsWidgets);
+    expect(find.textContaining('Files'), findsWidgets);
+    expect(find.textContaining('Photos'), findsWidgets);
+    expect(bridge.processes, 0);
+    expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'importing multiple files opens batch editor and Home lets you select again',
+    (tester) async {
+      final bridge = FakeMediaBridge()
+        ..batchImportResult = [
+          fixture(id: 's-1', kind: MediaKind.jpeg),
+          fixture(id: 's-2', kind: MediaKind.png),
+        ];
+      final controller = await launch(tester, bridge);
+      await tap(tester, 'importPhotos');
+      expect(controller.isBatchMode, isTrue);
+      expect(find.text('2 selected'), findsOneWidget);
+      expect(find.text('2 files selected'), findsOneWidget);
+      await tap(tester, 'backToHome');
+      expect(controller.isBatchMode, isFalse);
+      expect(find.byKey(const Key('selectMedia')), findsOneWidget);
+      expect(controller.sessions.length, 2);
+      await tap(tester, 'importPhotos');
+      expect(controller.isBatchMode, isTrue);
+      expect(find.text('2 selected'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('saved camera profile autofills form on new session', (
     tester,
