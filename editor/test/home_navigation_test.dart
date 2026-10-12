@@ -114,6 +114,31 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('error message is compact with optional details and dismissal', (
+    tester,
+  ) async {
+    final controller = await launch(tester);
+    await controller.setAppearance('dark');
+    controller.error = 'The edited copy failed media preservation checks. No new output is available.';
+    controller.recordError(controller.error!, code: 'ERR_MEDIA_INTEGRITY');
+    await tester.pumpAndSettle();
+    final banner = find.byKey(const Key('diagnosticErrorBanner'));
+    expect(tester.getSize(banner).height, lessThan(130));
+    expect(find.text('ERR_MEDIA_INTEGRITY'), findsNothing);
+    expect(find.text('Attention Needed'), findsNothing);
+    expect(find.text('Error details'), findsNothing);
+    expect(find.text('Details'), findsOneWidget);
+    await tap(tester, 'viewSolutionButton');
+    expect(find.text('Error Codes & Fixes'), findsOneWidget);
+    expect(find.text('Media or Metadata Integrity Check Failed'), findsWidgets);
+    await tap(tester, 'errorGuideBackButton');
+    await tap(tester, 'settingsBackButton');
+    await tap(tester, 'dismissErrorBannerButton');
+    expect(banner, findsNothing);
+    expect(controller.lastErrorCode, 'ERR_MEDIA_INTEGRITY');
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('clear confirmation preserves published copies', (tester) async {
     final bridge = FakeMediaBridge()..sessions = [fixture()];
     await launch(tester, bridge: bridge);

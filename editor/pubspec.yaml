@@ -1,7 +1,7 @@
 name: metadata_editor
 description: "On-device metadata editing with a native Swift media engine."
 publish_to: 'none'
-version: 1.0.7+13
+version: 1.0.8+14
 
 environment:
   sdk: ^3.13.5

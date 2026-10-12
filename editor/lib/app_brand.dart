@@ -7,8 +7,8 @@ abstract final class AppBrand {
   static const tagline = 'Your media. Your metadata.';
   static const headline = 'Your media.\nYour metadata.';
   static const bridgeChannel = 'com.vxtiglitch.metadataeditor/media_v1';
-  static const version = '1.0.7';
-  static const buildNumber = '13';
+  static const version = '1.0.8';
+  static const buildNumber = '14';
   static const developer = 'vxti';
   static const websiteUrl = 'https://zlarp.com';
   static const supportEmail = 'vxti.dev@gmail.com';

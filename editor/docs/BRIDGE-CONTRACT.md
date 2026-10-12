@@ -1,5 +1,7 @@
 # Flutter / Swift media contract, version 1 with full-field additions
 
+Integrity errors may add `details.failedChecks`: up to 32 exact, code-owned identifiers. Native accepts only bounded known check names and never returns raw check detail, metadata values, filenames or paths. Dart maps only known identifiers to labels and displays at most eight in the optional error guide. Unknown or malformed lists are ignored. This diagnostic addition does not change output rejection, verification status or acknowledgment/export gates.
+
 Channel: `com.vxtiglitch.metadataeditor/media_v1`, StandardMethodCodec. Swift owns media and opaque session identifiers; Dart never sends paths or media bytes. Return JSON-compatible maps/lists/primitives. Only thumbnail paths created inside the app's cache may cross for display. Native output remains immutable for a frozen processing identifier. No automatic media upload or Photos write is included.
 
 - `capabilities`: `{protocolVersion:1, formats:[jpeg,heic,png,mp4,mov], editableFields:[...], editableFieldsByFormat:{format:[keys]}, videoStatus:device-validation-required}`. Closed native registries determine format-specific writable/removable fields; capabilities do not imply universal media-structure compatibility or Photos UI verification.

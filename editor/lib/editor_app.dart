@@ -557,104 +557,68 @@ class _DiagnosticErrorBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = AppTheme.of(context);
-    final simplified = simplifyUserError(rawError);
-    final code = errorCode ?? 'ERR_PROCESSING';
-
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.only(bottom: 12),
       child: Container(
         key: const Key('diagnosticErrorBanner'),
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.fromLTRB(12, 8, 4, 4),
         decoration: BoxDecoration(
-          color: colors.errorSurface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: colors.errorBorder, width: 1.2),
+          color: colors.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colors.errorBorder.withValues(alpha: 0.6)),
         ),
-        child: Column(
+        child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Flexible(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 7,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: colors.error.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(color: colors.errorBorder),
-                    ),
+            Padding(
+              padding: const EdgeInsets.only(top: 5, right: 10),
+              child: Icon(
+                Icons.error_outline_rounded,
+                color: colors.error,
+                size: 20,
+              ),
+            ),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Semantics(
+                    liveRegion: true,
                     child: Text(
-                      code,
+                      errorCode == 'ERR_MEDIA_INTEGRITY'
+                          ? 'This copy failed preservation checks.'
+                          : simplifyUserError(rawError),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                        color: colors.error,
-                        letterSpacing: 0.8,
+                        color: colors.text,
+                        fontSize: 13,
+                        height: 1.4,
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Attention Needed',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: colors.text,
-                    ),
-                  ),
-                ),
-                IconButton(
-                  key: const Key('dismissErrorBannerButton'),
-                  tooltip: 'Dismiss message',
-                  onPressed: onDismiss,
-                  icon: Icon(Icons.close, size: 18, color: colors.muted),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              simplified,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 13, color: colors.text, height: 1.45),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.icon(
+                  TextButton(
                     key: const Key('viewSolutionButton'),
                     onPressed: onViewFix,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: colors.surface,
-                      foregroundColor: colors.error,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 8,
-                      ),
-                      minimumSize: const Size(0, 36),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
+                    style: TextButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      minimumSize: const Size(44, 40),
+                      alignment: Alignment.centerLeft,
+                      foregroundColor: colors.accent,
                     ),
-                    icon: const Icon(Icons.lightbulb_outline_rounded, size: 16),
-                    label: Text(
-                      'Error details',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
+                    child: const Text(
+                      'Details',
+                      style: TextStyle(fontSize: 13),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
+            ),
+            IconButton(
+              key: const Key('dismissErrorBannerButton'),
+              tooltip: 'Dismiss error',
+              onPressed: onDismiss,
+              icon: Icon(Icons.close_rounded, size: 18, color: colors.muted),
             ),
           ],
         ),

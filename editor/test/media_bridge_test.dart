@@ -14,6 +14,50 @@ void main() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   tearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
+  test('integrity diagnostics expose only bounded known check labels', () {
+    final error = PlatformException(
+      code: 'integrity',
+      message: 'Copy failed preservation checks.',
+      details: {
+        'failedChecks': [
+          'video_target_iso',
+          'video_samples_track_2',
+          'video_target_iso',
+          'file:///private/clip.mov',
+          'video_samples_track_999',
+          'video_target_user_secret',
+          123,
+        ],
+      },
+    );
+    expect(
+      readableError(error),
+      'Copy failed preservation checks. Checks: Video ISO, Track 2 encoded media.',
+    );
+  });
+
+  test('malformed and oversized integrity diagnostics remain generic', () {
+    for (final details in [
+      {'failedChecks': List.filled(33, 'container')},
+      {'failedChecks': 'private media'},
+      {
+        'failedChecks': ['unknown', 'latitude=10.123'],
+      },
+      null,
+    ]) {
+      expect(
+        readableError(
+          PlatformException(
+            code: 'integrity',
+            message: 'Copy failed preservation checks.',
+            details: details,
+          ),
+        ),
+        'Copy failed preservation checks.',
+      );
+    }
+  });
+
   test(
     'review reserves opaque source IDs and decodes exact native names',
     () async {

@@ -273,6 +273,12 @@ String readableError(Object error) {
         return error.message ?? 'Allow access in Settings, then try again.';
       case 'busy':
         return 'Another operation is still finishing. Please wait.';
+      case 'integrity':
+        final message =
+            error.message ??
+            'The edited copy failed preservation checks. No output is available.';
+        final checks = _integrityCheckSummary(error.details);
+        return checks.isEmpty ? message : '$message Checks: $checks.';
       default:
         return error.message ??
             'The media engine could not complete this operation.';
@@ -293,6 +299,46 @@ String readableError(Object error) {
     return 'The native media engine is unavailable in this build.';
   }
   return 'This operation could not complete. Your original is unchanged. Please retry.';
+}
+
+String _integrityCheckSummary(Object? details) {
+  if (details is! Map || details['failedChecks'] is! List) return '';
+  final raw = details['failedChecks'] as List;
+  if (raw.length > 32) return '';
+  const labels = {
+    'container': 'File format',
+    'requested_camera_metadata': 'Camera metadata',
+    'requested_metadata': 'Requested metadata',
+    'retained_metadata': 'Unchanged metadata',
+    'retained_location': 'Unchanged location',
+    'complete_file_bytes': 'Complete file bytes',
+    'image_presentation': 'Image appearance',
+    'image_properties': 'Unchanged image properties',
+    'jpeg_compressed_data': 'JPEG image data',
+    'jpeg_retained_blocks': 'Unchanged JPEG blocks',
+    'png_compressed_data': 'PNG image data',
+    'heic_compressed_items': 'HEIC image data',
+    'heic_item_graph': 'HEIC structure',
+    'video_track_count': 'Video track count',
+    'video_track_inventory': 'Video track inventory',
+    'video_duration': 'Video duration',
+    'video_compressed_samples': 'Encoded video samples',
+    'report_status': 'Processing report status',
+    'report_consistency': 'Processing report consistency',
+  };
+  final known = <String, String>{...labels};
+  for (var index = 1; index <= 64; index++) {
+    known['video_samples_track_$index'] = 'Track $index encoded media';
+  }
+  for (final field in metadataFields) {
+    known['video_target_${field.key}'] = 'Video ${field.label}';
+    known['image_target_${field.key}'] = 'Image ${field.label}';
+  }
+  final selected = <String>{};
+  for (final id in raw) {
+    if (id is String && known.containsKey(id)) selected.add(known[id]!);
+  }
+  return selected.take(8).join(', ');
 }
 
 /// Simplifies raw engine or validation errors into plain-English, actionable
