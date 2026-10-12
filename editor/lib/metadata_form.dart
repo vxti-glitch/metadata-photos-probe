@@ -377,9 +377,8 @@ class _MetadataFormState extends State<MetadataForm>
     final date = DateTime.now().subtract(
       Duration(seconds: random.nextInt(max(1, settings.pastDays * 86400 + 1))),
     );
-    final rawGenerated = captureDatePatch(
-      date,
-      image: source.inspection.kind.isImage,
+    final rawGenerated = _completeGeneratedDateFamily(
+      captureDatePatch(date, image: source.inspection.kind.isImage),
     );
     _generatedDateFamily = rawGenerated;
     final kept = explicitOverrides.where((key) => modes[key] == 'keep').toSet();
@@ -418,15 +417,20 @@ class _MetadataFormState extends State<MetadataForm>
       random,
       DateTime.now(),
     );
-    _generatedDateFamily = MetadataPatch(
-      values: {
-        for (final entry in raw.values.entries)
-          if (_dateFieldKeys.contains(entry.key)) entry.key: entry.value,
-      },
+    _generatedDateFamily = _completeGeneratedDateFamily(
+      MetadataPatch(
+        values: {
+          for (final entry in raw.values.entries)
+            if (_dateFieldKeys.contains(entry.key)) entry.key: entry.value,
+        },
+      ),
     );
     final patch = MetadataPatch(
       values: {
-        for (final entry in raw.values.entries)
+        for (final entry in {
+          ...raw.values,
+          ..._generatedDateFamily!.values,
+        }.entries)
           if (fields.contains(entry.key)) entry.key: entry.value,
       },
     );
@@ -462,6 +466,31 @@ class _MetadataFormState extends State<MetadataForm>
       }
     }
     return MetadataPatch(values: patch.values, removals: removals);
+  }
+
+  MetadataPatch _completeGeneratedDateFamily(MetadataPatch generated) {
+    final stamp = generated.values['dateTimeOriginal'];
+    if (!widget.batch ||
+        widget.session.inspection.kind.isImage ||
+        stamp is! String ||
+        !isStrictISODate(stamp)) {
+      return generated;
+    }
+    // Freeze the phone's generated zone alongside the instant. Otherwise a
+    // video-first batch silently adopts each image's old zone despite Set intent.
+    // Explicit Keep overrides still remove these generated zones when resolving.
+    final photoDates = captureDatePatch(
+      DateTime.parse(stamp).toLocal(),
+      image: true,
+    );
+    return MetadataPatch(
+      values: {
+        ...generated.values,
+        for (final key in sharedDateOffsets.values)
+          key: photoDates.values[key]!,
+      },
+      removals: generated.removals,
+    );
   }
 
   void _settingsChanged(RandomizationSettings next) {
@@ -1646,33 +1675,51 @@ class _MetadataFormState extends State<MetadataForm>
           .firstOrNull ??
       key;
 
-  Widget _integritySummary(IntegrityReport report) => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (final check in report.checks)
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text(
-              '${check.name}: ${check.status} — ${check.detail}',
-              style: TextStyle(color: AppTheme.of(context).muted, fontSize: 12),
-            ),
+  String _integrityStatusLabel(IntegrityReport report) => report.hasMismatch
+      ? 'Verification failed'
+      : report.needsAcknowledgment
+      ? 'Verification limited'
+      : 'Verification passed';
+
+  Widget _integritySummary(IntegrityReport report, String outputId) =>
+      ExpansionTile(
+        key: ValueKey('batchIntegrityDetails-$outputId'),
+        title: const Text('Details', style: TextStyle(fontSize: 13)),
+        tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        expandedCrossAxisAlignment: CrossAxisAlignment.start,
+        shape: const Border(),
+        collapsedShape: const Border(),
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final check in report.checks)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    '${check.name}: ${check.status} — ${check.detail}',
+                    style: TextStyle(
+                      color: AppTheme.of(context).muted,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              for (final limitation in report.limitations)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    'Limitation: $limitation',
+                    style: TextStyle(
+                      color: AppTheme.of(context).warning,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+            ],
           ),
-        for (final limitation in report.limitations)
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text(
-              'Limitation: $limitation',
-              style: TextStyle(
-                color: AppTheme.of(context).warning,
-                fontSize: 12,
-              ),
-            ),
-          ),
-      ],
-    ),
-  );
+        ],
+      );
 
   Widget _resultContent(BuildContext context) {
     final controller = widget.controller;
@@ -1724,6 +1771,16 @@ class _MetadataFormState extends State<MetadataForm>
           '${withOutput.length} ${_viewingExistingCopy ? 'saved copies available' : 'new copies created'} · ${_attemptedBatchIds.length - withOutput.length} attempted files need attention',
           style: TextStyle(color: AppTheme.of(context).muted),
         ),
+        if (withOutput.any(
+          (session) => session.processing!.integrity.needsAcknowledgment,
+        )) ...[
+          const SizedBox(height: 8),
+          Text(
+            'Some preservation checks have limited verification. Review each copy’s Details before exporting.',
+            key: const Key('batchVerificationNotice'),
+            style: TextStyle(color: AppTheme.of(context).muted, fontSize: 13),
+          ),
+        ],
         const SizedBox(height: 12),
         for (final session in sessions)
           Card(
@@ -1741,7 +1798,7 @@ class _MetadataFormState extends State<MetadataForm>
                                 session.processing != null &&
                                 session.processing!.id !=
                                     _processingIdsBefore[session.id]
-                          ? '${session.processing!.outputDisplayName ?? 'Processed copy'} · ${session.processing!.integrity.status.name}'
+                          ? '${session.processing!.outputDisplayName ?? 'Processed copy'}\n${_viewingExistingCopy ? 'Saved copy' : 'Copy created'} · ${_integrityStatusLabel(session.processing!.integrity)}'
                           : queueById[session.id]?.message ??
                                 'No new copy created',
                     ),
@@ -1768,7 +1825,10 @@ class _MetadataFormState extends State<MetadataForm>
                       session.processing != null &&
                       session.processing!.id !=
                           _processingIdsBefore[session.id])
-                    _integritySummary(session.processing!.integrity),
+                    _integritySummary(
+                      session.processing!.integrity,
+                      session.processing!.id,
+                    ),
                 ],
               ),
             ),
@@ -1808,7 +1868,7 @@ class _MetadataFormState extends State<MetadataForm>
                   }),
             title: const Text('Accept the listed limitations for ready copies'),
             subtitle: const Text(
-              'Review each copy’s checks and limitations below before exporting.',
+              'Review each copy’s checks and limitations in Details before exporting.',
             ),
           ),
       ],

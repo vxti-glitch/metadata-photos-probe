@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'app_brand.dart';
 import 'app_theme.dart';
@@ -108,7 +109,7 @@ class _EditorHomeState extends State<EditorHome> {
     final isBatch = controller.isBatchMode && batchSources.isNotEmpty;
 
     final isEditing = session != null || isBatch;
-    final appBar = _selectedTabIndex == 0
+    final appBar = _selectedTabIndex == 0 && isEditing
         ? AppBar(
             leading: !isEditing
                 ? null
@@ -136,7 +137,7 @@ class _EditorHomeState extends State<EditorHome> {
               IconButton(
                 key: const Key('openSettings'),
                 tooltip: 'Settings',
-                icon: const Icon(Icons.settings_outlined),
+                icon: const Icon(Icons.tune_rounded),
                 onPressed: () => setState(() => _selectedTabIndex = 1),
               ),
               const SizedBox(width: 8),
@@ -145,7 +146,7 @@ class _EditorHomeState extends State<EditorHome> {
         : null;
 
     final editorBody = SafeArea(
-      top: false,
+      top: !isEditing,
       child: Align(
         alignment: Alignment.topCenter,
         child: ConstrainedBox(
@@ -153,6 +154,13 @@ class _EditorHomeState extends State<EditorHome> {
           child: LayoutBuilder(
             builder: (context, constraints) => Column(
               children: [
+                if (!isEditing)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                    child: _HomeHeader(
+                      onSettings: () => setState(() => _selectedTabIndex = 1),
+                    ),
+                  ),
                 ConstrainedBox(
                   constraints: BoxConstraints(
                     maxHeight: constraints.maxHeight * 0.42,
@@ -264,7 +272,36 @@ class _EditorHomeState extends State<EditorHome> {
         body: IndexedStack(
           index: _selectedTabIndex,
           children: [
-            editorBody,
+            !isEditing
+                ? AnnotatedRegion<SystemUiOverlayStyle>(
+                    value: Theme.of(context).brightness == Brightness.dark
+                        ? SystemUiOverlayStyle.light
+                        : SystemUiOverlayStyle.dark,
+                    child: DecoratedBox(
+                      key: const Key('homeGlow'),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomCenter,
+                          stops: const [0, 0.24, 0.55],
+                          colors:
+                              Theme.of(context).brightness == Brightness.dark
+                              ? const [
+                                  Color(0xFF10243C),
+                                  Color(0xFF0F1120),
+                                  Color(0xFF000000),
+                                ]
+                              : const [
+                                  Color(0xFFE0EDFF),
+                                  Color(0xFFEBEBF8),
+                                  Color(0xFFF2F2F7),
+                                ],
+                        ),
+                      ),
+                      child: editorBody,
+                    ),
+                  )
+                : editorBody,
             SettingsScreen(
               controller: controller,
               isTab: true,
@@ -374,6 +411,61 @@ class MetadataMarkPainter extends CustomPainter {
   bool shouldRepaint(covariant MetadataMarkPainter oldDelegate) => false;
 }
 
+class _HomeHeader extends StatelessWidget {
+  const _HomeHeader({required this.onSettings});
+  final VoidCallback onSettings;
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.of(context);
+    return Row(
+      key: const Key('homeBrandHeader'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(top: 3),
+          child: MetadataMark(size: 40),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                AppBrand.name,
+                style: TextStyle(
+                  fontSize: 21,
+                  height: 1.2,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.4,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'by ${AppBrand.developer}',
+                style: TextStyle(color: colors.muted, fontSize: 13),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        IconButton(
+          key: const Key('openSettings'),
+          tooltip: 'Settings',
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+          style: IconButton.styleFrom(
+            backgroundColor: colors.surface.withValues(alpha: 0.65),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+          ),
+          icon: const Icon(Icons.tune_rounded, size: 23),
+          onPressed: onSettings,
+        ),
+      ],
+    );
+  }
+}
+
 class _ImportHome extends StatelessWidget {
   const _ImportHome({required this.controller});
   final EditorController controller;
@@ -421,23 +513,6 @@ class _ImportHome extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const MetadataMark(size: 48),
-        const SizedBox(height: 20),
-        const Text(
-          AppBrand.name,
-          style: TextStyle(
-            fontSize: 30,
-            height: 1.15,
-            fontWeight: FontWeight.w700,
-            letterSpacing: -0.6,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          'by ${AppBrand.developer}',
-          style: TextStyle(color: colors.muted, fontSize: 14),
-        ),
-        const SizedBox(height: 36),
         SizedBox(
           width: double.infinity,
           child: Material(

@@ -296,6 +296,30 @@ void main() {
         isNotNull,
       );
       expect(find.text('Unchanged — no copy created'), findsOneWidget);
+      expect(
+        find.textContaining('Copy created · Verification limited'),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('batchVerificationNotice')), findsOneWidget);
+      expect(find.textContaining('Matches'), findsNothing);
+      expect(
+        find.textContaining('Opaque metadata not qualified.'),
+        findsNothing,
+      );
+      expect(
+        tester
+            .widget<CheckboxListTile>(
+              find.byKey(const Key('acknowledgeBatchExport')),
+            )
+            .value,
+        isFalse,
+      );
+      final details = find.byKey(
+        const ValueKey('batchIntegrityDetails-processing-first'),
+      );
+      await tester.ensureVisible(details);
+      await tester.tap(details);
+      await tester.pumpAndSettle();
       expect(find.textContaining('Matches'), findsOneWidget);
       expect(
         find.textContaining('Opaque metadata not qualified.'),

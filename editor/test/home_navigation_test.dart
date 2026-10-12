@@ -1,12 +1,25 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:metadata_editor/camera_profiles.dart';
 import 'package:metadata_editor/editor_app.dart';
 import 'package:metadata_editor/editor_controller.dart';
 import 'package:metadata_editor/metadata_form.dart';
 import 'package:metadata_editor/metadata_patch.dart';
+import 'package:metadata_editor/media_models.dart';
 
 import 'fake_media_bridge.dart';
+
+class _DelayedStartupBridge extends FakeMediaBridge {
+  final startup = Completer<void>();
+  @override
+  Future<MediaCapabilities> capabilities() async {
+    await startup.future;
+    return super.capabilities();
+  }
+}
 
 void main() {
   Future<EditorController> launch(
@@ -14,7 +27,7 @@ void main() {
     FakeMediaBridge? bridge,
     double scale = 1,
   }) async {
-    tester.view.physicalSize = const Size(360, 640);
+    tester.view.physicalSize = const Size(320, 640);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -44,6 +57,15 @@ void main() {
   ) async {
     await launch(tester, scale: 2);
     expect(find.byKey(const Key('selectMedia')), findsOneWidget);
+    expect(find.byKey(const Key('homeBrandHeader')), findsOneWidget);
+    expect(find.byIcon(Icons.tune_rounded).hitTestable(), findsOneWidget);
+    expect(find.byIcon(Icons.settings_outlined), findsNothing);
+    expect(find.byType(AppBar), findsNothing);
+    final header = tester.getRect(find.byKey(const Key('homeBrandHeader')));
+    final settings = tester.getRect(find.byKey(const Key('openSettings')));
+    expect(header.top, lessThan(30));
+    expect(settings.width, greaterThanOrEqualTo(44));
+    expect(settings.right, lessThanOrEqualTo(320));
     expect(tester.takeException(), isNull);
     expect(find.byKey(const Key('tabErrorCodes')), findsNothing);
     expect(find.byKey(const Key('openErrorGuideFromBar')), findsNothing);
@@ -57,6 +79,117 @@ void main() {
     expect(tester.takeException(), isNull);
     await tap(tester, 'settingsBackButton');
     expect(find.byKey(const Key('selectMedia')), findsOneWidget);
+  });
+
+  testWidgets(
+    'Home respects the status area and selects readable status icons',
+    (tester) async {
+      tester.view.padding = FakeViewPadding(top: 59);
+      tester.view.viewPadding = FakeViewPadding(top: 59);
+      addTearDown(tester.view.resetPadding);
+      addTearDown(tester.view.resetViewPadding);
+      final controller = await launch(tester);
+      for (final appearance in ['dark', 'light']) {
+        await controller.setAppearance(appearance);
+        await tester.pumpAndSettle();
+        final header = tester.getRect(find.byKey(const Key('homeBrandHeader')));
+        expect(header.top, greaterThanOrEqualTo(59));
+        final settings = tester.getRect(find.byKey(const Key('openSettings')));
+        expect(settings.size, const Size(48, 48));
+        final region = tester.widget<AnnotatedRegion<SystemUiOverlayStyle>>(
+          find
+              .ancestor(
+                of: find.byKey(const Key('homeGlow')),
+                matching: find.byType(AnnotatedRegion<SystemUiOverlayStyle>),
+              )
+              .first,
+        );
+        expect(
+          region.value.statusBarIconBrightness,
+          appearance == 'dark' ? Brightness.light : Brightness.dark,
+        );
+        expect(
+          region.value.statusBarBrightness,
+          appearance == 'dark' ? Brightness.dark : Brightness.light,
+        );
+        expect(tester.takeException(), isNull);
+      }
+    },
+  );
+
+  testWidgets(
+    'Home tint follows appearance and stays off Settings and editing',
+    (tester) async {
+      final controller = await launch(tester);
+      for (final appearance in ['dark', 'light']) {
+        await controller.setAppearance(appearance);
+        await tester.pumpAndSettle();
+        final glow = tester.widget<DecoratedBox>(
+          find.byKey(const Key('homeGlow')),
+        );
+        final gradient =
+            (glow.decoration as BoxDecoration).gradient! as LinearGradient;
+        expect(
+          gradient.colors.first,
+          appearance == 'dark'
+              ? const Color(0xFF10243C)
+              : const Color(0xFFE0EDFF),
+        );
+        await tap(tester, 'openSettings');
+        expect(find.byKey(const Key('homeGlow')).hitTestable(), findsNothing);
+        expect(
+          find.byKey(const Key('settingsBackButton')).hitTestable(),
+          findsOneWidget,
+        );
+        await tap(tester, 'settingsBackButton');
+        expect(find.byKey(const Key('homeGlow')), findsOneWidget);
+      }
+      await tap(tester, 'selectMedia');
+      await tap(tester, 'importFiles');
+      expect(find.byKey(const Key('homeGlow')), findsNothing);
+      expect(find.byKey(const Key('backToHome')), findsOneWidget);
+      expect(find.byIcon(Icons.tune_rounded).hitTestable(), findsOneWidget);
+      await tap(tester, 'backToHome');
+      expect(find.byKey(const Key('homeGlow')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('Settings remain available during startup, failure and retry', (
+    tester,
+  ) async {
+    final bridge = _DelayedStartupBridge()
+      ..startupError = StateError('Engine unavailable');
+    final controller = EditorController(bridge);
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(MetadataEditorApp(controller: controller));
+    await tester.pump();
+    expect(controller.ready, isFalse);
+    expect(find.byKey(const Key('openSettings')).hitTestable(), findsOneWidget);
+    await tester.tap(find.byKey(const Key('openSettings')));
+    await tester.pump();
+    expect(find.byKey(const Key('errorGuideRow')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('settingsBackButton')));
+    await tester.pump();
+    bridge.startup.complete();
+    await tester.pumpAndSettle();
+    expect(controller.ready, isFalse);
+    expect(find.byKey(const Key('selectMedia')), findsNothing);
+    await tap(tester, 'openSettings');
+    await tap(tester, 'errorGuideRow');
+    await tap(tester, 'errorGuideBackButton');
+    await tap(tester, 'settingsBackButton');
+    await tester.tap(find.text('Retry startup'));
+    await tester.pumpAndSettle();
+    expect(controller.ready, isFalse);
+    await tap(tester, 'openSettings');
+    await tap(tester, 'settingsBackButton');
+    bridge.startupError = null;
+    await tester.tap(find.text('Retry startup'));
+    await tester.pumpAndSettle();
+    expect(controller.ready, isTrue);
+    expect(find.byKey(const Key('selectMedia')), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('editing draft survives nested guide back and return to editor', (
