@@ -5,6 +5,7 @@ import 'app_theme.dart';
 import 'editor_app.dart';
 import 'editor_controller.dart';
 import 'legal_documents.dart';
+import 'media_bridge.dart';
 import 'settings_destinations.dart';
 
 /// Simple grouped Settings; every tool opens a focused destination.
@@ -674,6 +675,9 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
         .firstOrNull;
     final needsStartup = controller != null && !controller.ready;
     final hasIssue = code != null || needsStartup;
+    final failedChecks = code == 'ERR_MEDIA_INTEGRITY'
+        ? safeIntegrityCheckLabels(controller?.lastErrorMessage)
+        : const <String>[];
     return Container(
       key: const Key('latestIssueCard'),
       padding: const EdgeInsets.all(16),
@@ -751,6 +755,27 @@ class _ErrorGuideSheetState extends State<ErrorGuideSheet> {
                 fontSize: 11,
                 fontFamily: 'monospace',
                 color: AppTheme.of(context).muted,
+              ),
+            ),
+          ],
+          if (failedChecks.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Failed checks',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.of(context).muted,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              failedChecks.join(', '),
+              key: const Key('safeFailedChecks'),
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.4,
+                color: AppTheme.of(context).text,
               ),
             ),
           ],

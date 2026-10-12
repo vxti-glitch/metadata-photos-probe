@@ -96,6 +96,71 @@ void main() {
         ),
       );
 
+  testWidgets('integrity guide shows safe check labels without raw history', (
+    tester,
+  ) async {
+    controller.recordError(
+      'Failed for file:///private/user.mov at latitude=10.123. Checks: Video ISO, Track 2 encoded media.',
+      code: 'ERR_MEDIA_INTEGRITY',
+    );
+    await pumpGuide(tester);
+    expect(find.text('Failed checks'), findsOneWidget);
+    expect(find.text('Video ISO, Track 2 encoded media'), findsOneWidget);
+    expect(find.byKey(const Key('safeFailedChecks')), findsOneWidget);
+    expect(find.textContaining('file:///private/user.mov'), findsNothing);
+    expect(find.textContaining('latitude=10.123'), findsNothing);
+    expect(find.text(entry('ERR_MEDIA_INTEGRITY').cause), findsNothing);
+    await tapKey(tester, 'clearGuideHistory');
+    expect(find.byKey(const Key('safeFailedChecks')), findsNothing);
+  });
+
+  testWidgets('guide rejects unsafe persisted diagnostics and other codes', (
+    tester,
+  ) async {
+    controller.recordError(
+      'Failed Checks: Video ISO, file:///private/user.mov.',
+      code: 'ERR_MEDIA_INTEGRITY',
+    );
+    await pumpGuide(tester);
+    expect(find.byKey(const Key('safeFailedChecks')), findsNothing);
+    expect(find.textContaining('file:///private/user.mov'), findsNothing);
+    controller.recordError('Failed Checks: Video ISO.', code: 'ERR_PROCESSING');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('safeFailedChecks')), findsNothing);
+    controller.recordError(
+      'Failed Checks: PNG image data.',
+      code: 'ERR_MEDIA_INTEGRITY',
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('PNG image data'), findsOneWidget);
+    expect(find.text('Video ISO'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('bounded diagnostic labels fit narrow guide with large text', (
+    tester,
+  ) async {
+    final labels = List.generate(
+      8,
+      (index) => 'Track ${index + 1} encoded media',
+    );
+    controller.recordError(
+      'Failed Checks: ${labels.join(', ')}.',
+      code: 'ERR_MEDIA_INTEGRITY',
+    );
+    await pumpScreen(
+      tester,
+      Scaffold(body: ErrorGuideSheet(isModal: false, controller: controller)),
+      width: 320,
+      scale: 2,
+      keyboard: 280,
+    );
+    expect(find.byKey(const Key('safeFailedChecks')), findsOneWidget);
+    await tapKey(tester, 'viewLatestSteps');
+    expect(find.text(entry('ERR_MEDIA_INTEGRITY').cause), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('Current issue defaults to a single compact summary', (
     tester,
   ) async {

@@ -58,6 +58,44 @@ void main() {
     }
   });
 
+  test('safe history diagnostics round-trip only known labels', () {
+    final message = readableError(
+      PlatformException(
+        code: 'integrity',
+        message: 'Copy failed preservation checks.',
+        details: {
+          'failedChecks': ['video_target_iso', 'video_samples_track_2'],
+        },
+      ),
+    );
+    expect(safeIntegrityCheckLabels(message), [
+      'Video ISO',
+      'Track 2 encoded media',
+    ]);
+    expect(
+      safeIntegrityCheckLabels(
+        'Untrusted prefix Checks: Video ISO, Video ISO.',
+      ),
+      ['Video ISO'],
+    );
+  });
+
+  test('safe history diagnostics reject arbitrary or malformed summaries', () {
+    for (final message in <String?>[
+      null,
+      'file:///private/user.mov',
+      'Failed Checks: Video ISO, file:///private/user.mov.',
+      'Failed Checks: Video ISO, latitude=10.123.',
+      'Failed Checks: Video ISO.\nprivate file data',
+      'Failed Checks: Video ISO',
+      'Failed Checks: ',
+      'Failed Checks: ${List.filled(9, 'Video ISO').join(', ')}.',
+      '${'x' * 4096} Checks: Video ISO.',
+    ]) {
+      expect(safeIntegrityCheckLabels(message), isEmpty, reason: '$message');
+    }
+  });
+
   test(
     'review reserves opaque source IDs and decodes exact native names',
     () async {

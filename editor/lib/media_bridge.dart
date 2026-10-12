@@ -305,6 +305,35 @@ String _integrityCheckSummary(Object? details) {
   if (details is! Map || details['failedChecks'] is! List) return '';
   final raw = details['failedChecks'] as List;
   if (raw.length > 32) return '';
+  final known = _knownIntegrityCheckLabels();
+  final selected = <String>{};
+  for (final id in raw) {
+    if (id is String && known.containsKey(id)) selected.add(known[id]!);
+  }
+  return selected.take(8).join(', ');
+}
+
+/// Restores only closed diagnostic labels, never an arbitrary error message.
+/// Error history can contain old or externally supplied strings, so a malformed
+/// summary is ignored rather than displayed in the reference guide.
+List<String> safeIntegrityCheckLabels(String? message) {
+  if (message == null || message.length > 4096 || !message.endsWith('.')) {
+    return const [];
+  }
+  const marker = ' Checks: ';
+  final start = message.lastIndexOf(marker);
+  if (start < 0) return const [];
+  final summary = message.substring(start + marker.length, message.length - 1);
+  if (summary.isEmpty || summary.length > 1024) return const [];
+  final labels = summary.split(', ');
+  final known = _knownIntegrityCheckLabels().values.toSet();
+  if (labels.length > 8 || labels.any((label) => !known.contains(label))) {
+    return const [];
+  }
+  return List.unmodifiable(labels.toSet());
+}
+
+Map<String, String> _knownIntegrityCheckLabels() {
   const labels = {
     'container': 'File format',
     'requested_camera_metadata': 'Camera metadata',
@@ -334,11 +363,7 @@ String _integrityCheckSummary(Object? details) {
     known['video_target_${field.key}'] = 'Video ${field.label}';
     known['image_target_${field.key}'] = 'Image ${field.label}';
   }
-  final selected = <String>{};
-  for (final id in raw) {
-    if (id is String && known.containsKey(id)) selected.add(known[id]!);
-  }
-  return selected.take(8).join(', ');
+  return known;
 }
 
 /// Simplifies raw engine or validation errors into plain-English, actionable

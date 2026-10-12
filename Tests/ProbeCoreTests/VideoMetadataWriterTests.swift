@@ -64,6 +64,46 @@ final class VideoMetadataWriterTests: XCTestCase {
         }
     }
 
+    func testAutomaticProfileOnLongMultiChunkMoviesPreservesEveryAudioAndVideoSample() async throws {
+        for kind in [MediaKind.mov, .mp4] {
+            let source = directory.appendingPathComponent("generated-multichunk-source.\(kind.rawValue)")
+            let output = directory.appendingPathComponent("generated-multichunk-edited.\(kind.rawValue)")
+            try await makeNativeMOV(source, includeMetadata: false, kind: kind, includeAudio: true,
+                fastStart: true, frameCount: 240, audioSampleRate: 44_100, noisyAudio: true)
+            let sourceBytes = try Data(contentsOf: source)
+            let sourceBoxes = try boxes(sourceBytes)
+            let movie = try XCTUnwrap(sourceBoxes.first { $0.type == "moov" })
+            let media = try XCTUnwrap(sourceBoxes.first { $0.type == "mdat" })
+            XCTAssertLessThan(movie.range.lowerBound, media.range.lowerBound, "Fixture must exercise fast-start relocation")
+            let chunkCounts = try movieChunkCounts(sourceBytes)
+            XCTAssertEqual(chunkCounts.count, 2)
+            XCTAssertTrue(chunkCounts.allSatisfy { $0 > 1 }, "Fixture must contain multiple chunks on both tracks: \(chunkCounts)")
+            var values: [String: MetadataValue] = [
+                "make": .string("Apple"), "model": .string("iPhone 15 Pro Max"),
+                "software": .string("18.6.2"),
+                "lensModel": .string("iPhone 15 Pro Max back triple camera 6.765mm f/1.78"),
+                "focalLength35mm": .number(24), "iso": .number(317),
+                "exposureTime": .number(1.0 / 320), "fNumber": .number(1.78)
+            ]
+            for key in VideoMetadataFields.dateKeys.union(["dateTimeOriginal"]) {
+                values[key] = .string("2026-04-05T06:07:08-04:00")
+            }
+            let patch = MetadataPatch(values: values)
+            let report = try await VideoMetadataWriter.write(source: source, output: output, patch: patch)
+            XCTAssertEqual(report.validatedTracks, 2)
+            XCTAssertEqual(report.validatedChunks, chunkCounts.reduce(0, +))
+            let inspected = try await MetadataEngine.inspect(output)
+            try patch.validateReadback(inspected)
+            let comparison = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: patch)
+            XCTAssertFalse(comparison.checks.contains { $0.status == .failed }, "Synthetic long \(kind): \(comparison.checks)")
+            let encoded = comparison.checks.filter { $0.name.contains("compressed data") }
+            XCTAssertEqual(encoded.count, 2)
+            XCTAssertTrue(encoded.allSatisfy { $0.status == .passed })
+            XCTAssertEqual(try Data(contentsOf: source), sourceBytes)
+            XCTAssertEqual(try movieChunkCounts(Data(contentsOf: output)), chunkCounts)
+        }
+    }
+
     func testSelfContainedAliasKeepsChunksAndTrackBytesAtOriginalOffsets() async throws {
         // A structural parser control, not a playable video or quality proof.
         let bytes = structuralMovie(referenceType: "alis")
@@ -464,7 +504,8 @@ final class VideoMetadataWriterTests: XCTestCase {
         XCTAssertEqual(try WholeFileDigest.sha256(source), originalDigest)
     }
 
-    private func makeNativeMOV(_ url: URL, includeMetadata: Bool, kind: MediaKind = .mov, includeAudio: Bool = false, fastStart: Bool = false) async throws {
+    private func makeNativeMOV(_ url: URL, includeMetadata: Bool, kind: MediaKind = .mov, includeAudio: Bool = false, fastStart: Bool = false,
+                               frameCount: Int = 3, audioSampleRate: Int = 48_000, noisyAudio: Bool = false) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: kind == .mp4 ? .mp4 : .mov)
         writer.shouldOptimizeForNetworkUse = fastStart
         if includeMetadata {
@@ -484,14 +525,14 @@ final class VideoMetadataWriterTests: XCTestCase {
         let audioInput: AVAssetWriterInput?
         if includeAudio {
             let audio = AVAssetWriterInput(mediaType: .audio, outputSettings: [
-                AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48_000,
+                AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: audioSampleRate,
                 AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64_000])
             guard writer.canAdd(audio) else { throw ProbeError.writeFailed("Cannot add synthetic AAC fixture") }
             writer.add(audio); audioInput = audio
         } else { audioInput = nil }
         guard writer.startWriting() else { throw writer.error ?? ProbeError.writeFailed("Cannot start native MOV fixture") }
         writer.startSession(atSourceTime: .zero)
-        for frame in 0..<3 {
+        for frame in 0..<frameCount {
             let deadline = Date().addingTimeInterval(10)
             while !input.isReadyForMoreMediaData {
                 guard Date() < deadline, writer.status == .writing else {
@@ -504,37 +545,41 @@ final class VideoMetadataWriterTests: XCTestCase {
                   let pixel else { throw ProbeError.writeFailed("Fixture pixel buffer unavailable") }
             CVPixelBufferLockBaseAddress(pixel, [])
             if let address = CVPixelBufferGetBaseAddress(pixel) {
-                memset(address, Int32(frame * 70), CVPixelBufferGetBytesPerRow(pixel) * 32)
+                memset(address, Int32((frame * 70) % 256), CVPixelBufferGetBytesPerRow(pixel) * 32)
             }
             CVPixelBufferUnlockBaseAddress(pixel, [])
             guard adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(frame), timescale: 30)) else {
                 throw writer.error ?? ProbeError.writeFailed("Cannot append native MOV frame")
             }
+            if let audioInput {
+                // Feed both tracks incrementally. Supplying every video frame
+                // before audio can stall AVAssetWriter's interleaving buffers.
+                let audioDeadline = Date().addingTimeInterval(10)
+                while !audioInput.isReadyForMoreMediaData {
+                    guard Date() < audioDeadline, writer.status == .writing else {
+                        writer.cancelWriting(); throw ProbeError.writeFailed("Synthetic AAC fixture stalled")
+                    }
+                    try await Task.sleep(nanoseconds: 10_000_000)
+                }
+                let samplesPerFrame = audioSampleRate / 30
+                guard audioInput.append(try syntheticPCM(samples: samplesPerFrame,
+                    sampleRate: audioSampleRate, noisy: noisyAudio, startSample: frame * samplesPerFrame)) else {
+                    throw writer.error ?? ProbeError.writeFailed("Cannot append synthetic PCM fixture")
+                }
+            }
         }
         input.markAsFinished()
-        if let audioInput {
-            let deadline = Date().addingTimeInterval(10)
-            while !audioInput.isReadyForMoreMediaData {
-                guard Date() < deadline, writer.status == .writing else {
-                    writer.cancelWriting(); throw ProbeError.writeFailed("Synthetic AAC fixture stalled")
-                }
-                try await Task.sleep(nanoseconds: 10_000_000)
-            }
-            guard audioInput.append(try syntheticPCM()) else {
-                throw writer.error ?? ProbeError.writeFailed("Cannot append synthetic PCM fixture")
-            }
-            audioInput.markAsFinished()
-        }
+        audioInput?.markAsFinished()
         await writer.finishWriting()
         guard writer.status == .completed else { throw writer.error ?? ProbeError.writeFailed("Native MOV fixture unfinished") }
     }
 
-    private func syntheticPCM() throws -> CMSampleBuffer {
-        // Encode a generated 0.1-second silence source once for fixture creation.
-        // The metadata operation never decodes or re-encodes either media track.
-        let samples = 4_800, bytesPerSample = 2
+    private func syntheticPCM(samples: Int, sampleRate: Int, noisy: Bool, startSample: Int) throws -> CMSampleBuffer {
+        // Encode generated PCM once solely to create the source fixture. The
+        // metadata operation never decodes or re-encodes either media track.
+        let bytesPerSample = 2
         var description: CMAudioFormatDescription?
-        var stream = AudioStreamBasicDescription(mSampleRate: 48_000, mFormatID: kAudioFormatLinearPCM,
+        var stream = AudioStreamBasicDescription(mSampleRate: Double(sampleRate), mFormatID: kAudioFormatLinearPCM,
             mFormatFlags: kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked,
             mBytesPerPacket: 2, mFramesPerPacket: 1, mBytesPerFrame: 2,
             mChannelsPerFrame: 1, mBitsPerChannel: 16, mReserved: 0)
@@ -551,8 +596,27 @@ final class VideoMetadataWriterTests: XCTestCase {
             let block else { throw ProbeError.writeFailed("Synthetic PCM block unavailable") }
         guard CMBlockBufferFillDataBytes(with: 0, blockBuffer: block, offsetIntoDestination: 0,
             dataLength: length) == noErr else { throw ProbeError.writeFailed("Synthetic PCM initialization failed") }
-        var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 48_000),
-            presentationTimeStamp: .zero, decodeTimeStamp: .invalid)
+        if noisy {
+            // Deterministic generated noise gives AAC variable, nonempty packets
+            // instead of relying solely on short/silence packet controls.
+            var seed: UInt32 = 0x12345678 ^ UInt32(startSample)
+            var pcm = Data(count: length)
+            pcm.withUnsafeMutableBytes { (raw: UnsafeMutableRawBufferPointer) in
+                let values = raw.bindMemory(to: UInt16.self)
+                for index in 0..<samples {
+                    seed = seed &* 1_664_525 &+ 1_013_904_223
+                    values[index] = UInt16(truncatingIfNeeded: seed >> 16).littleEndian
+                }
+            }
+            let copied = pcm.withUnsafeBytes { raw in
+                CMBlockBufferReplaceDataBytes(with: raw.baseAddress!, blockBuffer: block,
+                    offsetIntoDestination: 0, dataLength: length)
+            }
+            guard copied == noErr else { throw ProbeError.writeFailed("Synthetic PCM data copy failed") }
+        }
+        var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: Int32(sampleRate)),
+            presentationTimeStamp: CMTime(value: Int64(startSample), timescale: Int32(sampleRate)),
+            decodeTimeStamp: .invalid)
         var size = bytesPerSample
         var sample: CMSampleBuffer?
         guard CMSampleBufferCreateReady(allocator: kCFAllocatorDefault, dataBuffer: block,
@@ -574,6 +638,26 @@ final class VideoMetadataWriterTests: XCTestCase {
             result.append(Box(type: String(decoding: data[offset+4..<offset+8], as: UTF8.self),
                 range: offset..<offset+length, payload: offset+8..<offset+length))
             offset += length
+        }
+        return result
+    }
+
+    private func movieChunkCounts(_ bytes: Data) throws -> [Int] {
+        let movie = try XCTUnwrap(boxes(bytes).first { $0.type == "moov" })
+        let movieData = bytes.subdata(in: movie.payload)
+        var result = [Int]()
+        for track in try boxes(movieData) where track.type == "trak" {
+            let trackData = movieData.subdata(in: track.payload)
+            let mdia = try XCTUnwrap(boxes(trackData).first { $0.type == "mdia" })
+            let mdiaData = trackData.subdata(in: mdia.payload)
+            let minf = try XCTUnwrap(boxes(mdiaData).first { $0.type == "minf" })
+            let minfData = mdiaData.subdata(in: minf.payload)
+            let stbl = try XCTUnwrap(boxes(minfData).first { $0.type == "stbl" })
+            let tableData = minfData.subdata(in: stbl.payload)
+            let offset = try XCTUnwrap(boxes(tableData).first { $0.type == "stco" || $0.type == "co64" })
+            let payload = tableData.subdata(in: offset.payload)
+            guard payload.count >= 8 else { throw ProbeError.malformed("Fixture offset table truncated") }
+            result.append(Int(payload[4..<8].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }))
         }
         return result
     }
