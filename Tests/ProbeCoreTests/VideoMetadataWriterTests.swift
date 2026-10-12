@@ -24,6 +24,41 @@ final class VideoMetadataWriterTests: XCTestCase {
         try await assertNativeMOV(includeMetadata: false)
     }
 
+    func testAutomaticProfileOnUntaggedNativeMoviesPreservesEncodedSamples() async throws {
+        // No user fixture is used or uploaded. This covers the first edit of an
+        // ordinary movie with no camera mdta and the full automatic camera plan.
+        for kind in [MediaKind.mov, .mp4] {
+            let source = directory.appendingPathComponent("automatic-source.\(kind.rawValue)")
+            try await makeNativeMOV(source, includeMetadata: false, kind: kind)
+            let original = try WholeFileDigest.sha256(source)
+            for (index, iso) in [123.0, 65535.0].enumerated() {
+                let output = directory.appendingPathComponent("automatic-edited-\(index).\(kind.rawValue)")
+                var values: [String: MetadataValue] = [
+                    "make": .string("Apple"), "model": .string("iPhone 15 Pro Max"),
+                    "software": .string("18.6.2"),
+                    "lensModel": .string("iPhone 15 Pro Max back triple camera 6.765mm f/1.78"),
+                    "focalLength35mm": .number(24), "iso": .number(iso),
+                    "exposureTime": .number(index == 0 ? 1.0 / 250 : 1.0 / 1000),
+                    "fNumber": .number(1.78)
+                ]
+                for key in VideoMetadataFields.dateKeys.union(["dateTimeOriginal"]) {
+                    values[key] = .string("2026-04-05T06:07:08-04:00")
+                }
+                let patch = MetadataPatch(values: values)
+                // Keep the writer's diagnostic copy for this synthetic test so
+                // every failing check can identify its layer without bypassing
+                // MetadataEngine's production cleanup and rejection gate.
+                _ = try await VideoMetadataWriter.write(source: source, output: output, patch: patch)
+                let inspected = try await MetadataEngine.inspect(output)
+                try patch.validateReadback(inspected)
+                let comparison = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: patch)
+                XCTAssertFalse(comparison.checks.contains { $0.status == .failed }, "Synthetic \(kind): \(comparison.checks)")
+                XCTAssertTrue(comparison.checks.contains { $0.name.contains("compressed data") && $0.status == .passed })
+                XCTAssertEqual(try WholeFileDigest.sha256(source), original)
+            }
+        }
+    }
+
     func testSelfContainedAliasKeepsChunksAndTrackBytesAtOriginalOffsets() async throws {
         // A structural parser control, not a playable video or quality proof.
         let bytes = structuralMovie(referenceType: "alis")
@@ -424,8 +459,8 @@ final class VideoMetadataWriterTests: XCTestCase {
         XCTAssertEqual(try WholeFileDigest.sha256(source), originalDigest)
     }
 
-    private func makeNativeMOV(_ url: URL, includeMetadata: Bool) async throws {
-        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+    private func makeNativeMOV(_ url: URL, includeMetadata: Bool, kind: MediaKind = .mov) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: kind == .mp4 ? .mp4 : .mov)
         if includeMetadata {
             writer.metadata = [(.quickTimeMetadataMake, "Source Maker"), (.quickTimeMetadataModel, "Source Movie"),
                 (.quickTimeMetadataTitle, "Retained synthetic title"), (.quickTimeMetadataLocationISO6709, "+12.5000-044.2500/")].map { identifier, value in
