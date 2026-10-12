@@ -635,15 +635,38 @@ final class VideoMetadataWriterTests: XCTestCase {
         return sample
     }
 
+    func testFixtureBoxParserSupportsExtendedAndTerminalBoxSizes() throws {
+        let extended = word(1) + Data("free".utf8) + qword(19) + Data([1, 2, 3])
+        let terminal = word(0) + Data("mdat".utf8) + Data([4, 5])
+        let parsed = try boxes(extended + terminal)
+        XCTAssertEqual(parsed.map(\.type), ["free", "mdat"])
+        XCTAssertEqual(parsed[0].payload, 16..<19)
+        XCTAssertEqual(parsed[1].payload, 27..<29)
+        XCTAssertThrowsError(try boxes(word(1) + Data("free".utf8)))
+        XCTAssertThrowsError(try boxes(word(1) + Data("free".utf8) + qword(UInt64.max)))
+        XCTAssertThrowsError(try boxes(word(1) + Data("free".utf8) + qword(15)))
+    }
+
     private struct Box { let type: String; let range: Range<Int>; let payload: Range<Int> }
     private func boxes(_ data: Data) throws -> [Box] {
         var result = [Box](), offset = 0
         while offset < data.count {
             guard offset <= data.count - 8 else { throw ProbeError.malformed("Test box header truncated") }
-            let length = Int(data[offset..<offset+4].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) })
-            guard length >= 8, length <= data.count - offset else { throw ProbeError.malformed("Test box bounds invalid") }
+            let declared = data[offset..<offset+4].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+            var header = 8
+            let length: Int
+            if declared == 1 {
+                guard data.count - offset >= 16 else { throw ProbeError.malformed("Extended test box header truncated") }
+                let extended = data[offset+8..<offset+16].reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
+                guard extended <= UInt64(data.count - offset) else { throw ProbeError.malformed("Extended test box exceeds bounds") }
+                header = 16
+                length = Int(extended)
+            } else {
+                length = declared == 0 ? data.count - offset : Int(declared)
+            }
+            guard length >= header, length <= data.count - offset else { throw ProbeError.malformed("Test box bounds invalid") }
             result.append(Box(type: String(decoding: data[offset+4..<offset+8], as: UTF8.self),
-                range: offset..<offset+length, payload: offset+8..<offset+length))
+                range: offset..<offset+length, payload: offset+header..<offset+length))
             offset += length
         }
         return result
