@@ -531,45 +531,52 @@ final class VideoMetadataWriterTests: XCTestCase {
             writer.add(audio); audioInput = audio
         } else { audioInput = nil }
         guard writer.startWriting() else { throw writer.error ?? ProbeError.writeFailed("Cannot start native MOV fixture") }
+        defer {
+            if writer.status == .writing { writer.cancelWriting() }
+        }
         writer.startSession(atSourceTime: .zero)
-        for frame in 0..<frameCount {
-            let deadline = Date().addingTimeInterval(10)
-            while !input.isReadyForMoreMediaData {
-                guard Date() < deadline, writer.status == .writing else {
-                    writer.cancelWriting(); throw ProbeError.writeFailed("Native MOV fixture stalled")
+        var videoFrame = 0, audioFrame = 0
+        var deadline = Date().addingTimeInterval(10)
+        while videoFrame < frameCount || (audioInput != nil && audioFrame < frameCount) {
+            guard writer.status == .writing else {
+                throw writer.error ?? ProbeError.writeFailed("Synthetic movie writer stopped")
+            }
+            var advanced = false
+            // Each track advances independently. Waiting on video before feeding
+            // ready audio can deadlock the writer's interleaving backpressure.
+            if videoFrame < frameCount && input.isReadyForMoreMediaData {
+                var pixel: CVPixelBuffer?
+                guard CVPixelBufferCreate(kCFAllocatorDefault, 32, 32, kCVPixelFormatType_32BGRA, nil, &pixel) == kCVReturnSuccess,
+                      let pixel else { throw ProbeError.writeFailed("Fixture pixel buffer unavailable") }
+                CVPixelBufferLockBaseAddress(pixel, [])
+                if let address = CVPixelBufferGetBaseAddress(pixel) {
+                    memset(address, Int32((videoFrame * 70) % 256), CVPixelBufferGetBytesPerRow(pixel) * 32)
                 }
-                try await Task.sleep(nanoseconds: 10_000_000)
-            }
-            var pixel: CVPixelBuffer?
-            guard CVPixelBufferCreate(kCFAllocatorDefault, 32, 32, kCVPixelFormatType_32BGRA, nil, &pixel) == kCVReturnSuccess,
-                  let pixel else { throw ProbeError.writeFailed("Fixture pixel buffer unavailable") }
-            CVPixelBufferLockBaseAddress(pixel, [])
-            if let address = CVPixelBufferGetBaseAddress(pixel) {
-                memset(address, Int32((frame * 70) % 256), CVPixelBufferGetBytesPerRow(pixel) * 32)
-            }
-            CVPixelBufferUnlockBaseAddress(pixel, [])
-            guard adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(frame), timescale: 30)) else {
-                throw writer.error ?? ProbeError.writeFailed("Cannot append native MOV frame")
-            }
-            if let audioInput {
-                // Feed both tracks incrementally. Supplying every video frame
-                // before audio can stall AVAssetWriter's interleaving buffers.
-                let audioDeadline = Date().addingTimeInterval(10)
-                while !audioInput.isReadyForMoreMediaData {
-                    guard Date() < audioDeadline, writer.status == .writing else {
-                        writer.cancelWriting(); throw ProbeError.writeFailed("Synthetic AAC fixture stalled")
-                    }
-                    try await Task.sleep(nanoseconds: 10_000_000)
+                CVPixelBufferUnlockBaseAddress(pixel, [])
+                guard adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(videoFrame), timescale: 30)) else {
+                    throw writer.error ?? ProbeError.writeFailed("Cannot append native MOV frame")
                 }
+                videoFrame += 1
+                advanced = true
+                if videoFrame == frameCount { input.markAsFinished() }
+            }
+            if let audioInput, audioFrame < frameCount && audioInput.isReadyForMoreMediaData {
                 let samplesPerFrame = audioSampleRate / 30
                 guard audioInput.append(try syntheticPCM(samples: samplesPerFrame,
-                    sampleRate: audioSampleRate, noisy: noisyAudio, startSample: frame * samplesPerFrame)) else {
+                    sampleRate: audioSampleRate, noisy: noisyAudio, startSample: audioFrame * samplesPerFrame)) else {
                     throw writer.error ?? ProbeError.writeFailed("Cannot append synthetic PCM fixture")
                 }
+                audioFrame += 1
+                advanced = true
+                if audioFrame == frameCount { audioInput.markAsFinished() }
+            }
+            if advanced {
+                deadline = Date().addingTimeInterval(10)
+            } else {
+                guard Date() < deadline else { throw ProbeError.writeFailed("Synthetic movie fixture stalled") }
+                try await Task.sleep(nanoseconds: 10_000_000)
             }
         }
-        input.markAsFinished()
-        audioInput?.markAsFinished()
         await writer.finishWriting()
         guard writer.status == .completed else { throw writer.error ?? ProbeError.writeFailed("Native MOV fixture unfinished") }
     }
