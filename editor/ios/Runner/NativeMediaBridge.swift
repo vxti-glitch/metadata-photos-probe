@@ -220,10 +220,13 @@ final class NativeMediaBridge: NSObject {
                 }
             case "openLocationPicker":
                 guard !gate.busy else { throw NativeMediaError.busy }
-                let args = (call.arguments as? [String: Any]) ?? [:]
+                let args = try Self.arguments(call.arguments)
+                guard Set(args.keys) == Set(["latitude", "longitude", "appearance"]) else { throw NativeMediaError.invalidArgument }
+                let appearance = try Self.locationAppearance(args["appearance"])
                 let initialLat = (args["latitude"] as? NSNumber)?.doubleValue
                 let initialLng = (args["longitude"] as? NSNumber)?.doubleValue
-                try presentLocationPicker(initialLat: initialLat, initialLng: initialLng, result: result)
+                try presentLocationPicker(initialLat: initialLat, initialLng: initialLng,
+                                          appearance: appearance, result: result)
             case "getHostDevice":
                 result(Self.detectHostDevice())
             default: result(FlutterMethodNotImplemented)
@@ -410,7 +413,18 @@ final class NativeMediaBridge: NSObject {
         controller.present(activity, animated: true)
     }
 
-    private func presentLocationPicker(initialLat: Double?, initialLng: Double?, result: @escaping FlutterResult) throws {
+    static func locationAppearance(_ raw: Any?) throws -> UIUserInterfaceStyle {
+        guard let value = raw as? String else { throw NativeMediaError.invalidArgument }
+        switch value {
+        case "system": return .unspecified
+        case "light": return .light
+        case "dark": return .dark
+        default: throw NativeMediaError.invalidArgument
+        }
+    }
+
+    private func presentLocationPicker(initialLat: Double?, initialLng: Double?,
+                                       appearance: UIUserInterfaceStyle, result: @escaping FlutterResult) throws {
         let controller = try presenter()
         let token = try start(result)
         let pickerVC = LocationPickerViewController(initialLat: initialLat, initialLng: initialLng) { [weak self] coord in
@@ -422,6 +436,8 @@ final class NativeMediaBridge: NSObject {
             }
         }
         let nav = UINavigationController(rootViewController: pickerVC)
+        nav.overrideUserInterfaceStyle = appearance
+        pickerVC.overrideUserInterfaceStyle = appearance
         let delegate = NativePickerDelegate(token: token)
         delegate.onCancel = { [weak self] token in self?.finish(token, value: nil) }
         pickerDelegate = delegate
@@ -693,6 +709,15 @@ final class NativeMediaBridge: NSObject {
         if detail.contains("incomplete integrity") { return "Review and acknowledge the incomplete integrity checks before export." }
         if detail.contains("Live Photos") { return "Choose a still image with Live turned off; Live Photos are unsupported." }
         if detail.contains("time zone") { return "Video dates require an explicit time zone. Check the date and time settings." }
+        if detail.contains("ISO location is opaque") || detail.contains("Legacy movie location is opaque") {
+            return "This video's location cannot be changed safely with only a map pin. In Manual editing, set Altitude along with the map location, or select Remove for latitude, longitude, and altitude together."
+        }
+        if detail.contains("Altitude-only removal") {
+            return "This video has ISO location data. To remove its location, select Remove for latitude, longitude, and altitude together."
+        }
+        if detail.contains("timed metadata tracks") {
+            return "This video has a timed metadata track, so its location cannot be changed safely. Leave Location unchanged or choose another video."
+        }
         if detail.contains("fragmented") || detail.contains("movie brand") || detail.contains("movie atoms") {
             return "This video's container layout is not supported for lossless metadata editing. Try another original MP4 or MOV."
         }
@@ -731,6 +756,8 @@ final class LocationPickerViewController: UIViewController, MKMapViewDelegate {
     private let onSelect: (CLLocationCoordinate2D?) -> Void
     private var mapView: MKMapView!
     private var annotation: MKPointAnnotation?
+    private let instructionView = UIView()
+    private let instructionLabel = UILabel()
 
     init(initialLat: Double?, initialLng: Double?, onSelect: @escaping (CLLocationCoordinate2D?) -> Void) {
         self.initialLat = initialLat
@@ -743,11 +770,12 @@ final class LocationPickerViewController: UIViewController, MKMapViewDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Select Location"
-        view.backgroundColor = UIColor(red: 0x12/255.0, green: 0x12/255.0, blue: 0x14/255.0, alpha: 1.0)
+        view.backgroundColor = .systemBackground
 
         mapView = MKMapView(frame: view.bounds)
         mapView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         mapView.delegate = self
+        mapView.accessibilityHint = "Tap the map to place a location pin."
         view.addSubview(mapView)
 
         let gesture = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
@@ -758,6 +786,33 @@ final class LocationPickerViewController: UIViewController, MKMapViewDelegate {
 
         navigationItem.leftBarButtonItem = UIBarButtonItem(title: "Cancel", style: .plain, target: self, action: #selector(cancelTapped))
         navigationItem.rightBarButtonItem = UIBarButtonItem(title: "Apply", style: .done, target: self, action: #selector(applyTapped))
+        navigationItem.rightBarButtonItem?.isEnabled = false
+
+        instructionView.backgroundColor = .secondarySystemBackground
+        instructionView.layer.cornerRadius = 12
+        instructionView.translatesAutoresizingMaskIntoConstraints = false
+        instructionView.isAccessibilityElement = true
+        instructionView.accessibilityLabel = "Tap the map to place a location pin."
+        instructionLabel.text = "Tap the map to place a pin"
+        instructionLabel.textColor = .label
+        instructionLabel.font = .preferredFont(forTextStyle: .subheadline)
+        instructionLabel.adjustsFontForContentSizeCategory = true
+        instructionLabel.textAlignment = .center
+        instructionLabel.numberOfLines = 0
+        instructionLabel.isAccessibilityElement = false
+        instructionLabel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(instructionView)
+        instructionView.addSubview(instructionLabel)
+        NSLayoutConstraint.activate([
+            instructionView.centerXAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerXAnchor),
+            instructionView.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
+            instructionView.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            instructionView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+            instructionLabel.leadingAnchor.constraint(equalTo: instructionView.leadingAnchor, constant: 14),
+            instructionLabel.trailingAnchor.constraint(equalTo: instructionView.trailingAnchor, constant: -14),
+            instructionLabel.topAnchor.constraint(equalTo: instructionView.topAnchor, constant: 10),
+            instructionLabel.bottomAnchor.constraint(equalTo: instructionView.bottomAnchor, constant: -10)
+        ])
 
         if let lat = initialLat, let lng = initialLng, abs(lat) <= 90, abs(lng) <= 180 {
             let coord = CLLocationCoordinate2D(latitude: lat, longitude: lng)
@@ -771,7 +826,7 @@ final class LocationPickerViewController: UIViewController, MKMapViewDelegate {
     }
 
     @objc private func applyTapped() {
-        let coord = annotation?.coordinate ?? mapView.centerCoordinate
+        guard let coord = annotation?.coordinate, CLLocationCoordinate2DIsValid(coord) else { return }
         dismiss(animated: true) { self.onSelect(coord) }
     }
 
@@ -793,7 +848,8 @@ final class LocationPickerViewController: UIViewController, MKMapViewDelegate {
         }
     }
 
-    private func setPin(at coord: CLLocationCoordinate2D) {
+    func setPin(at coord: CLLocationCoordinate2D) {
+        guard CLLocationCoordinate2DIsValid(coord) else { return }
         if let existing = annotation {
             existing.coordinate = coord
         } else {
@@ -803,5 +859,7 @@ final class LocationPickerViewController: UIViewController, MKMapViewDelegate {
             mapView.addAnnotation(pin)
             annotation = pin
         }
+        navigationItem.rightBarButtonItem?.isEnabled = true
+        instructionView.isHidden = true
     }
 }

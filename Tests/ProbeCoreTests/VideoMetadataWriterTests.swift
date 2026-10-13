@@ -25,6 +25,22 @@ final class VideoMetadataWriterTests: XCTestCase {
         try await assertNativeMOV(includeMetadata: false)
     }
 
+    func testSynthetic4KWithAudioPreservesSamplesAndRecordsProcessingTime() async throws {
+        let source = directory.appendingPathComponent("synthetic-4k.mp4"), output = directory.appendingPathComponent("synthetic-4k-edited.mp4")
+        try await makeNativeMOV(source, includeMetadata: true, kind: .mp4, includeAudio: true,
+                                fastStart: true, frameCount: 15, width: 3840, height: 2160)
+        let originalHash = try WholeFileDigest.sha256(source)
+        let start = Date()
+        let result = try await MetadataEngine.processMetadataPatch(source: source, output: output,
+            patch: MetadataPatch(values: ["make": .string("Apple"), "model": .string("Synthetic 4K Camera")]))
+        let encoded = result.integrity.checks.filter { $0.name.contains("compressed data") }
+        XCTAssertEqual(encoded.count, 2)
+        XCTAssertTrue(encoded.allSatisfy { $0.status == .passed })
+        XCTAssertFalse(result.integrity.checks.contains { $0.status == .failed })
+        XCTAssertEqual(try WholeFileDigest.sha256(source), originalHash)
+        print("Synthetic 4K H264/AAC metadata rewrite plus verification: \(Date().timeIntervalSince(start)) seconds; \(result.sourceInspection.byteCount) input bytes; 15 generated frames. This is a host fixture measurement, not a physical-device benchmark.")
+    }
+
     func testAutomaticProfileOnUntaggedNativeMoviesPreservesEncodedSamples() async throws {
         // No user fixture is used or uploaded. This covers the first edit of an
         // ordinary movie with no camera mdta and the full automatic camera plan.
@@ -505,7 +521,8 @@ final class VideoMetadataWriterTests: XCTestCase {
     }
 
     private func makeNativeMOV(_ url: URL, includeMetadata: Bool, kind: MediaKind = .mov, includeAudio: Bool = false, fastStart: Bool = false,
-                               frameCount: Int = 3, audioSampleRate: Int = 48_000, noisyAudio: Bool = false) async throws {
+                               frameCount: Int = 3, audioSampleRate: Int = 48_000, noisyAudio: Bool = false,
+                               width: Int = 32, height: Int = 32) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: kind == .mp4 ? .mp4 : .mov)
         writer.shouldOptimizeForNetworkUse = fastStart
         if includeMetadata {
@@ -516,10 +533,10 @@ final class VideoMetadataWriterTests: XCTestCase {
             }
         }
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: 32, AVVideoHeightKey: 32])
+            AVVideoWidthKey: width, AVVideoHeightKey: height])
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-            kCVPixelBufferWidthKey as String: 32, kCVPixelBufferHeightKey as String: 32])
+            kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height])
         guard writer.canAdd(input) else { throw ProbeError.writeFailed("Cannot add native MOV fixture input") }
         writer.add(input)
         let audioInput: AVAssetWriterInput?
@@ -546,11 +563,11 @@ final class VideoMetadataWriterTests: XCTestCase {
             // ready audio can deadlock the writer's interleaving backpressure.
             if videoFrame < frameCount && input.isReadyForMoreMediaData {
                 var pixel: CVPixelBuffer?
-                guard CVPixelBufferCreate(kCFAllocatorDefault, 32, 32, kCVPixelFormatType_32BGRA, nil, &pixel) == kCVReturnSuccess,
+                guard CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA, nil, &pixel) == kCVReturnSuccess,
                       let pixel else { throw ProbeError.writeFailed("Fixture pixel buffer unavailable") }
                 CVPixelBufferLockBaseAddress(pixel, [])
                 if let address = CVPixelBufferGetBaseAddress(pixel) {
-                    memset(address, Int32((videoFrame * 70) % 256), CVPixelBufferGetBytesPerRow(pixel) * 32)
+                    memset(address, Int32((videoFrame * 70) % 256), CVPixelBufferGetBytesPerRow(pixel) * height)
                 }
                 CVPixelBufferUnlockBaseAddress(pixel, [])
                 guard adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(videoFrame), timescale: 30)) else {

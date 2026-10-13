@@ -106,4 +106,17 @@ void main() {
     expect(controller.batchSelection, {source.id});
     expect(controller.acknowledgedProcessingId, outputId);
   });
+
+  test('map picker receives the chosen in-app appearance', () async {
+    final bridge = FakeMediaBridge();
+    final controller = EditorController(bridge);
+    addTearDown(controller.dispose);
+    await controller.initialize();
+    await controller.setAppearance('light');
+    await controller.pickLocation();
+    expect(bridge.lastLocationPickerAppearance, 'light');
+    await controller.setAppearance('dark');
+    await controller.pickLocation();
+    expect(bridge.lastLocationPickerAppearance, 'dark');
+  });
 }

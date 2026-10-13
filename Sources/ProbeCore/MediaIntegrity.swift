@@ -125,7 +125,9 @@ public enum MediaIntegrity {
             keys.formUnion(aliases)
         }
         if !keys.isDisjoint(with: VideoMetadataFields.gpsKeys) {
-            keys.formUnion(VideoMetadataFields.gpsKeys); keys.insert(VideoMetadataFields.locationKey); keys.insert("mdta/" + VideoMetadataFields.locationKey)
+            // The serialized tuple changes, but unselected normalized components
+            // (notably altitude for a map-only edit) must still compare exactly.
+            keys.insert(VideoMetadataFields.locationKey); keys.insert("mdta/" + VideoMetadataFields.locationKey)
             // The writer normalizes or retires ISO `loci`, QuickTime legacy `©xyz`, and
             // container-level ISO 6709 location. Exclude Apple's synthesized common identifier
             // and exact container representations for those selected locations so non-target
@@ -142,28 +144,22 @@ public enum MediaIntegrity {
             keys.insert("loci")
             keys.insert("3gp/loci")
         }
-        let videoDateKeys: Set<String> = [
-            "createDate", "modifyDate", "movieCreateDate", "movieModifyDate",
-            "trackCreateDate", "trackModifyDate", "mediaCreateDate", "mediaModifyDate",
-            "dateTimeOriginal", "com.apple.quicktime.creationdate", "mdta/com.apple.quicktime.creationdate",
-            AVMetadataIdentifier.quickTimeMetadataCreationDate.rawValue
-        ]
-        if !keys.isDisjoint(with: videoDateKeys) {
-            keys.formUnion(videoDateKeys)
+        let dateAliases: [Set<String>] = [["createDate", "movieCreateDate"], ["modifyDate", "movieModifyDate"]]
+        for aliases in dateAliases {
+            if !patch.targetedKeys.isDisjoint(with: aliases) {
+                keys.formUnion(aliases)
+            }
         }
         let retained = before.metadata.filter { !keys.contains($0.key) } == after.metadata.filter { !keys.contains($0.key) }
-        checks.append(IntegrityCheck(name: "retained embedded metadata", status: retained ? .passed : .notChecked, detail: "Compare all exposed non-target metadata keys; exclude only selected fields and their documented aliases."))
-        var limitations = baseline.limitations.filter { !$0.contains("Unreferenced original Exif bytes remain") }
-        if !retained { limitations.append("Non-target metadata variations noted during lossless container rewrite.") }
+        checks.append(IntegrityCheck(name: "retained embedded metadata", status: retained ? .passed : .failed, detail: "Compare all exposed non-target metadata keys; exclude only selected fields and their documented aliases."))
+        let limitations = baseline.limitations.filter { !$0.contains("Unreferenced original Exif bytes remain") }
         if patch.targetedKeys.isDisjoint(with: Set(["latitude", "longitude", "altitude", "imageDirection"])) {
             let locMatches = before.location == after.location
-            checks.append(IntegrityCheck(name: "exposed embedded location", status: locMatches ? .passed : .notChecked, detail: "Unedited embedded location remains unchanged."))
-            if !locMatches { limitations.append("Embedded location representation normalized during rewrite.") }
+            checks.append(IntegrityCheck(name: "exposed embedded location", status: locMatches ? .passed : .failed, detail: "Unedited embedded location remains unchanged."))
         }
         if before.kind.isImage {
             let matches = (try? retainedImageProperties(source, metadataPatch: patch) == retainedImageProperties(output, metadataPatch: patch)) ?? false
-            checks.append(IntegrityCheck(name: "ImageIO non-target properties", status: matches ? .passed : .notChecked, detail: "Exclude exact TIFF/EXIF/GPS target property paths; compare all other exposed properties."))
-            if !matches { limitations.append("ImageIO properties normalized or reordered during write.") }
+            checks.append(IntegrityCheck(name: "ImageIO non-target properties", status: matches ? .passed : .failed, detail: "Exclude exact TIFF/EXIF/GPS target property paths; compare all other exposed properties."))
             checks += try imageTargetReadback(output, patch: patch)
         } else {
             checks += try await videoTargetReadback(output, patch: patch)

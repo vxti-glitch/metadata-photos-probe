@@ -390,19 +390,8 @@ class _MetadataFormState extends State<MetadataForm>
     for (final f in metadataFields) {
       if (!(fields ?? supported).contains(f.key)) continue;
       if (modes[f.key] == 'remove') {
-        if (!_hasCompetingMetadata) {
-          removed.add(f.key);
-        }
+        removed.add(f.key);
       } else if (modes[f.key] == 'set') {
-        if (_hasTimedMetadata &&
-            [
-              'latitude',
-              'longitude',
-              'altitude',
-              'imageDirection',
-            ].contains(f.key)) {
-          continue;
-        }
         values[f.key] = MetadataPatch.parseField(f, inputs[f.key]!.text);
       }
     }

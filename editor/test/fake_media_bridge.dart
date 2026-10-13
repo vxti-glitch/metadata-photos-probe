@@ -20,6 +20,7 @@ MediaSession fixture({
   ),
   bool failedCheck = false,
   Map<String, String> additionalMetadata = const {},
+  Map<String, String> additionalStructure = const {},
 }) {
   final metadata = {
     'make': 'Original Make',
@@ -31,7 +32,7 @@ MediaSession fixture({
     kind: kind,
     byteCount: 4096,
     metadata: camera,
-    structure: const {'width': '120', 'height': '160'},
+    structure: {'width': '120', 'height': '160', ...additionalStructure},
     notes: const [],
   );
   return MediaSession(
@@ -396,15 +397,19 @@ class FakeMediaBridge implements MediaBridge {
   }
 
   Map<String, double>? nextLocationPickerResult;
+  String? lastLocationPickerAppearance;
   @override
   Future<Map<String, double>?> openLocationPicker({
     double? latitude,
     double? longitude,
-  }) async =>
-      nextLocationPickerResult ??
-      (latitude != null && longitude != null
-          ? {'latitude': latitude, 'longitude': longitude}
-          : null);
+    String appearance = 'system',
+  }) async {
+    lastLocationPickerAppearance = appearance;
+    return nextLocationPickerResult ??
+        (latitude != null && longitude != null
+            ? {'latitude': latitude, 'longitude': longitude}
+            : null);
+  }
 
   Map<String, String>? nextHostDevice;
   @override

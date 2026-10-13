@@ -403,6 +403,66 @@ final class ProbeCoreTests: XCTestCase {
             XCTAssertEqual(try WholeFileDigest.sha256(source), original)
         }
     }
+    func testFullPatchRejectsUnrequestedMetadataAndLocationChanges() async throws {
+        let source = folder.appendingPathComponent("strict-source.jpg")
+        try makeImage(source, type: UTType.jpeg.identifier, orientation: 1)
+        let expected = MetadataPatch(values: ["iso": .number(800)])
+        for (name, unexpected) in [
+            ("exposure", MetadataPatch(values: ["iso": .number(800), "fNumber": .number(4)])),
+            ("gps", MetadataPatch(values: ["iso": .number(800), "latitude": .number(12.5), "longitude": .number(44.25)]))
+        ] {
+            let output = folder.appendingPathComponent("strict-\(name).jpg")
+            try StillContainerMetadata.write(source: source, output: output, kind: .jpeg, patch: unexpected)
+            let report = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: expected)
+            XCTAssertEqual(report.checks.first { $0.name == "requested metadata" }?.status, .passed)
+            XCTAssertEqual(report.status, .mismatch, "Known non-target changes must never become acknowledgment-exportable.")
+            XCTAssertEqual(report.checks.first { $0.name == "retained embedded metadata" }?.status, .failed)
+            XCTAssertEqual(report.checks.first { $0.name == "ImageIO non-target properties" }?.status, .failed)
+            if name == "gps" {
+                XCTAssertEqual(report.checks.first { $0.name == "exposed embedded location" }?.status, .failed)
+            }
+        }
+    }
+
+    func testSelectedMovieDateDoesNotExemptOtherHeaderDates() async throws {
+        let source = folder.appendingPathComponent("date-isolation.mov"), output = folder.appendingPathComponent("date-drift.mov")
+        try await makeVideo(source, kind: .mov)
+        let expected = MetadataPatch(values: ["movieCreateDate": .string("2026-04-05T06:07:08Z")])
+        let valid = folder.appendingPathComponent("date-valid.mov")
+        _ = try await VideoMetadataWriter.write(source: source, output: valid, patch: expected)
+        let validReport = try await MediaIntegrity.compareMetadata(source: source, output: valid, patch: expected)
+        XCTAssertNotEqual(validReport.status, .mismatch)
+        _ = try await VideoMetadataWriter.write(source: source, output: output, patch: MetadataPatch(values: [
+            "movieCreateDate": .string("2026-04-05T06:07:08Z"),
+            "trackModifyDate": .string("2001-01-01T00:00:00Z")
+        ]))
+        let report = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: expected)
+        XCTAssertEqual(report.checks.first { $0.name == "requested metadata" }?.status, .passed)
+        XCTAssertEqual(report.checks.first { $0.name == "retained embedded metadata" }?.status, .failed)
+        XCTAssertEqual(report.status, .mismatch)
+    }
+
+    func testMapCoordinateEditDoesNotExemptUnselectedAltitude() async throws {
+        let original = folder.appendingPathComponent("altitude-original.mov")
+        let source = folder.appendingPathComponent("altitude-source.mov"), output = folder.appendingPathComponent("altitude-drift.mov")
+        try await makeVideo(original, kind: .mov)
+        _ = try await VideoMetadataWriter.write(source: original, output: source, patch: MetadataPatch(values: [
+            "latitude": .number(12.5), "longitude": .number(44.25), "altitude": .number(10)
+        ]))
+        let expected = MetadataPatch(values: ["latitude": .number(35), "longitude": .number(-78)])
+        let valid = folder.appendingPathComponent("altitude-valid.mov")
+        _ = try await VideoMetadataWriter.write(source: source, output: valid, patch: expected)
+        let validReport = try await MediaIntegrity.compareMetadata(source: source, output: valid, patch: expected)
+        XCTAssertNotEqual(validReport.status, .mismatch)
+        _ = try await VideoMetadataWriter.write(source: source, output: output, patch: MetadataPatch(values: [
+            "latitude": .number(35), "longitude": .number(-78), "altitude": .number(100)
+        ]))
+        let report = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: expected)
+        XCTAssertEqual(report.checks.first { $0.name == "requested metadata" }?.status, .passed)
+        XCTAssertEqual(report.checks.first { $0.name == "retained embedded metadata" }?.status, .failed)
+        XCTAssertEqual(report.status, .mismatch)
+    }
+
     func testMovieFullProfileLensLocationDatesAndSelectedRemovalPreserveSamples() async throws {
         for kind in [MediaKind.mp4, .mov] {
             let source = folder.appendingPathComponent("full-video.\(kind.rawValue)"), output = folder.appendingPathComponent("full-edited.\(kind.rawValue)"), removed = folder.appendingPathComponent("full-removed.\(kind.rawValue)")

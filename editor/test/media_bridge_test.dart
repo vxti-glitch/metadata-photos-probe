@@ -159,6 +159,44 @@ void main() {
   );
 
   test(
+    'map picker passes bounded appearance and coordinates to native',
+    () async {
+      MethodCall? received;
+      var calls = 0;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls++;
+        received = call;
+        return {'latitude': 35.779590, 'longitude': -78.638179};
+      });
+      expect(
+        await bridge.openLocationPicker(
+          latitude: 35.7,
+          longitude: -78.6,
+          appearance: 'dark',
+        ),
+        {'latitude': 35.779590, 'longitude': -78.638179},
+      );
+      expect(received?.method, 'openLocationPicker');
+      expect(received?.arguments, {
+        'latitude': 35.7,
+        'longitude': -78.6,
+        'appearance': 'dark',
+      });
+      await bridge.openLocationPicker();
+      expect(received?.arguments, {
+        'latitude': null,
+        'longitude': null,
+        'appearance': 'system',
+      });
+      await expectLater(
+        bridge.openLocationPicker(appearance: 'sepia'),
+        throwsFormatException,
+      );
+      expect(calls, 2);
+    },
+  );
+
+  test(
     'support handoff propagates the native email unavailable message',
     () async {
       messenger.setMockMethodCallHandler(channel, (_) async {
@@ -209,6 +247,40 @@ void main() {
       'acknowledgeIncomplete': true,
     });
   });
+  test(
+    'batch export and sharing reject malformed completion responses',
+    () async {
+      final operations = <String, Future<bool> Function()>{
+        'exportFilesBatch': () => bridge.exportBatch(const []),
+        'shareFiles': () => bridge.shareFiles(sourceId, outputId, false),
+        'shareFilesBatch': () => bridge.shareBatch(const []),
+      };
+      for (final operation in operations.entries) {
+        for (final response in <Object?>[
+          <String, Object?>{},
+          {'completed': 'false'},
+          {'completed': 1},
+          null,
+        ]) {
+          messenger.setMockMethodCallHandler(channel, (call) async {
+            expect(call.method, operation.key);
+            return response;
+          });
+          await expectLater(operation.value(), throwsFormatException);
+        }
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          expect(call.method, operation.key);
+          return {'completed': false};
+        });
+        expect(await operation.value(), isFalse);
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          expect(call.method, operation.key);
+          return {'completed': true};
+        });
+        expect(await operation.value(), isTrue);
+      }
+    },
+  );
   test(
     'native picker cancellation remains null rather than a fabricated session',
     () async {

@@ -6,6 +6,7 @@ import ImageIO
 import UniformTypeIdentifiers
 import AVFoundation
 import CoreVideo
+import MapKit
 @testable import Runner
 
 @MainActor
@@ -28,6 +29,59 @@ class RunnerTests: XCTestCase {
     XCTAssertNil(components.host)
     XCTAssertNil(components.fragment)
     XCTAssertEqual(components.queryItems, [URLQueryItem(name: "subject", value: "Metadata Editor Support")])
+  }
+
+  func testLocationPickerRequiresAChosenPinBeforeApply() throws {
+    let picker = LocationPickerViewController(initialLat: nil, initialLng: nil) { _ in }
+    _ = picker.view
+    let apply = try XCTUnwrap(picker.navigationItem.rightBarButtonItem)
+    let map = try XCTUnwrap(picker.view.subviews.compactMap { $0 as? MKMapView }.first)
+    XCTAssertFalse(apply.isEnabled)
+    XCTAssertTrue(map.annotations.isEmpty)
+
+    let selected = CLLocationCoordinate2D(latitude: 35.779590, longitude: -78.638179)
+    picker.setPin(at: selected)
+    XCTAssertTrue(apply.isEnabled)
+    XCTAssertEqual(map.annotations.count, 1)
+    XCTAssertEqual(map.annotations[0].coordinate.latitude, selected.latitude, accuracy: 0.000001)
+    XCTAssertEqual(map.annotations[0].coordinate.longitude, selected.longitude, accuracy: 0.000001)
+
+    picker.setPin(at: CLLocationCoordinate2D(latitude: 91, longitude: 0))
+    XCTAssertEqual(map.annotations.count, 1)
+    XCTAssertEqual(map.annotations[0].coordinate.latitude, selected.latitude, accuracy: 0.000001)
+  }
+
+  func testLocationPickerRestoresOnlyValidExistingCoordinates() throws {
+    let existing = LocationPickerViewController(initialLat: 40.7128, initialLng: -74.0060) { _ in }
+    _ = existing.view
+    XCTAssertTrue(try XCTUnwrap(existing.navigationItem.rightBarButtonItem).isEnabled)
+
+    let invalid = LocationPickerViewController(initialLat: 95, initialLng: -74.0060) { _ in }
+    _ = invalid.view
+    XCTAssertFalse(try XCTUnwrap(invalid.navigationItem.rightBarButtonItem).isEnabled)
+    let map = try XCTUnwrap(invalid.view.subviews.compactMap { $0 as? MKMapView }.first)
+    XCTAssertTrue(map.annotations.isEmpty)
+  }
+
+  func testLocationPickerAppearanceAcceptsOnlySupportedModes() throws {
+    XCTAssertEqual(try NativeMediaBridge.locationAppearance("system"), .unspecified)
+    XCTAssertEqual(try NativeMediaBridge.locationAppearance("light"), .light)
+    XCTAssertEqual(try NativeMediaBridge.locationAppearance("dark"), .dark)
+    XCTAssertThrowsError(try NativeMediaBridge.locationAppearance("sepia"))
+    XCTAssertThrowsError(try NativeMediaBridge.locationAppearance(nil))
+  }
+
+  func testOpaqueVideoLocationFailureExplainsAltitudeChoiceWithoutLeakingDetail() {
+    let opaque = NativeMediaBridge.flutterError(ProbeError.unsupported(
+      "ISO location is opaque; explicitly set or remove latitude, longitude, and altitude together"))
+    XCTAssertEqual(opaque.code, "unsupported")
+    XCTAssertEqual(opaque.message,
+      "This video's location cannot be changed safely with only a map pin. In Manual editing, set Altitude along with the map location, or select Remove for latitude, longitude, and altitude together.")
+
+    let timed = NativeMediaBridge.flutterError(ProbeError.unsupported(
+      "Location editing is refused for a movie containing timed metadata tracks"))
+    XCTAssertEqual(timed.message,
+      "This video has a timed metadata track, so its location cannot be changed safely. Leave Location unchanged or choose another video.")
   }
 
   func testCanceledOperationRetainsLeaseAndIgnoresStaleCompletion() throws {

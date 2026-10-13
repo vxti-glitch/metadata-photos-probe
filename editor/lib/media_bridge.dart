@@ -41,6 +41,7 @@ abstract interface class MediaBridge {
   Future<Map<String, double>?> openLocationPicker({
     double? latitude,
     double? longitude,
+    String appearance = 'system',
   });
   Future<Map<String, String>?> getHostDevice();
 }
@@ -179,13 +180,18 @@ class NativeMediaBridge implements MediaBridge {
     }),
   );
   @override
-  Future<bool> exportBatch(List<Map<String, Object?>> items) async =>
-      objectMap(
-        await _channel.invokeMethod<Object?>('exportFilesBatch', {
-          'items': items,
-        }),
-      )['completed'] ==
-      true;
+  Future<bool> exportBatch(List<Map<String, Object?>> items) async {
+    final result = objectMap(
+      await _channel.invokeMethod<Object?>('exportFilesBatch', {
+        'items': items,
+      }),
+    );
+    if (result['completed'] is! bool) {
+      throw const FormatException('Invalid export response.');
+    }
+    return result['completed'] as bool;
+  }
+
   @override
   Future<bool> shareFiles(
     String sessionId,
@@ -199,17 +205,23 @@ class NativeMediaBridge implements MediaBridge {
         'acknowledgeIncomplete': acknowledgeIncomplete,
       }),
     );
-    return result['completed'] == true;
+    if (result['completed'] is! bool) {
+      throw const FormatException('Invalid share response.');
+    }
+    return result['completed'] as bool;
   }
 
   @override
-  Future<bool> shareBatch(List<Map<String, Object?>> items) async =>
-      objectMap(
-        await _channel.invokeMethod<Object?>('shareFilesBatch', {
-          'items': items,
-        }),
-      )['completed'] ==
-      true;
+  Future<bool> shareBatch(List<Map<String, Object?>> items) async {
+    final result = objectMap(
+      await _channel.invokeMethod<Object?>('shareFilesBatch', {'items': items}),
+    );
+    if (result['completed'] is! bool) {
+      throw const FormatException('Invalid share response.');
+    }
+    return result['completed'] as bool;
+  }
+
   @override
   Future<Map<String, Object?>?> importPreset() async {
     final value = await _channel.invokeMethod<Object?>('importPreset');
@@ -236,10 +248,18 @@ class NativeMediaBridge implements MediaBridge {
   Future<Map<String, double>?> openLocationPicker({
     double? latitude,
     double? longitude,
+    String appearance = 'system',
   }) async {
+    if (!const {'system', 'light', 'dark'}.contains(appearance)) {
+      throw const FormatException('Invalid appearance preference.');
+    }
     final result = await _channel.invokeMethod<Object?>(
       'openLocationPicker',
-      <String, Object?>{'latitude': latitude, 'longitude': longitude},
+      <String, Object?>{
+        'latitude': latitude,
+        'longitude': longitude,
+        'appearance': appearance,
+      },
     );
     if (result is! Map) return null;
     final lat = result['latitude'];

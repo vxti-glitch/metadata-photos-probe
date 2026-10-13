@@ -1216,6 +1216,7 @@ class EditorController extends ChangeNotifier {
       return await bridge.openLocationPicker(
         latitude: latitude,
         longitude: longitude,
+        appearance: appearance,
       );
     } catch (failure) {
       if (!_disposed) {

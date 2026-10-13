@@ -104,6 +104,38 @@ void main() {
     }
   }
 
+  for (final guarded in [false, true]) {
+    testWidgets(
+      'requested ${guarded ? 'GPS edit on timed video' : 'removal with competing metadata'} is never silently omitted',
+      (tester) async {
+        final bridge = _TrackingBridge()
+          ..sessions = [
+            fixture(
+              kind: guarded ? MediaKind.mov : MediaKind.jpeg,
+              additionalStructure: guarded
+                  ? {'trackTypes': 'vide,soun,meta'}
+                  : {'competingMetadata': 'true'},
+            ),
+          ];
+        final controller = await mount(tester, bridge);
+        final patch = guarded
+            ? MetadataPatch(values: {'latitude': 35.0, 'longitude': -78.0})
+            : MetadataPatch(removals: {'software'});
+        await controller.savePreset('Requested edit', patch);
+        await tester.pumpAndSettle();
+        await expandManualEditing(tester);
+        final preset = find.text('Requested edit');
+        await tester.ensureVisible(preset);
+        await tester.tap(preset);
+        await tester.pumpAndSettle();
+        await tap(tester, 'primaryeditAction');
+        await tap(tester, 'primaryreviewAction');
+        expect(bridge.patches[sourceId]!.single.equivalent(patch), isTrue);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets(
     'automatic host profile prepares supported values without extra actions',
     (tester) async {
