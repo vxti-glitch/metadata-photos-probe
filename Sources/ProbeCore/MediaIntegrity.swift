@@ -20,40 +20,19 @@ public enum MediaIntegrity {
                 (patch.lens == nil || after.metadata["lens"] == patch.lens)
             check("requested camera metadata", matches, "Read back exactly the requested make/model and any explicitly edited lens.")
         }
-        let retained = retainedMetadata(before.metadata, patch: patch) == retainedMetadata(after.metadata, patch: patch)
-        if patch == nil {
-            check("retained embedded metadata", retained, "Preserve inspected non-target fields; a nil patch preserves all inspected camera fields too.")
-        } else {
-            checks.append(IntegrityCheck(name: "retained embedded metadata", status: retained ? .passed : .notChecked, detail: retained ? "Preserve inspected non-target fields." : "Non-target metadata variations noted during lossless container rewrite."))
-            if !retained { limitations.append("Non-target metadata variations noted during lossless rewrite.") }
-        }
-        let locMatches = before.location == after.location
-        if patch == nil {
-            check("exposed embedded location", locMatches, "Compare exposed embedded location independently from the Photos library location; absent fields do not prove there is no location elsewhere.")
-        } else {
-            checks.append(IntegrityCheck(name: "exposed embedded location", status: locMatches ? .passed : .notChecked, detail: locMatches ? "Compare exposed embedded location independently from the Photos library location; absent fields do not prove there is no location elsewhere." : "Embedded location representation normalized during rewrite."))
-            if !locMatches { limitations.append("Embedded location representation normalized during rewrite.") }
-        }
+        check("retained embedded metadata", retainedMetadata(before.metadata, patch: patch) == retainedMetadata(after.metadata, patch: patch),
+              "Preserve inspected non-target fields; a nil patch preserves all inspected camera fields too.")
+        check("exposed embedded location", before.location == after.location,
+              "Compare exposed embedded location independently from the Photos library location; absent fields do not prove there is no location elsewhere.")
         if before.byteCount == after.byteCount,
            try WholeFileDigest.sha256(source) == WholeFileDigest.sha256(output) {
             check("exact complete file bytes", true, "Whole-file SHA-256 and byte count match. No container, compressed media or opaque metadata bytes changed. Photos UI/provenance remains a separate device observation.")
             return IntegrityComparison(status: checks.contains { $0.status == .failed } ? .mismatch : .verified, checks: checks, limitations: [])
         }
         if before.kind.isImage {
-            let presMatches = before.structure == after.structure
-            if patch == nil {
-                check("image presentation", presMatches, "Compare dimensions, bit depth, orientation, color model/profile and container type.")
-            } else {
-                checks.append(IntegrityCheck(name: "image presentation", status: presMatches ? .passed : .notChecked, detail: presMatches ? "Compare dimensions, bit depth, orientation, color model/profile and container type." : "Image presentation structure normalized."))
-                if !presMatches { limitations.append("Image presentation structure normalized.") }
-            }
-            let retainedProps = (try? retainedImageProperties(source, patch: patch) == retainedImageProperties(output, patch: patch)) ?? false
-            if patch == nil {
-                check("ImageIO exposed non-target properties", retainedProps, "Compare properties after excluding only requested camera/lens fields. Unknown private tags are outside this comparison.")
-            } else {
-                checks.append(IntegrityCheck(name: "ImageIO exposed non-target properties", status: retainedProps ? .passed : .notChecked, detail: retainedProps ? "Compare properties after excluding only requested camera/lens fields. Unknown private tags are outside this comparison." : "ImageIO properties normalized or reordered during write."))
-                if !retainedProps { limitations.append("ImageIO property ordering normalized during write.") }
-            }
+            check("image presentation", before.structure == after.structure, "Compare dimensions, bit depth, orientation, color model/profile and container type.")
+            check("ImageIO exposed non-target properties", (try? retainedImageProperties(source, patch: patch) == retainedImageProperties(output, patch: patch)) ?? false,
+                  "Compare properties after excluding only requested camera/lens fields. Unknown private tags are outside this comparison.")
             if before.kind == .jpeg && after.kind == .jpeg {
                 let original = try JPEGInventory.read(source), edited = try JPEGInventory.read(output)
                 check("JPEG compressed scans and coding segments", original.codingSignatures == edited.codingSignatures,
