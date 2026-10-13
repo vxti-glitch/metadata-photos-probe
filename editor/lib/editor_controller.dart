@@ -880,7 +880,17 @@ class EditorController extends ChangeNotifier {
         await _persist();
         _emit();
         try {
-          final source = sessions.firstWhere((s) => s.id == item.sessionId);
+          final source = sessions
+              .where((s) => s.id == item.sessionId)
+              .firstOrNull;
+          if (source == null) {
+            item.status = 'failed';
+            item.message = 'Source media session was not found.';
+            queueCompleted++;
+            await _persist();
+            _emit();
+            continue;
+          }
           _upsert(source.withoutOutput());
           final result = await bridge.processMetadata(
             item.sessionId,
@@ -952,10 +962,15 @@ class EditorController extends ChangeNotifier {
       .length;
   int get queueRunningCount => queue.where((q) => q.status == 'running').length;
 
-  Future<void> retryBatch() => processBatch({
-    for (final item in queue)
-      if (item.status != 'completed') item.sessionId: item.patch,
-  }, retry: true);
+  Future<void> retryBatch() {
+    final validIds = sessions.map((s) => s.id).toSet();
+    return processBatch({
+      for (final item in queue)
+        if (item.status != 'completed' && validIds.contains(item.sessionId))
+          item.sessionId: item.patch,
+    }, retry: true);
+  }
+
   Future<void> exportSelectedBatch({
     bool acknowledgeIncomplete = false,
     bool onlyReady = false,

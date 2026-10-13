@@ -306,8 +306,8 @@ public enum MediaIntegrity {
                 }
             }
             let status = isTrackKey
-                ? (videoTrackReadbackStatus(statuses, expectedTrackCount: collections.count) == .failed ? .notChecked : videoTrackReadbackStatus(statuses, expectedTrackCount: collections.count))
-                : (statuses.contains(.failed) ? .notChecked : (statuses.contains(.notChecked) ? .notChecked : .passed))
+                ? videoTrackReadbackStatus(statuses, expectedTrackCount: collections.count)
+                : (statuses.contains(.failed) ? .failed : (statuses.contains(.notChecked) ? .notChecked : .passed))
             checks.append(IntegrityCheck(name: "AVFoundation target \(key)", status: status,
                 detail: "Verify each selected value in its movie/video-track key space; use bounded container readback only when AVFoundation omits that value."))
         }
@@ -346,7 +346,15 @@ public enum MediaIntegrity {
                     matches = key.lowercased().contains("date") ? actual == (try MetadataPatch.exifDate(target.text)) : (actual == target.text || actual == sanitized || trimmed == target.text || trimmed == sanitized)
                 }
             } else { matches = actual == nil }
-            checks.append(IntegrityCheck(name: "ImageIO target \(key)", status: matches ? .passed : .notChecked, detail: matches ? "Read the selected field through Apple's independent image metadata reader." : "ImageIO reader omitted or normalized public dictionary mapping for \(key); verified via primary container parser."))
+            let checkStatus: CheckStatus
+            if matches {
+                checkStatus = .passed
+            } else if actual == nil && patch.values[key] != nil {
+                checkStatus = .notChecked
+            } else {
+                checkStatus = .failed
+            }
+            checks.append(IntegrityCheck(name: "ImageIO target \(key)", status: checkStatus, detail: checkStatus == .passed ? "Read the selected field through Apple's independent image metadata reader." : checkStatus == .notChecked ? "ImageIO reader omitted public dictionary mapping for \(key); verified via primary container parser." : "ImageIO readback differed from requested value."))
         }
         return checks
     }
