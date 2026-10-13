@@ -71,7 +71,8 @@ public enum MetadataEngine {
         var metadata = [String: String]()
         for item in try await containerMetadata(asset) {
             if let value = try await item.load(.stringValue) {
-                metadata[item.identifier?.rawValue ?? String(describing: item.key)] = value
+                let identity = try metadataIdentity(identifier: item.identifier, key: item.key, keySpace: item.keySpace)
+                metadata[identity] = value
                 if item.identifier == .quickTimeMetadataMake { metadata["make"] = value }
                 if item.identifier == .quickTimeMetadataModel { metadata["model"] = value }
             }
@@ -181,6 +182,21 @@ public enum MetadataEngine {
     private static func writeVideo(source: URL, output: URL, kind: MediaKind, patch: CameraPatch) async throws {
         _ = try await VideoMetadataWriter.write(source: source, output: output, patch: patch)
         try Task.checkCancellation()
+    }
+
+    /// An absent AVFoundation identifier does not make the raw key optional text.
+    /// Preserve its namespace and use Apple's mapping when an equivalent exists.
+    /// This keeps selected-field aliases stable without ignoring unknown metadata.
+    static func metadataIdentity(identifier: AVMetadataIdentifier?, key: (any NSCopying & NSObjectProtocol)?, keySpace: AVMetadataKeySpace?) throws -> String {
+        if let identifier { return identifier.rawValue }
+        guard let key else { throw ProbeError.unsupported("Metadata item has no key or identifier") }
+        if let keySpace {
+            if let identifier = AVMetadataItem.identifier(forKey: key, keySpace: keySpace) {
+                return identifier.rawValue
+            }
+            return keySpace.rawValue + "/" + String(describing: key)
+        }
+        return String(describing: key)
     }
 
     /// Read each advertised keyspace, including QuickTime mdta. Common metadata is

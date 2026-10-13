@@ -692,6 +692,13 @@ final class NativeMediaBridge: NSObject {
         for field in MetadataPatch.supportedKeys(for: .png) {
             known["ImageIO target " + field] = "image_target_" + field
         }
+        for field in MetadataPatch.allKeys {
+            known["retained metadata field " + field] = "retained_metadata_field_" + field
+        }
+        known["retained metadata numeric key"] = "retained_metadata_numeric_key"
+        known["retained metadata unnamed key"] = "retained_metadata_unnamed_key"
+        known["retained metadata unrecognized key"] = "retained_metadata_unrecognized_key"
+        known["retained metadata location tuple"] = "retained_metadata_location_tuple"
         let tokens = names.split(separator: ",", omittingEmptySubsequences: true)
         guard tokens.count <= 128 else { return [] }
         var seen = Set<String>(), result = [String]()

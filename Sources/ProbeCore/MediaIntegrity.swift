@@ -152,6 +152,9 @@ public enum MediaIntegrity {
         }
         let retained = before.metadata.filter { !keys.contains($0.key) } == after.metadata.filter { !keys.contains($0.key) }
         checks.append(IntegrityCheck(name: "retained embedded metadata", status: retained ? .passed : .failed, detail: "Compare all exposed non-target metadata keys; exclude only selected fields and their documented aliases."))
+        if !retained {
+            checks += retainedMetadataDifferenceChecks(before: before.metadata, after: after.metadata, excluding: keys)
+        }
         let limitations = baseline.limitations.filter { !$0.contains("Unreferenced original Exif bytes remain") }
         if patch.targetedKeys.isDisjoint(with: Set(["latitude", "longitude", "altitude", "imageDirection"])) {
             let locMatches = before.location == after.location
@@ -165,6 +168,58 @@ public enum MediaIntegrity {
             checks += try await videoTargetReadback(output, patch: patch)
         }
         return IntegrityComparison(status: checks.contains(where: { $0.status == .failed }) ? .mismatch : (limitations.isEmpty && !checks.contains(where: { $0.status == .notChecked }) ? .verified : .incomplete), checks: checks, limitations: limitations)
+    }
+
+    /// Closed diagnostic names only. Raw keys and values may contain personal
+    /// metadata and must never become an error name or cross the Flutter bridge.
+    /// These checks supplement the failed preservation gate; they do not exempt
+    /// any difference or qualify a previously mismatching output.
+    static func retainedMetadataDifferenceChecks(before: [String: String], after: [String: String],
+                                                 excluding: Set<String>) -> [IntegrityCheck] {
+        let changed = Set(before.keys).union(after.keys).subtracting(excluding).filter { before[$0] != after[$0] }
+        let names = Set(changed.map { key -> String in
+            if retainedMetadataLocationTuple(key) { return "retained metadata location tuple" }
+            if let field = retainedMetadataDiagnosticField(key) { return "retained metadata field " + field }
+            if key == "nil" || key == "Optional(nil)" { return "retained metadata unnamed key" }
+            if key.range(of: "^(?:[-+]?[0-9]+|Optional\\([-+]?[0-9]+\\))$", options: .regularExpression) != nil {
+                return "retained metadata numeric key"
+            }
+            return "retained metadata unrecognized key"
+        })
+        return names.sorted().prefix(16).map {
+            IntegrityCheck(name: $0, status: .failed,
+                detail: "An unselected metadata entry was added, removed or changed. Its private key and value are omitted.")
+        }
+    }
+
+    private static func retainedMetadataDiagnosticField(_ key: String) -> String? {
+        if MetadataPatch.allKeys.contains(key) { return key }
+        if key == "lens" { return "lensModel" }
+        var rawKey = key
+        for prefix in ["mdta/", "quickTimeMetadata/", "quickTimeUserData/", "udta/", "commonIdentifier/", "common/"] {
+            if rawKey.hasPrefix(prefix) { rawKey = String(rawKey.dropFirst(prefix.count)); break }
+        }
+        if MetadataPatch.allKeys.contains(rawKey) { return rawKey }
+        for (field, raw) in VideoMetadataFields.keys.merging(VideoMetadataFields.trackKeys, uniquingKeysWith: { a, _ in a }) {
+            if rawKey == raw { return field }
+        }
+        let aliases: [String: String] = [
+            "©mak": "make", "©mod": "model", "©swr": "software", "©nam": "title", "titl": "title",
+            "©cpr": "copyright", "©cpy": "copyright", "cprt": "copyright", "copyrights": "copyright",
+            "©ART": "artist", "auth": "artist", "perf": "artist", "author": "artist",
+            "©des": "description", "©cmt": "description", "dscp": "description",
+            "creationDate": "dateTimeOriginal", "©day": "dateTimeOriginal", "cameraLensModel": "lensModel"
+        ]
+        if let field = aliases[rawKey] { return field }
+        return nil
+    }
+
+    private static func retainedMetadataLocationTuple(_ key: String) -> Bool {
+        var rawKey = key
+        for prefix in ["mdta/", "quickTimeMetadata/", "quickTimeUserData/", "udta/", "commonIdentifier/", "common/", "3gp/"] {
+            if rawKey.hasPrefix(prefix) { rawKey = String(rawKey.dropFirst(prefix.count)); break }
+        }
+        return [VideoMetadataFields.locationKey, "©xyz", "loci", "location"].contains(rawKey)
     }
     private static func videoTargetReadback(_ url: URL, patch: MetadataPatch) async throws -> [IntegrityCheck] {
         let asset = AVURLAsset(url: url)

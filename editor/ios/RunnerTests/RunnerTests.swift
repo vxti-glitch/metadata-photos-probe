@@ -1165,6 +1165,20 @@ class RunnerTests: XCTestCase {
     XCTAssertEqual(NativeMediaBridge.safeIntegrityCheckIDs("Processing returned an inconsistent integrity report"), ["report_consistency"])
   }
 
+  func testRetainedDifferenceDiagnosticsKeepBaseGateAndClosedIdentifiers() throws {
+    let names = "retained embedded metadata, retained metadata field iso, retained metadata numeric key, retained metadata unnamed key, retained metadata unrecognized key, retained metadata location tuple"
+    let mapped = NativeMediaBridge.flutterError(ProbeError.integrityMismatch(names))
+    let details = try XCTUnwrap(mapped.details as? [String: Any])
+    XCTAssertEqual(details["stage"] as? String, "integrity")
+    XCTAssertEqual(details["failedChecks"] as? [String], ["retained_metadata", "retained_metadata_field_iso",
+      "retained_metadata_numeric_key", "retained_metadata_unnamed_key", "retained_metadata_unrecognized_key", "retained_metadata_location_tuple"])
+  }
+
+  func testRetainedDifferenceDiagnosticsRejectPrivateInjectedFieldNames() {
+    let names = "retained metadata field file:///private/clip.mov, retained metadata field latitude=12.123456, retained metadata numeric key: secret, retained metadata field iso"
+    XCTAssertEqual(NativeMediaBridge.safeIntegrityCheckIDs(names), ["retained_metadata_field_iso"])
+  }
+
   func testIntegrityDiagnosticsRejectPrivateUnknownOversizedAndPartialTokens() {
     for names in [
       "file:///private/media/Private Clip.mp4 GPS=10.123,20.456",

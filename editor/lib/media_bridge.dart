@@ -359,6 +359,10 @@ Map<String, String> _knownIntegrityCheckLabels() {
     'requested_camera_metadata': 'Camera metadata',
     'requested_metadata': 'Requested metadata',
     'retained_metadata': 'Unchanged metadata',
+    'retained_metadata_numeric_key': 'Unmapped numbered metadata',
+    'retained_metadata_unnamed_key': 'Unnamed metadata',
+    'retained_metadata_unrecognized_key': 'Unrecognized metadata field',
+    'retained_metadata_location_tuple': 'Unchanged location metadata',
     'retained_location': 'Unchanged location',
     'complete_file_bytes': 'Complete file bytes',
     'image_presentation': 'Image appearance',
@@ -382,6 +386,7 @@ Map<String, String> _knownIntegrityCheckLabels() {
   for (final field in metadataFields) {
     known['video_target_${field.key}'] = 'Video ${field.label}';
     known['image_target_${field.key}'] = 'Image ${field.label}';
+    known['retained_metadata_field_${field.key}'] = 'Unchanged ${field.label}';
   }
   return known;
 }
