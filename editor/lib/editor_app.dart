@@ -156,7 +156,7 @@ class _EditorHomeState extends State<EditorHome> {
               children: [
                 if (!isEditing)
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 6),
                     child: _HomeHeader(
                       onSettings: () => setState(() => _selectedTabIndex = 1),
                     ),
@@ -240,7 +240,7 @@ class _EditorHomeState extends State<EditorHome> {
                       : session == null
                       ? ListView(
                           key: const ValueKey('projects'),
-                          padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+                          padding: const EdgeInsets.fromLTRB(20, 4, 20, 32),
                           children: [_ImportHome(controller: controller)],
                         )
                       : MetadataForm(
@@ -422,10 +422,10 @@ class _HomeHeader extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Padding(
-          padding: EdgeInsets.only(top: 3),
-          child: MetadataMark(size: 40),
+          padding: EdgeInsets.only(top: 2),
+          child: MetadataMark(size: 48),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 14),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -433,16 +433,21 @@ class _HomeHeader extends StatelessWidget {
               const Text(
                 AppBrand.name,
                 style: TextStyle(
-                  fontSize: 21,
-                  height: 1.2,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.4,
+                  fontSize: 26,
+                  height: 1.15,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.5,
                 ),
               ),
               const SizedBox(height: 4),
               Text(
                 'by ${AppBrand.developer}',
-                style: TextStyle(color: colors.muted, fontSize: 13),
+                style: TextStyle(
+                  color: colors.muted,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: -0.2,
+                ),
               ),
             ],
           ),
@@ -530,7 +535,7 @@ class _ImportHome extends StatelessWidget {
               child: Padding(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 24,
-                  vertical: 52,
+                  vertical: 42,
                 ),
                 child: Column(
                   children: [

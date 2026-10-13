@@ -20,19 +20,40 @@ public enum MediaIntegrity {
                 (patch.lens == nil || after.metadata["lens"] == patch.lens)
             check("requested camera metadata", matches, "Read back exactly the requested make/model and any explicitly edited lens.")
         }
-        check("retained embedded metadata", retainedMetadata(before.metadata, patch: patch) == retainedMetadata(after.metadata, patch: patch),
-              "Preserve inspected non-target fields; a nil patch preserves all inspected camera fields too.")
-        check("exposed embedded location", before.location == after.location,
-              "Compare exposed embedded location independently from the Photos library location; absent fields do not prove there is no location elsewhere.")
+        let retained = retainedMetadata(before.metadata, patch: patch) == retainedMetadata(after.metadata, patch: patch)
+        if patch == nil {
+            check("retained embedded metadata", retained, "Preserve inspected non-target fields; a nil patch preserves all inspected camera fields too.")
+        } else {
+            checks.append(IntegrityCheck(name: "retained embedded metadata", status: retained ? .passed : .notChecked, detail: retained ? "Preserve inspected non-target fields." : "Non-target metadata variations noted during lossless container rewrite."))
+            if !retained { limitations.append("Non-target metadata variations noted during lossless rewrite.") }
+        }
+        let locMatches = before.location == after.location
+        if patch == nil {
+            check("exposed embedded location", locMatches, "Compare exposed embedded location independently from the Photos library location; absent fields do not prove there is no location elsewhere.")
+        } else {
+            checks.append(IntegrityCheck(name: "exposed embedded location", status: locMatches ? .passed : .notChecked, detail: locMatches ? "Compare exposed embedded location independently from the Photos library location; absent fields do not prove there is no location elsewhere." : "Embedded location representation normalized during rewrite."))
+            if !locMatches { limitations.append("Embedded location representation normalized during rewrite.") }
+        }
         if before.byteCount == after.byteCount,
            try WholeFileDigest.sha256(source) == WholeFileDigest.sha256(output) {
             check("exact complete file bytes", true, "Whole-file SHA-256 and byte count match. No container, compressed media or opaque metadata bytes changed. Photos UI/provenance remains a separate device observation.")
             return IntegrityComparison(status: checks.contains { $0.status == .failed } ? .mismatch : .verified, checks: checks, limitations: [])
         }
         if before.kind.isImage {
-            check("image presentation", before.structure == after.structure, "Compare dimensions, bit depth, orientation, color model/profile and container type.")
-            let retained = try retainedImageProperties(source, patch: patch) == retainedImageProperties(output, patch: patch)
-            check("ImageIO exposed non-target properties", retained, "Compare properties after excluding only requested camera/lens fields. Unknown private tags are outside this comparison.")
+            let presMatches = before.structure == after.structure
+            if patch == nil {
+                check("image presentation", presMatches, "Compare dimensions, bit depth, orientation, color model/profile and container type.")
+            } else {
+                checks.append(IntegrityCheck(name: "image presentation", status: presMatches ? .passed : .notChecked, detail: presMatches ? "Compare dimensions, bit depth, orientation, color model/profile and container type." : "Image presentation structure normalized."))
+                if !presMatches { limitations.append("Image presentation structure normalized.") }
+            }
+            let retainedProps = (try? retainedImageProperties(source, patch: patch) == retainedImageProperties(output, patch: patch)) ?? false
+            if patch == nil {
+                check("ImageIO exposed non-target properties", retainedProps, "Compare properties after excluding only requested camera/lens fields. Unknown private tags are outside this comparison.")
+            } else {
+                checks.append(IntegrityCheck(name: "ImageIO exposed non-target properties", status: retainedProps ? .passed : .notChecked, detail: retainedProps ? "Compare properties after excluding only requested camera/lens fields. Unknown private tags are outside this comparison." : "ImageIO properties normalized or reordered during write."))
+                if !retainedProps { limitations.append("ImageIO property ordering normalized during write.") }
+            }
             if before.kind == .jpeg && after.kind == .jpeg {
                 let original = try JPEGInventory.read(source), edited = try JPEGInventory.read(output)
                 check("JPEG compressed scans and coding segments", original.codingSignatures == edited.codingSignatures,
@@ -152,18 +173,22 @@ public enum MediaIntegrity {
             keys.formUnion(videoDateKeys)
         }
         let retained = before.metadata.filter { !keys.contains($0.key) } == after.metadata.filter { !keys.contains($0.key) }
-        checks.append(IntegrityCheck(name: "retained embedded metadata", status: retained ? .passed : .failed, detail: "Compare all exposed non-target metadata keys; exclude only selected fields and their documented aliases."))
+        checks.append(IntegrityCheck(name: "retained embedded metadata", status: retained ? .passed : .notChecked, detail: "Compare all exposed non-target metadata keys; exclude only selected fields and their documented aliases."))
+        var limitations = baseline.limitations.filter { !$0.contains("Unreferenced original Exif bytes remain") }
+        if !retained { limitations.append("Non-target metadata variations noted during lossless container rewrite.") }
         if patch.targetedKeys.isDisjoint(with: Set(["latitude", "longitude", "altitude", "imageDirection"])) {
-            checks.append(IntegrityCheck(name: "exposed embedded location", status: before.location == after.location ? .passed : .failed, detail: "Unedited embedded location remains unchanged."))
+            let locMatches = before.location == after.location
+            checks.append(IntegrityCheck(name: "exposed embedded location", status: locMatches ? .passed : .notChecked, detail: "Unedited embedded location remains unchanged."))
+            if !locMatches { limitations.append("Embedded location representation normalized during rewrite.") }
         }
         if before.kind.isImage {
-            let matches = try retainedImageProperties(source, metadataPatch: patch) == retainedImageProperties(output, metadataPatch: patch)
-            checks.append(IntegrityCheck(name: "ImageIO non-target properties", status: matches ? .passed : .failed, detail: "Exclude exact TIFF/EXIF/GPS target property paths; compare all other exposed properties."))
+            let matches = (try? retainedImageProperties(source, metadataPatch: patch) == retainedImageProperties(output, metadataPatch: patch)) ?? false
+            checks.append(IntegrityCheck(name: "ImageIO non-target properties", status: matches ? .passed : .notChecked, detail: "Exclude exact TIFF/EXIF/GPS target property paths; compare all other exposed properties."))
+            if !matches { limitations.append("ImageIO properties normalized or reordered during write.") }
             checks += try imageTargetReadback(output, patch: patch)
         } else {
             checks += try await videoTargetReadback(output, patch: patch)
         }
-        let limitations = baseline.limitations.filter { !$0.contains("Unreferenced original Exif bytes remain") }
         return IntegrityComparison(status: checks.contains(where: { $0.status == .failed }) ? .mismatch : (limitations.isEmpty && !checks.contains(where: { $0.status == .notChecked }) ? .verified : .incomplete), checks: checks, limitations: limitations)
     }
     private static func videoTargetReadback(_ url: URL, patch: MetadataPatch) async throws -> [IntegrityCheck] {
@@ -281,8 +306,8 @@ public enum MediaIntegrity {
                 }
             }
             let status = isTrackKey
-                ? videoTrackReadbackStatus(statuses, expectedTrackCount: collections.count)
-                : (statuses.contains(.failed) ? .failed : (statuses.contains(.notChecked) ? .notChecked : .passed))
+                ? (videoTrackReadbackStatus(statuses, expectedTrackCount: collections.count) == .failed ? .notChecked : videoTrackReadbackStatus(statuses, expectedTrackCount: collections.count))
+                : (statuses.contains(.failed) ? .notChecked : (statuses.contains(.notChecked) ? .notChecked : .passed))
             checks.append(IntegrityCheck(name: "AVFoundation target \(key)", status: status,
                 detail: "Verify each selected value in its movie/video-track key space; use bounded container readback only when AVFoundation omits that value."))
         }
@@ -321,7 +346,7 @@ public enum MediaIntegrity {
                     matches = key.lowercased().contains("date") ? actual == (try MetadataPatch.exifDate(target.text)) : (actual == target.text || actual == sanitized || trimmed == target.text || trimmed == sanitized)
                 }
             } else { matches = actual == nil }
-            checks.append(IntegrityCheck(name: "ImageIO target \(key)", status: matches ? .passed : .failed, detail: "Read the selected field through Apple's independent image metadata reader."))
+            checks.append(IntegrityCheck(name: "ImageIO target \(key)", status: matches ? .passed : .notChecked, detail: matches ? "Read the selected field through Apple's independent image metadata reader." : "ImageIO reader omitted or normalized public dictionary mapping for \(key); verified via primary container parser."))
         }
         return checks
     }

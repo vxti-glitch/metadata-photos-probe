@@ -136,6 +136,53 @@ void main() {
     },
   );
 
+  testWidgets('Location sits with phone and camera and sets mapped GPS', (
+    tester,
+  ) async {
+    final bridge = FakeMediaBridge()
+      ..sessions = [fixture()]
+      ..nextLocationPickerResult = {
+        'latitude': 35.779590,
+        'longitude': -78.638179,
+      };
+    final controller = await mount(tester, bridge);
+    expect(find.byKey(const Key('chooseHostProfile')), findsOneWidget);
+    expect(find.byKey(const Key('chooseMainCamera')), findsOneWidget);
+    expect(find.byKey(const Key('pickLocationMap')), findsOneWidget);
+    expect(find.text('Choose on map'), findsOneWidget);
+    await tap(tester, 'pickLocationMap');
+    expect(find.text('35.779590, -78.638179'), findsOneWidget);
+    await tap(tester, 'primaryeditAction');
+    await tap(tester, 'primaryreviewAction');
+    final patch = controller.sessions.single.processing!.metadataPatch!;
+    expect(patch.values['latitude'], 35.77959);
+    expect(patch.values['longitude'], -78.638179);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('mapped Location applies to every selected batch file', (
+    tester,
+  ) async {
+    final bridge = FakeMediaBridge()
+      ..sessions = [fixture(), fixture(id: nextOutputId)]
+      ..nextLocationPickerResult = {
+        'latitude': 35.779590,
+        'longitude': -78.638179,
+      };
+    final controller = await mount(tester, bridge, batch: true);
+    expect(find.byKey(const Key('pickLocationMap')), findsOneWidget);
+    await tap(tester, 'pickLocationMap');
+    await tap(tester, 'primaryeditAction');
+    await tap(tester, 'primaryreviewAction');
+    expect(bridge.processes, 2);
+    for (final source in controller.sessions) {
+      final patch = source.processing!.metadataPatch!;
+      expect(patch.values['latitude'], 35.77959);
+      expect(patch.values['longitude'], -78.638179);
+    }
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'automatic phone match takes precedence over a saved different model',
     (tester) async {

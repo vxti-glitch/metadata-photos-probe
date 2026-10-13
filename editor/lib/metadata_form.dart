@@ -340,14 +340,69 @@ class _MetadataFormState extends State<MetadataForm>
     if (notify) setState(() {});
   }
 
+  bool get _hasCompetingMetadata {
+    if (widget.batch) {
+      return widget.controller.sessions
+          .where((s) => widget.controller.batchSelection.contains(s.id))
+          .any(
+            (s) =>
+                s.inspection.structure['competingMetadata'] == 'true' ||
+                s.inspection.notes.any(
+                  (n) =>
+                      n.contains('Additional XMP') ||
+                      n.contains('Additional PNG text') ||
+                      n.contains('competing'),
+                ),
+          );
+    }
+    return widget.session.inspection.structure['competingMetadata'] == 'true' ||
+        widget.session.inspection.notes.any(
+          (n) =>
+              n.contains('Additional XMP') ||
+              n.contains('Additional PNG text') ||
+              n.contains('competing'),
+        );
+  }
+
+  bool get _hasTimedMetadata {
+    if (widget.batch) {
+      return widget.controller.sessions
+          .where((s) => widget.controller.batchSelection.contains(s.id))
+          .any(
+            (s) =>
+                s.inspection.structure['trackTypes']?.contains('meta') ==
+                    true ||
+                s.inspection.notes.any((n) => n.contains('timed metadata')),
+          );
+    }
+    return widget.session.inspection.structure['trackTypes']?.contains(
+              'meta',
+            ) ==
+            true ||
+        widget.session.inspection.notes.any(
+          (n) => n.contains('timed metadata'),
+        );
+  }
+
   MetadataPatch _patch({bool allowEmpty = false, Set<String>? fields}) {
     final values = <String, Object>{};
     final removed = <String>[];
     for (final f in metadataFields) {
       if (!(fields ?? supported).contains(f.key)) continue;
       if (modes[f.key] == 'remove') {
-        removed.add(f.key);
+        if (!_hasCompetingMetadata) {
+          removed.add(f.key);
+        }
       } else if (modes[f.key] == 'set') {
+        if (_hasTimedMetadata &&
+            [
+              'latitude',
+              'longitude',
+              'altitude',
+              'imageDirection',
+            ].contains(f.key)) {
+          continue;
+        }
         values[f.key] = MetadataPatch.parseField(f, inputs[f.key]!.text);
       }
     }
@@ -1968,6 +2023,31 @@ class _MetadataFormState extends State<MetadataForm>
                     ? null
                     : () => _openCameraPickerSheet(context, profile!.cameras),
               ),
+              if (supported.contains('latitude') &&
+                  supported.contains('longitude')) ...[
+                const Divider(height: 1, indent: 56),
+                ListTile(
+                  key: const Key('pickLocationMap'),
+                  leading: const Icon(Icons.place_outlined),
+                  title: const Text('Location'),
+                  subtitle: Text(
+                    _hasTimedMetadata
+                        ? 'Disabled: continuous GPS track present'
+                        : modes['latitude'] == 'set' &&
+                              modes['longitude'] == 'set'
+                        ? '${inputs['latitude']!.text}, ${inputs['longitude']!.text}'
+                        : 'Choose on map',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: _hasTimedMetadata
+                      ? null
+                      : const Icon(Icons.chevron_right),
+                  onTap: controller.busy || _preparingDraft || _hasTimedMetadata
+                      ? null
+                      : _selectLocationOnMap,
+                ),
+              ],
             ],
           ),
         ),
@@ -3065,7 +3145,7 @@ class _MetadataFormState extends State<MetadataForm>
       if (!widget.fillAvailableSpace &&
           (group == 'Dates' || group == 'Video dates'))
         _automaticDates(),
-      if (group == 'Location')
+      if (!widget.fillAvailableSpace && group == 'Location')
         Padding(
           padding: const EdgeInsets.only(bottom: 12),
           child: OutlinedButton.icon(
@@ -3088,10 +3168,21 @@ class _MetadataFormState extends State<MetadataForm>
                   DropdownButton<String>(
                     key: Key('${field.key}Mode'),
                     value: modes[field.key],
-                    items: const [
-                      DropdownMenuItem(value: 'keep', child: Text('Keep')),
-                      DropdownMenuItem(value: 'set', child: Text('Set')),
-                      DropdownMenuItem(value: 'remove', child: Text('Remove')),
+                    items: [
+                      const DropdownMenuItem(
+                        value: 'keep',
+                        child: Text('Keep'),
+                      ),
+                      const DropdownMenuItem(value: 'set', child: Text('Set')),
+                      DropdownMenuItem(
+                        value: 'remove',
+                        enabled: !_hasCompetingMetadata,
+                        child: Text(
+                          _hasCompetingMetadata
+                              ? 'Remove (XMP restricted)'
+                              : 'Remove',
+                        ),
+                      ),
                     ],
                     onChanged: widget.controller.busy
                         ? null
@@ -3678,7 +3769,11 @@ class _MetadataFormState extends State<MetadataForm>
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      builder: (ctx) => _QuickPrivacyScrubberSheet(supportedFields: supported),
+      builder: (ctx) => _QuickPrivacyScrubberSheet(
+        supportedFields: supported,
+        hasCompeting: _hasCompetingMetadata,
+        hasTimedMetadata: _hasTimedMetadata,
+      ),
     );
     if (scrubbed != null && scrubbed.isNotEmpty && mounted) {
       setState(() {
@@ -4631,8 +4726,14 @@ class _CameraPickerSheet extends StatelessWidget {
 }
 
 class _QuickPrivacyScrubberSheet extends StatefulWidget {
-  const _QuickPrivacyScrubberSheet({required this.supportedFields});
+  const _QuickPrivacyScrubberSheet({
+    required this.supportedFields,
+    this.hasCompeting = false,
+    this.hasTimedMetadata = false,
+  });
   final Set<String> supportedFields;
+  final bool hasCompeting;
+  final bool hasTimedMetadata;
 
   @override
   State<_QuickPrivacyScrubberSheet> createState() =>
@@ -4677,8 +4778,11 @@ class _QuickPrivacyScrubberSheetState
   };
 
   Set<String> _calculateFields() {
+    if (widget.hasCompeting) return const {};
     final fields = <String>{};
-    if (_stripLocation) fields.addAll(_locationFields);
+    if (_stripLocation && !widget.hasTimedMetadata) {
+      fields.addAll(_locationFields);
+    }
     if (_stripHardware) fields.addAll(_hardwareFields);
     if (_stripDates) fields.addAll(_dateFields);
     if (_stripAuthor) fields.addAll(_authorFields);
@@ -4777,6 +4881,37 @@ class _QuickPrivacyScrubberSheetState
               ),
             ),
             const SizedBox(height: 16),
+            if (widget.hasCompeting)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.of(context).surface,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppTheme.of(context).border),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.info_outline_rounded,
+                        size: 20,
+                        color: AppTheme.of(context).accent,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Adobe XMP / Photoshop data present. Field removal is restricted by container rules to prevent duplicate unscrubbed tags. Overwrite values using Manual Editing instead.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppTheme.of(context).muted,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Container(
@@ -4791,9 +4926,13 @@ class _QuickPrivacyScrubberSheetState
                     _buildToggleRow(
                       icon: Icons.location_off_outlined,
                       title: 'Location & GPS Geotags',
-                      subtitle: 'Latitude, longitude, altitude coordinates',
-                      value: _stripLocation,
-                      onChanged: (v) => setState(() => _stripLocation = v),
+                      subtitle: widget.hasTimedMetadata
+                          ? 'Disabled: continuous GPS track present'
+                          : 'Latitude, longitude, altitude coordinates',
+                      value: widget.hasTimedMetadata ? false : _stripLocation,
+                      onChanged: widget.hasTimedMetadata
+                          ? (_) {}
+                          : (v) => setState(() => _stripLocation = v),
                     ),
                     Divider(
                       height: 1,
