@@ -1076,9 +1076,30 @@ class RunnerTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: autoFolder.path))
     _ = try await store.exportURL(sessionID: changed.id, processingID: output.id, acknowledgeIncomplete: false)
     let recovered = NativeSessionStore(root: root, autoExportRoot: autoFolder)
-    _ = try await recovered.exportURL(sessionID: changed.id, processingID: output.id, acknowledgeIncomplete: false)
+    // Reinspection replaces the injected receipt with actual JPEG evidence.
+    // Genuine limitations still require acknowledgment; the warning cannot
+    // carry an implicit acknowledgment into a recovered project.
+    let recoveredURL = try await recovered.exportURL(sessionID: changed.id, processingID: output.id, acknowledgeIncomplete: true)
     let sessions = try await recovered.list()
-    XCTAssertFalse(sessions.first!.processing!.integrity.checks.contains { $0.status == .failed })
+    let report = try XCTUnwrap(sessions.first?.processing?.integrity)
+    let expectedPatch = try XCTUnwrap(output.metadataPatch)
+    let expected = try await MediaIntegrity.compareMetadata(source: provider, output: recoveredURL,
+      patch: expectedPatch, integrityPolicy: .allowAdditionalMetadataChanges)
+    XCTAssertEqual(report.status, expected.status)
+    XCTAssertEqual(report.checks.map { $0.name + ":" + $0.status.rawValue }.sorted(),
+      expected.checks.map { $0.name + ":" + $0.status.rawValue }.sorted())
+    XCTAssertEqual(report.limitations.sorted(), expected.limitations.sorted())
+    XCTAssertTrue(NativeSessionStore.isConsistentReport(report, allowMetadataWarnings: true))
+    XCTAssertFalse(report.checks.contains { $0.status == .failed })
+    let needsAcknowledgment = report.status == .incomplete || !report.limitations.isEmpty || report.checks.contains { $0.status == .notChecked }
+    if needsAcknowledgment {
+      do {
+        _ = try await recovered.exportURL(sessionID: changed.id, processingID: output.id, acknowledgeIncomplete: false)
+        XCTFail("Recomputed incomplete checks were exported without acknowledgment")
+      } catch NativeMediaError.unsupported { }
+    } else {
+      _ = try await recovered.exportURL(sessionID: changed.id, processingID: output.id, acknowledgeIncomplete: false)
+    }
   }
 
   func testRealMovieMetadataWarningRemainsExportableAfterRecovery() async throws {
