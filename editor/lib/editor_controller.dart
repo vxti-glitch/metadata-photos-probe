@@ -905,6 +905,10 @@ class EditorController extends ChangeNotifier {
           item.status = result.processing!.integrity.hasMismatch
               ? 'failed'
               : 'completed';
+          if (result.processing!.integrity.hasAdditionalDetailsWarning &&
+              item.status == 'completed') {
+            item.message = 'Some other file details may have changed.';
+          }
           if (item.status == 'failed') {
             item.message = 'Preservation check failed. Export blocked.';
           }

@@ -87,7 +87,7 @@ public enum MediaIntegrity {
     }
     /// Reuses independent encoded-media checks, replacing only the legacy
     /// three-field metadata checks with the exact typed target set.
-    public static func compareMetadata(source: URL, output: URL, patch: MetadataPatch) async throws -> IntegrityComparison {
+    public static func compareMetadata(source: URL, output: URL, patch: MetadataPatch, integrityPolicy: IntegrityPolicy = .strict) async throws -> IntegrityComparison {
         try patch.validate()
         let before = try await MetadataEngine.inspect(source), after = try await MetadataEngine.inspect(output)
         let baseline = try await compare(source: source, output: output)
@@ -167,7 +167,7 @@ public enum MediaIntegrity {
         } else {
             checks += try await videoTargetReadback(output, patch: patch)
         }
-        return IntegrityComparison(status: checks.contains(where: { $0.status == .failed }) ? .mismatch : (limitations.isEmpty && !checks.contains(where: { $0.status == .notChecked }) ? .verified : .incomplete), checks: checks, limitations: limitations)
+        return integrityPolicy.applying(to: IntegrityComparison(status: checks.contains(where: { $0.status == .failed }) ? .mismatch : (limitations.isEmpty && !checks.contains(where: { $0.status == .notChecked }) ? .verified : .incomplete), checks: checks, limitations: limitations))
     }
 
     /// Closed diagnostic names only. Raw keys and values may contain personal

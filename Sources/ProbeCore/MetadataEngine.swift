@@ -83,7 +83,7 @@ public enum MetadataEngine {
             structure: ["duration": canonicalTime(duration), "tracks": String(tracks.count), "trackTypes": tracks.map { $0.mediaType.rawValue }.joined(separator: ","), "boxes": inventory.types.joined(separator: ","), "metadataFormats": metadataFormats.map { $0.rawValue }.joined(separator: ",")],
             location: EmbeddedLocationEvidence.video(metadata: metadata))
     }
-    public static func processMetadataPatch(source: URL, output: URL, patch: MetadataPatch) async throws -> ProcessingResult {
+    public static func processMetadataPatch(source: URL, output: URL, patch: MetadataPatch, integrityPolicy: IntegrityPolicy = .strict) async throws -> ProcessingResult {
         try patch.validate()
         guard source.standardizedFileURL.resolvingSymlinksInPath() != output.standardizedFileURL.resolvingSymlinksInPath() else { throw ProbeError.sameFile }
         guard !FileManager.default.fileExists(atPath: output.path) else { throw ProbeError.outputExists }
@@ -98,7 +98,7 @@ public enum MetadataEngine {
         let after = try await inspect(output)
         guard after.kind == before.kind else { throw ProbeError.readbackFailed("Container format changed") }
         try patch.validateReadback(after)
-        let integrity = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: patch)
+        let integrity = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: patch, integrityPolicy: integrityPolicy)
         guard integrity.status != .mismatch else {
             let names = integrity.checks.filter { $0.status == .failed }.map(\.name).joined(separator: ", ")
             throw ProbeError.integrityMismatch(names)

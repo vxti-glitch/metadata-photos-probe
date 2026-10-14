@@ -106,7 +106,7 @@ actor NativeSessionStore {
          processOperation: @escaping @Sendable (URL, URL, CameraPatch) async throws -> ProcessingResult = {
         try await MetadataEngine.process(source: $0, output: $1, patch: $2)
     }, metadataProcessOperation: @escaping @Sendable (URL, URL, MetadataPatch) async throws -> ProcessingResult = {
-        try await MetadataEngine.processMetadataPatch(source: $0, output: $1, patch: $2)
+        try await MetadataEngine.processMetadataPatch(source: $0, output: $1, patch: $2, integrityPolicy: .allowAdditionalMetadataChanges)
     }) {
         self.root = root.standardizedFileURL.resolvingSymlinksInPath()
         self.previewRoot = (previewRoot ?? root.deletingLastPathComponent().appendingPathComponent("NativeMediaPreviews", isDirectory: true))
@@ -303,8 +303,7 @@ actor NativeSessionStore {
             throw ProbeError.integrityMismatch(names.isEmpty
                 ? "Processing report status mismatch" : names.joined(separator: ", "))
         }
-        guard !result.integrity.checks.isEmpty,
-              result.integrity.status != .verified || Self.isFullyVerified(result.integrity) else {
+        guard Self.isConsistentReport(result.integrity, allowMetadataWarnings: metadataPatch != nil) else {
             throw ProbeError.integrityMismatch("Processing returned an inconsistent integrity report")
         }
         let outputDisplayName: String
@@ -368,8 +367,7 @@ actor NativeSessionStore {
         var comparison = qualifiedComparisons[qualificationKey] ?? output.integrity
         guard !comparison.checks.isEmpty, comparison.status != .mismatch,
               !comparison.checks.contains(where: { $0.status == .failed }) else { throw NativeMediaError.processing }
-        let inconsistent = comparison.status == .verified && (!comparison.limitations.isEmpty || comparison.checks.contains { $0.status == .notChecked })
-        guard !inconsistent else { throw NativeMediaError.processing }
+        guard Self.isConsistentReport(comparison, allowMetadataWarnings: output.metadataPatch != nil) else { throw NativeMediaError.processing }
         let incomplete = comparison.status == .incomplete || !comparison.limitations.isEmpty
             || comparison.checks.contains(where: { $0.status == .notChecked })
         guard !incomplete || acknowledgeIncomplete else {
@@ -386,7 +384,7 @@ actor NativeSessionStore {
             guard inspection.kind == session.inspection.kind else { throw NativeMediaError.processing }
             if let patch = output.metadataPatch {
                 try patch.validateReadback(inspection)
-                comparison = try await MediaIntegrity.compareMetadata(source: source, output: url, patch: patch)
+                comparison = try await MediaIntegrity.compareMetadata(source: source, output: url, patch: patch, integrityPolicy: .allowAdditionalMetadataChanges)
             } else if let patch = output.patch {
                 guard inspection.metadata["make"] == patch.make,
                       inspection.metadata["model"] == patch.model,
@@ -406,6 +404,7 @@ actor NativeSessionStore {
             qualifiedComparisons[qualificationKey] = comparison
             guard comparison.status != .mismatch, !comparison.checks.isEmpty,
                   !comparison.checks.contains(where: { $0.status == .failed }) else { throw NativeMediaError.processing }
+            guard Self.isConsistentReport(comparison, allowMetadataWarnings: output.metadataPatch != nil) else { throw NativeMediaError.processing }
             let actuallyIncomplete = comparison.status == .incomplete || !comparison.limitations.isEmpty
                 || comparison.checks.contains(where: { $0.status == .notChecked })
             guard !actuallyIncomplete || acknowledgeIncomplete else {
@@ -569,6 +568,15 @@ actor NativeSessionStore {
             if !used.contains(name) { return name }
         }
         throw NativeMediaError.storage
+    }
+
+    static func isConsistentReport(_ comparison: IntegrityComparison, allowMetadataWarnings: Bool) -> Bool {
+        guard !comparison.checks.isEmpty, !comparison.checks.contains(where: { $0.status == .failed }) else { return false }
+        let warnings = comparison.checks.filter { $0.status == .warning }
+        guard warnings.isEmpty || (allowMetadataWarnings && warnings.allSatisfy { IntegrityPolicy.isAdditionalMetadataCheck($0.name) }) else { return false }
+        let incomplete = !comparison.limitations.isEmpty || comparison.checks.contains { $0.status == .notChecked }
+        let expected: IntegrityStatus = incomplete ? .incomplete : (warnings.isEmpty ? .verified : .warning)
+        return comparison.status == expected
     }
 
     static func isFullyVerified(_ comparison: IntegrityComparison) -> Bool {

@@ -343,9 +343,20 @@ void main() {
         find.textContaining('Source media remains bit-for-bit identical'),
         findsOneWidget,
       );
-      expect(find.textContaining('Failed checks block export'), findsOneWidget);
       expect(
-        find.textContaining('Incomplete comparisons stay incomplete'),
+        find.textContaining(
+          'Changes to other file details show a warning and allow export',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining(
+          'Failed media or requested-edit checks block export',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Limited checks still require your acknowledgment'),
         findsOneWidget,
       );
       expect(find.textContaining('Live Photos are outside'), findsOneWidget);

@@ -597,7 +597,15 @@ void main() {
         }
         expect(bridge.processes, 0);
         final export = find.byKey(const Key('exportFiles'));
-        if (status == IntegrityStatus.verified) {
+        if (status == IntegrityStatus.verified ||
+            status == IntegrityStatus.warning) {
+          if (status == IntegrityStatus.warning) {
+            expect(
+              find.byKey(const Key('additionalDetailsWarning')),
+              findsOneWidget,
+            );
+            expect(find.byKey(const Key('acknowledge')), findsNothing);
+          }
           expect(tester.widget<FilledButton>(export).onPressed, isNotNull);
           await tap(tester, 'exportFiles');
           expect(bridge.exports, 1);

@@ -418,7 +418,13 @@ final class ProbeCoreTests: XCTestCase {
             XCTAssertEqual(report.status, .mismatch, "Known non-target changes must never become acknowledgment-exportable.")
             XCTAssertEqual(report.checks.first { $0.name == "retained embedded metadata" }?.status, .failed)
             XCTAssertEqual(report.checks.first { $0.name == "ImageIO non-target properties" }?.status, .failed)
+            let editorReport = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: expected,
+                                                                       integrityPolicy: .allowAdditionalMetadataChanges)
+            XCTAssertEqual(editorReport.status, .mismatch, "The editor exception must not bypass independent image properties or location.")
+            XCTAssertEqual(editorReport.checks.first { $0.name == "retained embedded metadata" }?.status, .warning)
+            XCTAssertEqual(editorReport.checks.first { $0.name == "ImageIO non-target properties" }?.status, .failed)
             if name == "gps" {
+                XCTAssertEqual(editorReport.checks.first { $0.name == "exposed embedded location" }?.status, .failed)
                 XCTAssertEqual(report.checks.first { $0.name == "exposed embedded location" }?.status, .failed)
             }
         }
@@ -440,6 +446,30 @@ final class ProbeCoreTests: XCTestCase {
         XCTAssertEqual(report.checks.first { $0.name == "requested metadata" }?.status, .passed)
         XCTAssertEqual(report.checks.first { $0.name == "retained embedded metadata" }?.status, .failed)
         XCTAssertEqual(report.status, .mismatch)
+    }
+
+    func testEditorPolicyAllowsAdditionalMovieMetadataButKeepsRequestedReadbackBlocking() async throws {
+        let source = folder.appendingPathComponent("warning-source.mov")
+        let output = folder.appendingPathComponent("warning-copy.mov")
+        try await makeVideo(source, kind: .mov)
+        let expected = MetadataPatch(values: ["movieCreateDate": .string("2026-04-05T06:07:08Z")])
+        _ = try await VideoMetadataWriter.write(source: source, output: output, patch: MetadataPatch(values: [
+            "movieCreateDate": .string("2026-04-05T06:07:08Z"),
+            "trackModifyDate": .string("2001-01-01T00:00:00Z")
+        ]))
+        let strict = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: expected)
+        XCTAssertEqual(strict.status, .mismatch)
+        let editor = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: expected,
+                                                             integrityPolicy: .allowAdditionalMetadataChanges)
+        XCTAssertNotEqual(editor.status, .mismatch)
+        XCTAssertNotEqual(editor.status, .verified)
+        XCTAssertEqual(editor.checks.first { $0.name == "retained embedded metadata" }?.status, .warning)
+        XCTAssertTrue(editor.checks.contains { $0.name.contains("compressed data / timing / format") && $0.status == .passed })
+        let wrongTarget = try await MediaIntegrity.compareMetadata(source: source, output: output,
+            patch: MetadataPatch(values: ["movieCreateDate": .string("2002-01-01T00:00:00Z")]),
+            integrityPolicy: .allowAdditionalMetadataChanges)
+        XCTAssertEqual(wrongTarget.status, .mismatch)
+        XCTAssertEqual(wrongTarget.checks.first { $0.name == "requested metadata" }?.status, .failed)
     }
 
     func testMapCoordinateEditDoesNotExemptUnselectedAltitude() async throws {

@@ -790,8 +790,8 @@ class RunnerTests: XCTestCase {
     XCTAssertEqual(try Data(contentsOf: provider), original)
   }
 
-  private func syntheticMP4(_ url: URL) async throws {
-    let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+  private func syntheticMP4(_ url: URL, fileType: AVFileType = .mp4) async throws {
+    let writer = try AVAssetWriter(outputURL: url, fileType: fileType)
     var finished = false
     defer { if !finished { writer.cancelWriting() } }
     let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264,
@@ -1053,6 +1053,96 @@ class RunnerTests: XCTestCase {
       XCTFail("Unacknowledged incomplete output was exported")
     } catch NativeMediaError.unsupported { }
     _ = try await store.exportCopyURL(sessionID: imported.id, processingID: processing.id, acknowledgeIncomplete: true)
+  }
+
+  func testMetadataWarningExportsButDoesNotAutomaticallyPublishAndRecoversByRechecking() async throws {
+    let provider = folder.appendingPathComponent("warning-source.jpg")
+    try jpeg().write(to: provider)
+    let root = folder.appendingPathComponent("warning-sessions")
+    let autoFolder = folder.appendingPathComponent("warning-files")
+    let store = NativeSessionStore(root: root, autoExportRoot: autoFolder, metadataProcessOperation: { source, output, patch in
+      let result = try await MetadataEngine.processMetadataPatch(source: source, output: output, patch: patch)
+      let warning = IntegrityComparison(status: .warning,
+        checks: result.integrity.checks.map { check in
+          check.name == "retained embedded metadata" ? IntegrityCheck(name: check.name, status: .warning, detail: "Other details changed") : check
+        }, limitations: [])
+      return ProcessingResult(outputURL: output, sourceInspection: result.sourceInspection, outputInspection: result.outputInspection, integrity: warning)
+    })
+    let imported = try await store.importFile(provider)
+    let changed = try await store.processMetadata(sessionID: imported.id, patch: MetadataPatch(values: ["make": .string("Apple"), "model": .string("Test phone")]))
+    let output = try XCTUnwrap(changed.processing)
+    XCTAssertEqual(output.integrity.status, .warning)
+    XCTAssertNil(output.autoExportFolder)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: autoFolder.path))
+    _ = try await store.exportURL(sessionID: changed.id, processingID: output.id, acknowledgeIncomplete: false)
+    let recovered = NativeSessionStore(root: root, autoExportRoot: autoFolder)
+    _ = try await recovered.exportURL(sessionID: changed.id, processingID: output.id, acknowledgeIncomplete: false)
+    let sessions = try await recovered.list()
+    XCTAssertFalse(sessions.first!.processing!.integrity.checks.contains { $0.status == .failed })
+  }
+
+  func testRealMovieMetadataWarningRemainsExportableAfterRecovery() async throws {
+    let provider = folder.appendingPathComponent("additional-date-source.mov")
+    try await syntheticMP4(provider, fileType: .mov)
+    let original = try WholeFileDigest.sha256(provider)
+    let root = folder.appendingPathComponent("movie-warning-sessions")
+    let store = NativeSessionStore(root: root, metadataProcessOperation: { source, output, expected in
+      let actual = MetadataPatch(values: ["movieCreateDate": .string("2026-04-05T06:07:08Z"), "trackModifyDate": .string("2001-01-01T00:00:00Z")])
+      _ = try await VideoMetadataWriter.write(source: source, output: output, patch: actual)
+      let sourceInspection = try await MetadataEngine.inspect(source)
+      let outputInspection = try await MetadataEngine.inspect(output)
+      try expected.validateReadback(outputInspection)
+      let report = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: expected, integrityPolicy: .allowAdditionalMetadataChanges)
+      return ProcessingResult(outputURL: output, sourceInspection: sourceInspection, outputInspection: outputInspection, integrity: report)
+    })
+    let imported = try await store.importFile(provider)
+    let changed = try await store.processMetadata(sessionID: imported.id, patch: MetadataPatch(values: ["movieCreateDate": .string("2026-04-05T06:07:08Z")]))
+    let output = try XCTUnwrap(changed.processing)
+    XCTAssertNotEqual(output.integrity.status, .mismatch)
+    XCTAssertNotEqual(output.integrity.status, .verified)
+    XCTAssertEqual(output.integrity.checks.first { $0.name == "retained embedded metadata" }?.status, .warning)
+    _ = try await store.exportURL(sessionID: changed.id, processingID: output.id, acknowledgeIncomplete: output.integrity.status == .incomplete)
+    let recovered = NativeSessionStore(root: root)
+    _ = try await recovered.exportURL(sessionID: changed.id, processingID: output.id, acknowledgeIncomplete: output.integrity.status == .incomplete)
+    let sessions = try await recovered.list()
+    let recomputed = try XCTUnwrap(sessions.first?.processing?.integrity)
+    XCTAssertEqual(recomputed.checks.first { $0.name == "retained embedded metadata" }?.status, .warning)
+    XCTAssertNotEqual(recomputed.status, .verified)
+    XCTAssertFalse(recomputed.checks.contains { $0.status == .failed })
+    XCTAssertEqual(try WholeFileDigest.sha256(provider), original)
+  }
+
+  func testMixedMetadataWarningAndFailedMediaReceiptCannotBecomeAnOutput() async throws {
+    let provider = folder.appendingPathComponent("mixed-failure-source.jpg")
+    try jpeg().write(to: provider)
+    let store = NativeSessionStore(root: folder.appendingPathComponent("mixed-failure-sessions"), metadataProcessOperation: { source, output, patch in
+      let result = try await MetadataEngine.processMetadataPatch(source: source, output: output, patch: patch)
+      let report = IntegrityComparison(status: .warning, checks: [
+        IntegrityCheck(name: "retained embedded metadata", status: .warning, detail: "Other details changed"),
+        IntegrityCheck(name: "encoded tracks", status: .failed, detail: "Media differs")], limitations: [])
+      return ProcessingResult(outputURL: output, sourceInspection: result.sourceInspection, outputInspection: result.outputInspection, integrity: report)
+    })
+    let imported = try await store.importFile(provider)
+    do {
+      _ = try await store.processMetadata(sessionID: imported.id, patch: MetadataPatch(values: ["make": .string("Apple")]))
+      XCTFail("Mixed failed media receipt was accepted")
+    } catch ProbeError.integrityMismatch { }
+    let sessions = try await store.list()
+    XCTAssertNil(sessions.first?.processing)
+  }
+
+  func testAdditionalDetailsWarningReportIsAcceptedOnlyForFullEditorMetadata() {
+    let warning = IntegrityCheck(name: "retained embedded metadata", status: .warning, detail: "Other details changed")
+    let passed = IntegrityCheck(name: "encoded tracks", status: .passed, detail: "Matched")
+    let report = IntegrityComparison(status: .warning, checks: [passed, warning], limitations: [])
+    XCTAssertTrue(NativeSessionStore.isConsistentReport(report, allowMetadataWarnings: true))
+    XCTAssertFalse(NativeSessionStore.isConsistentReport(report, allowMetadataWarnings: false))
+    XCTAssertFalse(NativeSessionStore.isFullyVerified(report))
+    let forged = IntegrityComparison(status: .warning, checks: [IntegrityCheck(name: "encoded tracks", status: .warning, detail: "Mismatch")], limitations: [])
+    XCTAssertFalse(NativeSessionStore.isConsistentReport(forged, allowMetadataWarnings: true))
+    let incomplete = IntegrityComparison(status: .incomplete, checks: [warning, IntegrityCheck(name: "opaque", status: .notChecked, detail: "Unknown")], limitations: ["Limited"])
+    XCTAssertTrue(NativeSessionStore.isConsistentReport(incomplete, allowMetadataWarnings: true))
+    XCTAssertFalse(NativeSessionStore.isConsistentReport(IntegrityComparison(status: .warning, checks: incomplete.checks, limitations: incomplete.limitations), allowMetadataWarnings: true))
   }
 
   func testFailedOrInconsistentProcessingReportsCannotBecomeActiveOutputs() async throws {

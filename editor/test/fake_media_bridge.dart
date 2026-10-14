@@ -68,6 +68,12 @@ MediaSession fixture({
                       ? 'Payload differs.'
                       : 'Encoded item hashes match.',
                 ),
+                if (status == IntegrityStatus.warning)
+                  const IntegrityCheck(
+                    'retained embedded metadata',
+                    'warning',
+                    'Additional details changed.',
+                  ),
               ],
               status == IntegrityStatus.incomplete
                   ? ['Opaque metadata semantics are not qualified.']
@@ -311,7 +317,15 @@ class FakeMediaBridge implements MediaBridge {
         ),
         integrity: IntegrityReport(
           nextStatus,
-          [const IntegrityCheck('Payload', 'passed', 'Matches')],
+          [
+            const IntegrityCheck('Payload', 'passed', 'Matches'),
+            if (nextStatus == IntegrityStatus.warning)
+              const IntegrityCheck(
+                'retained embedded metadata',
+                'warning',
+                'Additional details changed.',
+              ),
+          ],
           nextStatus == IntegrityStatus.incomplete
               ? ['Opaque metadata not qualified.']
               : [],

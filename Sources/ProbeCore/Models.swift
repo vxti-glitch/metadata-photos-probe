@@ -36,8 +36,8 @@ public struct MediaInspection: Codable, Sendable {
     }
 }
 
-public enum IntegrityStatus: String, Codable, Sendable { case verified, mismatch, incomplete }
-public enum CheckStatus: String, Codable, Sendable { case passed, failed, notChecked }
+public enum IntegrityStatus: String, Codable, Sendable { case verified, mismatch, incomplete, warning }
+public enum CheckStatus: String, Codable, Sendable { case passed, failed, notChecked, warning }
 public struct IntegrityCheck: Codable, Sendable {
     public let name: String
     public let status: CheckStatus

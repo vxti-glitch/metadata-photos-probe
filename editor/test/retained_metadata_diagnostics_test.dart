@@ -21,7 +21,7 @@ void main() {
       ),
     );
     expect(safeIntegrityCheckLabels(message), [
-      'Unchanged metadata',
+      'Other file details',
       'Unchanged ISO',
       'Unmapped numbered metadata',
       'Unnamed metadata',

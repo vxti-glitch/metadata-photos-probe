@@ -358,7 +358,7 @@ Map<String, String> _knownIntegrityCheckLabels() {
     'container': 'File format',
     'requested_camera_metadata': 'Camera metadata',
     'requested_metadata': 'Requested metadata',
-    'retained_metadata': 'Unchanged metadata',
+    'retained_metadata': 'Other file details',
     'retained_metadata_numeric_key': 'Unmapped numbered metadata',
     'retained_metadata_unnamed_key': 'Unnamed metadata',
     'retained_metadata_unrecognized_key': 'Unrecognized metadata field',

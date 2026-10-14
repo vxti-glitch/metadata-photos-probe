@@ -1170,6 +1170,7 @@ class _MetadataFormState extends State<MetadataForm>
     final controller = widget.controller;
     final isMismatch = output.integrity.hasMismatch;
     final needsAck = output.integrity.needsAcknowledgment && !isMismatch;
+    final hasWarning = output.integrity.hasAdditionalDetailsWarning;
     return Container(
       margin: const EdgeInsets.only(top: 20),
       padding: const EdgeInsets.all(16),
@@ -1192,9 +1193,13 @@ class _MetadataFormState extends State<MetadataForm>
               Icon(
                 isMismatch
                     ? Icons.error_outline_rounded
+                    : hasWarning
+                    ? Icons.info_outline_rounded
                     : Icons.check_circle_outline_rounded,
                 color: isMismatch
                     ? AppTheme.of(context).error
+                    : hasWarning
+                    ? AppTheme.of(context).warning
                     : AppTheme.of(context).accent,
                 size: 22,
               ),
@@ -1287,6 +1292,17 @@ class _MetadataFormState extends State<MetadataForm>
             ),
           ),
           _buildMetadataDiffCard(context, widget.session, output),
+          if (hasWarning) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Some other file details may have changed. You can export this copy. Your original is unchanged.',
+              key: const Key('additionalDetailsWarning'),
+              style: TextStyle(
+                color: AppTheme.of(context).warning,
+                fontSize: 13,
+              ),
+            ),
+          ],
           if (isMismatch) ...[
             const SizedBox(height: 12),
             Text(
@@ -1294,6 +1310,7 @@ class _MetadataFormState extends State<MetadataForm>
               style: TextStyle(color: AppTheme.of(context).error, fontSize: 13),
             ),
           ],
+          if (hasWarning) _integritySummary(output.integrity, output.id),
           if (needsAck) ...[
             const SizedBox(height: 12),
             Material(
@@ -1721,6 +1738,8 @@ class _MetadataFormState extends State<MetadataForm>
 
   String _integrityStatusLabel(IntegrityReport report) => report.hasMismatch
       ? 'Verification failed'
+      : report.hasAdditionalDetailsWarning
+      ? 'Some other file details may have changed'
       : report.needsAcknowledgment
       ? 'Verification limited'
       : 'Verification passed';
@@ -1742,7 +1761,7 @@ class _MetadataFormState extends State<MetadataForm>
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(
-                    '${check.name}: ${check.status} — ${check.detail}',
+                    '${check.consumerName}: ${check.status} — ${check.detail}',
                     style: TextStyle(
                       color: AppTheme.of(context).muted,
                       fontSize: 12,
@@ -1816,6 +1835,17 @@ class _MetadataFormState extends State<MetadataForm>
           style: TextStyle(color: AppTheme.of(context).muted),
         ),
         if (withOutput.any(
+          (session) =>
+              session.processing!.integrity.hasAdditionalDetailsWarning,
+        )) ...[
+          const SizedBox(height: 8),
+          Text(
+            'Some other file details may have changed in the marked copies. Your originals are unchanged.',
+            key: const Key('batchAdditionalDetailsWarning'),
+            style: TextStyle(color: AppTheme.of(context).warning, fontSize: 13),
+          ),
+        ],
+        if (withOutput.any(
           (session) => session.processing!.integrity.needsAcknowledgment,
         )) ...[
           const SizedBox(height: 8),
@@ -1853,7 +1883,12 @@ class _MetadataFormState extends State<MetadataForm>
                                 session.processing != null &&
                                 session.processing!.id !=
                                     _processingIdsBefore[session.id]
-                          ? Icons.check_circle_outline
+                          ? (session
+                                    .processing!
+                                    .integrity
+                                    .hasAdditionalDetailsWarning
+                                ? Icons.info_outline
+                                : Icons.check_circle_outline)
                           : Icons.error_outline,
                       color: !_attemptedBatchIds.contains(session.id)
                           ? AppTheme.of(context).muted
@@ -1861,7 +1896,12 @@ class _MetadataFormState extends State<MetadataForm>
                                 session.processing != null &&
                                 session.processing!.id !=
                                     _processingIdsBefore[session.id]
-                          ? AppTheme.of(context).accent
+                          ? (session
+                                    .processing!
+                                    .integrity
+                                    .hasAdditionalDetailsWarning
+                                ? AppTheme.of(context).warning
+                                : AppTheme.of(context).accent)
                           : AppTheme.of(context).warning,
                     ),
                   ),
@@ -2451,7 +2491,7 @@ class _MetadataFormState extends State<MetadataForm>
               for (final check in output.integrity.checks)
                 ListTile(
                   dense: true,
-                  title: Text('${check.name}: ${check.status}'),
+                  title: Text('${check.consumerName}: ${check.status}'),
                   subtitle: Text(check.detail),
                 ),
               for (final limitation in output.integrity.limitations)
@@ -2539,7 +2579,7 @@ class _MetadataFormState extends State<MetadataForm>
           for (final check in output.integrity.checks)
             ListTile(
               dense: true,
-              title: Text('${check.name}: ${check.status}'),
+              title: Text('${check.consumerName}: ${check.status}'),
               subtitle: Text(check.detail),
             ),
           for (final limitation in output.integrity.limitations)

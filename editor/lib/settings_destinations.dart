@@ -554,7 +554,7 @@ class PhotosGuideSettingsPage extends StatelessWidget {
           ),
           SettingsItem(
             title: '2. Export to Files',
-            subtitle: 'Choose a folder you can find again. Export requires passed checks or your explicit acknowledgment of incomplete checks; failed checks block export.',
+            subtitle: 'Choose a folder you can find again. Warnings about other file details allow export. Incomplete checks require your acknowledgment; failed media or requested-edit checks block export.',
           ),
           SettingsItem(
             title: '3. Upload through Safari',
@@ -612,7 +612,7 @@ class MediaExportSettingsPage extends StatelessWidget {
           const SettingsItem(
             title: 'Verification before export',
             icon: Icons.verified_outlined,
-            subtitle: 'Required readback and integrity checks run for each file. Failed checks block export. Incomplete comparisons stay incomplete and require your acknowledgment before exporting.',
+            subtitle: 'Each copy is checked before export. Changes to other file details show a warning and allow export. Failed media or requested-edit checks block export. Limited checks still require your acknowledgment.',
           ),
           const SettingsItem(
             title: 'Where your copy goes',
