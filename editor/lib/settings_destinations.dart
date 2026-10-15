@@ -713,7 +713,7 @@ class AppInformationSettingsPage extends StatelessWidget {
           SettingsItem(title: 'Native engine', subtitle: AppBrand.engineCore),
           SettingsItem(
             title: 'Local processing',
-            subtitle: 'Media stays in local storage. No account or server is required for editing.',
+            subtitle: 'Media processing stays on your device. Zlarp verifies your license online.',
           ),
         ],
       ),

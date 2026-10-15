@@ -59,6 +59,13 @@ final class NativeMediaBridge: NSObject {
 
     private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         do {
+            // Native enforcement is independent of the Flutter activation screen.
+            // Keep cancellation/support and read-only capability discovery usable.
+            if !["capabilities", "cancel", "openSupportEmail", "getHostDevice"].contains(call.method),
+               !ZlarpLicenseService.shared.allowsAccess {
+                result(FlutterError(code: "license_required", message: "Activate your Zlarp license to continue.", details: nil))
+                return
+            }
             switch call.method {
             case "capabilities":
                 let fields = Dictionary(uniqueKeysWithValues: MediaKind.allCases.map { ($0.rawValue, MetadataPatch.supportedKeys(for: $0).sorted()) })
@@ -384,6 +391,9 @@ final class NativeMediaBridge: NSObject {
     }
 
     private func presentExport(urls: [URL], token: UUID) throws {
+        guard ZlarpLicenseService.shared.allowsAccess else {
+            throw NativeMediaError.unsupported("Activate your Zlarp license to export.")
+        }
         let controller = try presenter()
         let picker = UIDocumentPickerViewController(forExporting: urls, asCopy: true)
         let delegate = NativePickerDelegate(token: token)
@@ -398,6 +408,9 @@ final class NativeMediaBridge: NSObject {
     }
 
     private func presentShare(urls: [URL], token: UUID) throws {
+        guard ZlarpLicenseService.shared.allowsAccess else {
+            throw NativeMediaError.unsupported("Activate your Zlarp license to share.")
+        }
         let controller = try presenter()
         let activity = UIActivityViewController(activityItems: urls, applicationActivities: nil)
         if let popover = activity.popoverPresentationController {

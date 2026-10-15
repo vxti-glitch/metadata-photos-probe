@@ -39,3 +39,26 @@ Reservations are stored atomically as optional `reservedOutputDisplayName` field
 Allocation excludes active/history output names, other reservations, private export names and visible public export names, case-insensitively. An external collision after review fails preparation or processing instead of renaming the reviewed file or overwriting a consumer copy. Integrity checks, incomplete acknowledgments and frozen processing export tokens remain independently enforced.
 
 Flutter treats preparation as a serialized, noncancelable `preparingCopies` operation. Failure keeps review closed and presents native error guidance; unrelated operations wait for completion.
+# Zlarp license channel
+
+Production `main.dart` wraps the entire navigator in the license gate. The editor
+is mounted only after activation; later locks preserve local editing state.
+The separate `com.vxtiglitch.metadataeditor/license_v1` channel exposes `status`,
+`refresh` (optional bounded string `key`) and `clear`. Status contains `allowed`,
+`reason`, optional Unix-seconds `expiresAt`, and optional `retryAfterSeconds`.
+It never returns the license key, signed token, device identity or media data.
+
+Swift validates the pinned Ed25519 signature, algorithm, issuer, product audience,
+device, fresh nonce, entitlement and expiry. The Keychain stores the key, signed
+receipt and stable random app-specific device identity. Online verification runs
+at launch and every six hours while in use; foreground checks and an expiry timer
+prevent continued access to an expired receipt. Only a still-valid signed cached
+receipt permits temporary offline access. Explicit refusals and invalid responses
+lock access. A license change invalidates the old account and in-flight response.
+
+The native media bridge independently requires authorization. Session processing
+checks it before and after engine work and before automatic Files saving, outside
+the nonfatal automatic-save catch. Export qualification and Files/share presentation
+check authorization again. Integrity and acknowledgment rules remain in force.
+Diagnostic tests use explicit injected authorizers; production has no bypass flag.
+License verification never signs the IPA or proves physical-device installation.

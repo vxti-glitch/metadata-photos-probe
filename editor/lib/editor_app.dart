@@ -10,8 +10,13 @@ import 'metadata_form.dart';
 import 'settings_screen.dart';
 
 class MetadataEditorApp extends StatefulWidget {
-  const MetadataEditorApp({super.key, this.controller});
+  const MetadataEditorApp({
+    super.key,
+    this.controller,
+    this.applicationBuilder,
+  });
   final EditorController? controller;
+  final TransitionBuilder? applicationBuilder;
 
   @override
   State<MetadataEditorApp> createState() => _MetadataEditorAppState();
@@ -38,6 +43,7 @@ class _MetadataEditorAppState extends State<MetadataEditorApp> {
     builder: (context, _) => MaterialApp(
       title: AppBrand.name,
       debugShowCheckedModeBanner: false,
+      builder: widget.applicationBuilder,
       theme: AppTheme.lightTheme(),
       darkTheme: AppTheme.darkTheme(),
       themeMode: switch (controller.appearance) {

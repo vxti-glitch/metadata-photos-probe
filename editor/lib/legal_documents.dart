@@ -4,7 +4,7 @@ abstract final class LegalDocuments {
   static const privacyPolicy = '''
 Privacy Policy — Metadata Editor
 
-Effective Date: October 10, 2026
+Effective Date: October 15, 2026
 Application: Metadata Editor (iOS)
 Publisher: vxti
 Developer: vxti
@@ -18,10 +18,10 @@ We believe your personal media, EXIF records, capture timestamps, camera serial 
 
 • Zero Cloud Processing: All metadata operations run 100% locally on your iOS device via our compiled Swift media engine (ProbeCore).
 • Zero Automated Telemetry: Metadata Editor does not contain any analytics SDKs, advertising frameworks, crash-reporting daemons, user tracking identifiers (IDFA), or telemetry beacons.
-• Zero Third-Party Data Sharing: We do not sell, rent, monetize, or transmit your media or personal data to any third party.
+• Media Privacy: We do not upload your media, filenames, embedded metadata, or GPS coordinates to Zlarp for license verification.
 
 2. Information We Access and Process
-Metadata Editor only interacts with files and information that you explicitly choose to import into the application.
+Metadata Editor processes the files you choose to import and verifies the license key you enter with Zlarp.
 
 A. Media Files & Embedded Metadata
 When you select an image or video file using the system document picker (UIDocumentPickerViewController) or file sharing interface:
@@ -38,6 +38,11 @@ C. Saved Presets & Local Settings
 • Saved camera recipes, randomization options, and editor state are stored locally in the application's private Application Support directory. The app does not use SharedPreferences for these records.
 • Preset configurations are never synced to any remote database.
 
+D. License Verification
+• The app sends your license key, app identifier, a random per-install device identifier, and a fresh verification nonce to Zlarp over HTTPS. Zlarp also receives connection information such as your IP address.
+• Your license key and signed access token are stored in the iOS Keychain. They are not included in media, presets, or diagnostic reports. The per-install identifier is not an advertising identifier.
+• Use Settings > License to remove the saved key from this device. This does not cancel your Zlarp subscription or free a device slot; manage those through Zlarp.
+
 3. Data Storage, Retention, and Deletion
 A. Local Sandbox Storage
 • Imported originals, private processing outputs, and session records are stored in the application's private Application Support directory.
@@ -50,12 +55,13 @@ B. Source File Immutability
 C. Data Deletion
 • Session Removal: Removing a local project deletes its private working and export staging copies. Provider originals, published Processed Media files, and copies exported elsewhere remain unchanged.
 • Cache Clearing: Settings provides a confirmation before removing local project history, private working copies, and private export staging files. Originals, published Processed Media files, and copies exported elsewhere remain unchanged.
-• Application Uninstall: Deleting the app removes its on-device sandbox. Previously exported media and system or provider backups are not managed by this app.
+• Application Uninstall: Deleting the app removes its on-device sandbox. Keychain records may survive uninstall; use Settings > License to remove the saved key first. Previously exported media and system or provider backups are not managed by this app.
 
 4. Network Connections & External Links
-A. Network Inactivity
-• The application executes no automated network requests, background polling, or API calls during normal operation.
-• Local file processing works without a network connection. Importing an original that is only in iCloud or another cloud provider, visiting an external website, or uploading through a browser requires the relevant network service.
+A. License Connections
+• The app verifies your license with Zlarp at launch and periodically while in use, including after returning to the app when verification is due.
+• During a connection failure, local processing remains available only while a previously verified signed access token is still valid. Once it expires, reconnect to verify your license.
+• Cloud-backed imports, external websites, and user-operated browser uploads require their relevant network services.
 
 B. User-Initiated External Links
 • The application contains an explicit link to the showcase website (Visit Website -> https://zlarp.com).
@@ -65,7 +71,7 @@ B. User-Initiated External Links
 Metadata Editor incorporates no third-party tracking, analytics, or advertising libraries. The application is built using:
 • Flutter SDK: Used solely for rendering the on-device user interface.
 • Apple Native Frameworks: ImageIO, CoreMedia, AVFoundation, UniformTypeIdentifiers, and Foundation for bit-level container processing.
-There are no third-party data subprocessors.
+Zlarp handles license verification and purchase records. Its privacy terms apply to information sent to its service. Media processing remains on the device.
 
 6. Children's Privacy
 Metadata Editor does not knowingly solicit children's personal information. The application's local processing model does not by itself establish compliance with every legal requirement.
@@ -73,8 +79,8 @@ Metadata Editor does not knowingly solicit children's personal information. The 
 7. Your Rights (GDPR & CCPA/CPRA)
 Under global privacy regulations, including the European Union General Data Protection Regulation (GDPR) and California Consumer Privacy Act (CCPA):
 • Access / Portability: Public copies and explicitly exported outputs are accessible through Files. Private working copies are managed in the app; incomplete outputs require review before export.
-• Right to Erasure: You can delete all local data at any time directly through the app or by deleting the app.
-• Because we do not collect, transmit, or store personal data on any server, we have no personal data to provide, rectify, or delete upon request.
+• Local Deletion: Remove local projects through Settings and remove the saved license through Settings > License. Exported files, backups, and Zlarp account or purchase records are managed separately.
+• Requests: Contact vxti.dev@gmail.com about app privacy questions. Requests concerning license, account, or purchase records held by Zlarp should also be directed to Zlarp.
 
 8. Contact & Legal Publisher
 For questions regarding this Privacy Policy:

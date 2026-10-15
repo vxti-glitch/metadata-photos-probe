@@ -93,6 +93,7 @@ actor NativeSessionStore {
     private let root: URL
     private let previewRoot: URL
     private let autoExportRoot: URL?
+    private let authorize: @Sendable () async throws -> Void
     private let mediaSizeLimit: Int64
     private let processOperation: @Sendable (URL, URL, CameraPatch) async throws -> ProcessingResult
     private let metadataProcessOperation: @Sendable (URL, URL, MetadataPatch) async throws -> ProcessingResult
@@ -102,7 +103,13 @@ actor NativeSessionStore {
     // Internal diagnostic only; never exposed through the Flutter channel.
     var cachedQualificationCount: Int { qualifiedComparisons.count }
 
-    init(root: URL, previewRoot: URL? = nil, autoExportRoot: URL? = nil, mediaSizeLimit: Int64 = NativeSessionStore.maximumMediaBytes,
+    init(authorize: @escaping @Sendable () async throws -> Void = {
+        try await MainActor.run {
+            guard ZlarpLicenseService.shared.allowsAccess else {
+                throw NativeMediaError.unsupported("Activate your Zlarp license to continue.")
+            }
+        }
+    }, root: URL, previewRoot: URL? = nil, autoExportRoot: URL? = nil, mediaSizeLimit: Int64 = NativeSessionStore.maximumMediaBytes,
          processOperation: @escaping @Sendable (URL, URL, CameraPatch) async throws -> ProcessingResult = {
         try await MetadataEngine.process(source: $0, output: $1, patch: $2)
     }, metadataProcessOperation: @escaping @Sendable (URL, URL, MetadataPatch) async throws -> ProcessingResult = {
@@ -113,6 +120,7 @@ actor NativeSessionStore {
             .standardizedFileURL.resolvingSymlinksInPath()
         // Keep the unresolved destination so a Files-visible symlink is refused.
         self.autoExportRoot = autoExportRoot?.standardizedFileURL
+        self.authorize = authorize
         self.processOperation = processOperation
         self.metadataProcessOperation = metadataProcessOperation
         self.mediaSizeLimit = max(1, min(mediaSizeLimit, Self.maximumMediaBytes))
@@ -262,6 +270,7 @@ actor NativeSessionStore {
     }
 
     private func processInternal(sessionID: UUID, cameraPatch: CameraPatch?, metadataPatch: MetadataPatch?) async throws -> NativeSession {
+        try await authorize()
         try load()
         guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else { throw NativeMediaError.notFound }
         let original = sessions[index]
@@ -296,6 +305,7 @@ actor NativeSessionStore {
         else { throw NativeMediaError.invalidArgument }
         try Task.checkCancellation()
         try Self.requireRegularFile(output, maximumBytes: mediaSizeLimit)
+        try await authorize()
         guard try WholeFileDigest.sha256(source) == original.sourceSHA256 else { throw NativeMediaError.processing }
         guard result.integrity.status != .mismatch,
               !result.integrity.checks.contains(where: { $0.status == .failed }) else {
@@ -335,6 +345,7 @@ actor NativeSessionStore {
         // explicit export gate receives an acknowledgement. Commit first so a
         // failed journal write never leaks an uncommitted output into Files.
         if autoExportRoot != nil, Self.isFullyVerified(result.integrity) {
+            try await authorize()
             do {
                 let published = try publishVerifiedCopy(output, processing: processing)
                 var publishedSession = final
@@ -360,6 +371,7 @@ actor NativeSessionStore {
     }
 
     func exportURL(sessionID: UUID, processingID: UUID, acknowledgeIncomplete: Bool) async throws -> URL {
+        try await authorize()
         try load()
         guard let session = sessions.first(where: { $0.id == sessionID }), let output = session.processing else { throw NativeMediaError.notFound }
         guard output.id == processingID else { throw NativeMediaError.invalidArgument }
@@ -411,6 +423,7 @@ actor NativeSessionStore {
                 throw NativeMediaError.unsupported("Recovered media has incomplete integrity checks; review and acknowledge them before export.")
             }
         }
+        try await authorize()
         return url
     }
 

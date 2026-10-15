@@ -5,6 +5,7 @@ import 'app_theme.dart';
 import 'editor_app.dart';
 import 'editor_controller.dart';
 import 'legal_documents.dart';
+import 'license_gate.dart';
 import 'media_bridge.dart';
 import 'settings_destinations.dart';
 
@@ -21,6 +22,31 @@ class SettingsScreen extends StatelessWidget {
   final bool isTab;
   final VoidCallback? onOpenEditor;
   final VoidCallback? onBack;
+
+  Future<void> _license(BuildContext context) async {
+    final change = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Zlarp license'),
+        content: const Text(
+          'Your license is active. You can remove the saved key from this device to use a different one. This does not cancel your subscription or reset your device limit on Zlarp.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Done'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove saved key'),
+          ),
+        ],
+      ),
+    );
+    if (change == true && context.mounted) {
+      await ZlarpLicenseGate.changeKey(context);
+    }
+  }
 
   void _open(BuildContext context, Widget page) =>
       Navigator.of(context)
@@ -116,6 +142,15 @@ class SettingsScreen extends StatelessWidget {
                   settingsHeading(context, 'GENERAL'),
                   SettingsGroup(
                     children: [
+                      if (ZlarpLicenseGate.available(context))
+                        SettingsItem(
+                          key: const Key('licenseRow'),
+                          title: 'License',
+                          icon: Icons.key_outlined,
+                          onTap: controller.busy
+                              ? null
+                              : () => _license(context),
+                        ),
                       SettingsItem(
                         key: const Key('appearanceRow'),
                         title: 'Appearance',

@@ -20,6 +20,76 @@ class RunnerTests: XCTestCase {
     try FileManager.default.removeItem(at: folder)
   }
 
+  func testLicenseDenialBlocksProcessingAndRecoveredExportNatively() async throws {
+    let provider = folder.appendingPathComponent("licensed.jpg")
+    let sourceBytes = try jpeg()
+    try sourceBytes.write(to: provider)
+    let root = folder.appendingPathComponent("licensed-sessions")
+    let setup = NativeSessionStore(authorize: {}, root: root, processOperation: Self.verifiedCopy)
+    let original = try await setup.importFile(provider)
+    let processed = try await setup.process(sessionID: original.id, patch: CameraPatch(make: "Same", model: "Same"))
+    let processing = try XCTUnwrap(processed.processing)
+    let denied = NativeSessionStore(authorize: {
+      throw NativeMediaError.unsupported("License required")
+    }, root: root)
+    do {
+      _ = try await denied.processMetadata(sessionID: original.id, patch: MetadataPatch())
+      XCTFail("Unlicensed metadata processing accepted")
+    } catch NativeMediaError.unsupported { }
+    do {
+      _ = try await denied.process(sessionID: original.id, patch: CameraPatch(make: "Same", model: "Same"))
+      XCTFail("Unlicensed processing accepted")
+    } catch NativeMediaError.unsupported { }
+    do {
+      _ = try await denied.exportCopyURL(sessionID: original.id, processingID: processing.id, acknowledgeIncomplete: true)
+      XCTFail("Unlicensed recovered export accepted")
+    } catch NativeMediaError.unsupported { }
+    let unchanged = try await setup.list()
+    XCTAssertEqual(unchanged.first?.processing?.id, processing.id)
+    XCTAssertEqual(try Data(contentsOf: provider), sourceBytes)
+  }
+
+  func testLicenseExpiryDuringProcessingDoesNotPublishOrCommitOutput() async throws {
+    let provider = folder.appendingPathComponent("expiry.jpg")
+    try jpeg().write(to: provider)
+    let publicFolder = folder.appendingPathComponent("published")
+    let checks = LicenseTestAuthorization(allowedChecks: 1)
+    let store = NativeSessionStore(authorize: { try await checks.check() },
+      root: folder.appendingPathComponent("expiry-sessions"), autoExportRoot: publicFolder,
+      processOperation: Self.verifiedCopy)
+    let imported = try await store.importFile(provider)
+    do {
+      _ = try await store.process(sessionID: imported.id, patch: CameraPatch(make: "Same", model: "Same"))
+      XCTFail("Expired processing accepted")
+    } catch NativeMediaError.unsupported { }
+    XCTAssertFalse(FileManager.default.fileExists(atPath: publicFolder.path))
+    let sessions = try await store.list()
+    XCTAssertNil(sessions.first?.processing)
+  }
+
+  func testLicenseExpiryImmediatelyBeforeAutoSaveIsNotSwallowed() async throws {
+    let provider = folder.appendingPathComponent("auto-expiry.jpg")
+    try jpeg().write(to: provider)
+    let publicFolder = folder.appendingPathComponent("auto-expiry-public")
+    let checks = LicenseTestAuthorization(allowedChecks: 2)
+    let store = NativeSessionStore(authorize: { try await checks.check() },
+      root: folder.appendingPathComponent("auto-expiry-sessions"), autoExportRoot: publicFolder,
+      processOperation: Self.verifiedCopy)
+    let imported = try await store.importFile(provider)
+    do {
+      _ = try await store.process(sessionID: imported.id, patch: CameraPatch(make: "Same", model: "Same"))
+      XCTFail("License expiry was swallowed as an automatic-save warning")
+    } catch NativeMediaError.unsupported { }
+    XCTAssertFalse(FileManager.default.fileExists(atPath: publicFolder.path))
+    let sessions = try await store.list()
+    let saved = try XCTUnwrap(sessions.first?.processing)
+    XCTAssertNil(saved.autoExportFolder)
+    do {
+      _ = try await store.exportCopyURL(sessionID: imported.id, processingID: saved.id, acknowledgeIncomplete: true)
+      XCTFail("Expired license exported private output")
+    } catch NativeMediaError.unsupported { }
+  }
+
   func testSupportEmailHasOnlyTheFixedRecipientAndPercentEncodedSubject() throws {
     let url = NativeMediaBridge.supportEmailURL
     XCTAssertEqual(url.absoluteString, "mailto:vxti.dev@gmail.com?subject=Metadata%20Editor%20Support")
@@ -115,7 +185,7 @@ class RunnerTests: XCTestCase {
     let provider = folder.appendingPathComponent("reserve.jpg")
     try jpeg().write(to: provider)
     let root = folder.appendingPathComponent("reserve-sessions", isDirectory: true)
-    let store = NativeSessionStore(root: root, processOperation: Self.verifiedCopy)
+    let store = NativeSessionStore(authorize: {}, root: root, processOperation: Self.verifiedCopy)
     let first = try await store.importFile(provider)
     let second = try await store.importFile(provider)
     let ids = [first.id, second.id]
@@ -123,7 +193,7 @@ class RunnerTests: XCTestCase {
     XCTAssertEqual(Set(names.values).count, 2)
     let repeated = try await store.reserveOutputNames(sessionIDs: Array(ids.reversed()))
     XCTAssertEqual(names, repeated)
-    let recovered = NativeSessionStore(root: root, processOperation: Self.verifiedCopy)
+    let recovered = NativeSessionStore(authorize: {}, root: root, processOperation: Self.verifiedCopy)
     let restored = try await recovered.reserveOutputNames(sessionIDs: ids)
     XCTAssertEqual(names, restored)
     for id in ids {
@@ -145,7 +215,7 @@ class RunnerTests: XCTestCase {
     let root = folder.appendingPathComponent("failure-sessions", isDirectory: true)
     let publicFolder = folder.appendingPathComponent("Public", isDirectory: true)
     try FileManager.default.createDirectory(at: publicFolder, withIntermediateDirectories: false)
-    let failing = NativeSessionStore(root: root, autoExportRoot: publicFolder, processOperation: { _, _, _ in
+    let failing = NativeSessionStore(authorize: {}, root: root, autoExportRoot: publicFolder, processOperation: { _, _, _ in
       throw NativeMediaError.processing
     })
     let imported = try await failing.importFile(provider)
@@ -160,7 +230,7 @@ class RunnerTests: XCTestCase {
     let collision = publicFolder.appendingPathComponent(name.lowercased())
     let bytes = Data("external consumer file".utf8)
     try bytes.write(to: collision)
-    let retry = NativeSessionStore(root: root, autoExportRoot: publicFolder, processOperation: Self.verifiedCopy)
+    let retry = NativeSessionStore(authorize: {}, root: root, autoExportRoot: publicFolder, processOperation: Self.verifiedCopy)
     do {
       _ = try await retry.process(sessionID: imported.id, patch: CameraPatch(make: "Same", model: "Same"))
       XCTFail("A reserved-name collision was silently renamed or accepted")
@@ -197,7 +267,7 @@ class RunnerTests: XCTestCase {
       map["sessions"] = items
       let bytes = try JSONSerialization.data(withJSONObject: map)
       try bytes.write(to: manifest)
-      do { _ = try await NativeSessionStore(root: root).list(); XCTFail("Invalid reservation loaded: \(mode)") }
+      do { _ = try await NativeSessionStore(authorize: {}, root: root).list(); XCTFail("Invalid reservation loaded: \(mode)") }
       catch NativeMediaError.storage { }
       XCTAssertEqual(try Data(contentsOf: manifest), bytes)
     }
@@ -206,7 +276,7 @@ class RunnerTests: XCTestCase {
   func testOldJournalWithoutReservationRemainsLoadableAndCanReserve() async throws {
     let root = folder.appendingPathComponent("old-journal", isDirectory: true)
     let session = try persistedSession(root: root, status: .verified)
-    let store = NativeSessionStore(root: root)
+    let store = NativeSessionStore(authorize: {}, root: root)
     let recovered = try await store.list()
     XCTAssertNil(recovered.first?.reservedOutputDisplayName)
     let reserved = try await store.reserveOutputNames(sessionIDs: [session.id])
@@ -220,7 +290,7 @@ class RunnerTests: XCTestCase {
     let root = folder.appendingPathComponent("late-collision-sessions", isDirectory: true)
     let publicFolder = folder.appendingPathComponent("LatePublic", isDirectory: true)
     try FileManager.default.createDirectory(at: publicFolder, withIntermediateDirectories: false)
-    let store = NativeSessionStore(root: root, autoExportRoot: publicFolder, processOperation: { source, output, patch in
+    let store = NativeSessionStore(authorize: {}, root: root, autoExportRoot: publicFolder, processOperation: { source, output, patch in
       let processed = try await Self.verifiedCopy(source, output, patch)
       let map = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("manifest.json"))) as! [String: Any]
       let sessions = map["sessions"] as! [[String: Any]]
@@ -248,7 +318,7 @@ class RunnerTests: XCTestCase {
     let snapshot = folder.appendingPathComponent("reserved-snapshot.json")
     let outside = folder.appendingPathComponent("foreign-journal.json")
     try Data("external journal".utf8).write(to: outside)
-    let store = NativeSessionStore(root: root, processOperation: { source, output, patch in
+    let store = NativeSessionStore(authorize: {}, root: root, processOperation: { source, output, patch in
       let result = try await Self.verifiedCopy(source, output, patch)
       let manifest = root.appendingPathComponent("manifest.json")
       try FileManager.default.copyItem(at: manifest, to: snapshot)
@@ -266,7 +336,7 @@ class RunnerTests: XCTestCase {
     let manifest = root.appendingPathComponent("manifest.json")
     try FileManager.default.removeItem(at: manifest)
     try FileManager.default.copyItem(at: snapshot, to: manifest)
-    let recovered = NativeSessionStore(root: root)
+    let recovered = NativeSessionStore(authorize: {}, root: root)
     let rows = try await recovered.list()
     XCTAssertNil(rows.first?.processing)
     XCTAssertEqual(rows.first?.reservedOutputDisplayName, names[imported.id.uuidString])
@@ -307,14 +377,14 @@ class RunnerTests: XCTestCase {
       let path = folder.appendingPathComponent("hint-\(hint)").path
       let root = URL(fileURLWithPath: path, isDirectory: hint)
       let previews = folder.appendingPathComponent("hint-preview-\(hint)", isDirectory: true)
-      let store = NativeSessionStore(root: root, previewRoot: previews)
+      let store = NativeSessionStore(authorize: {}, root: root, previewRoot: previews)
       let imported = try await store.importFile(provider)
       let processed = try await store.process(sessionID: imported.id,
         patch: CameraPatch(make: "Directory hint maker", model: "Directory hint model"))
       let processing = try XCTUnwrap(processed.processing)
       let output = try await store.exportURL(sessionID: imported.id, processingID: processing.id, acknowledgeIncomplete: true)
       let alternateRoot = URL(fileURLWithPath: path, isDirectory: !hint)
-      let recoveredStore = NativeSessionStore(root: alternateRoot, previewRoot: previews)
+      let recoveredStore = NativeSessionStore(authorize: {}, root: alternateRoot, previewRoot: previews)
       let recovered = try await recoveredStore.list()
       XCTAssertEqual(recovered.count, 1)
       XCTAssertEqual(recovered[0].processing?.id, processing.id)
@@ -331,7 +401,7 @@ class RunnerTests: XCTestCase {
     try data.write(to: provider)
     let providerDigest = try WholeFileDigest.sha256(provider)
     let root = folder.appendingPathComponent("sessions", isDirectory: true)
-    let store = NativeSessionStore(root: root)
+    let store = NativeSessionStore(authorize: {}, root: root)
     let original = try await store.importFile(provider)
     XCTAssertEqual(original.inspection.kind, .jpeg)
     let patch = CameraPatch(make: "Synthetic maker", model: "Synthetic model")
@@ -348,7 +418,7 @@ class RunnerTests: XCTestCase {
       _ = try await store.exportURL(sessionID: original.id, processingID: UUID(), acknowledgeIncomplete: true)
       XCTFail("An unfrozen output token was accepted")
     } catch NativeMediaError.invalidArgument { }
-    let recoveredStore = NativeSessionStore(root: root)
+    let recoveredStore = NativeSessionStore(authorize: {}, root: root)
     let recovered = try await recoveredStore.list()
     XCTAssertEqual(recovered.count, 1)
     XCTAssertEqual(recovered[0].processing?.id, processing.id)
@@ -370,7 +440,7 @@ class RunnerTests: XCTestCase {
     for status in [IntegrityStatus.incomplete, .mismatch, .verified] {
       let root = folder.appendingPathComponent(status.rawValue, isDirectory: true)
       let session = try persistedSession(root: root, status: status)
-      let store = NativeSessionStore(root: root)
+      let store = NativeSessionStore(authorize: {}, root: root)
       let processing = try XCTUnwrap(session.processing)
       do {
         _ = try await store.exportURL(sessionID: session.id, processingID: processing.id, acknowledgeIncomplete: false)
@@ -408,7 +478,7 @@ class RunnerTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: map).write(to: manifest)
       }
       let before = try Data(contentsOf: manifest)
-      do { try await NativeSessionStore(root: root).clear(); XCTFail("Unsafe journal was accepted") }
+      do { try await NativeSessionStore(authorize: {}, root: root).clear(); XCTFail("Unsafe journal was accepted") }
       catch NativeMediaError.storage { }
       XCTAssertEqual(try Data(contentsOf: manifest), before)
       XCTAssertEqual(try WholeFileDigest.sha256(outside), hash)
@@ -422,7 +492,7 @@ class RunnerTests: XCTestCase {
       let bytes = oversized ? Data(repeating: 0x20, count: NativeSessionStore.maximumManifestBytes + 1) : Data("not JSON".utf8)
       let manifest = root.appendingPathComponent("manifest.json")
       try bytes.write(to: manifest)
-      do { _ = try await NativeSessionStore(root: root).list(); XCTFail("Invalid journal recovered") }
+      do { _ = try await NativeSessionStore(authorize: {}, root: root).list(); XCTFail("Invalid journal recovered") }
       catch NativeMediaError.storage { }
       XCTAssertEqual(try Data(contentsOf: manifest), bytes)
     }
@@ -435,7 +505,7 @@ class RunnerTests: XCTestCase {
     let output = root.appendingPathComponent(session.id.uuidString).appendingPathComponent(processing.outputName)
     try Data("changed bytes".utf8).write(to: output)
     do {
-      _ = try await NativeSessionStore(root: root).exportURL(sessionID: session.id, processingID: processing.id, acknowledgeIncomplete: true)
+      _ = try await NativeSessionStore(authorize: {}, root: root).exportURL(sessionID: session.id, processingID: processing.id, acknowledgeIncomplete: true)
       XCTFail("Changed output was exported under a preserved quality claim")
     } catch NativeMediaError.processing { }
   }
@@ -443,7 +513,7 @@ class RunnerTests: XCTestCase {
   func testFailedProcessingClearsPriorActiveOutputAndRecoversHistory() async throws {
     let root = folder.appendingPathComponent("failed-operation", isDirectory: true)
     let session = try persistedSession(root: root, status: .verified)
-    let store = NativeSessionStore(root: root, processOperation: { _, output, _ in
+    let store = NativeSessionStore(authorize: {}, root: root, processOperation: { _, output, _ in
       try Data("partial staged bytes".utf8).write(to: output)
       throw NativeMediaError.processing
     })
@@ -451,7 +521,7 @@ class RunnerTests: XCTestCase {
       _ = try await store.process(sessionID: session.id, patch: CameraPatch(make: "Changed", model: "Changed"))
       XCTFail("A deliberately failed engine returned a processed session")
     } catch NativeMediaError.processing { }
-    let recovered = try await NativeSessionStore(root: root).list()
+    let recovered = try await NativeSessionStore(authorize: {}, root: root).list()
     XCTAssertNil(recovered[0].processing)
     XCTAssertEqual(recovered[0].history.map(\.id), [session.processing!.id])
     let files = try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent(session.id.uuidString).path)
@@ -472,7 +542,7 @@ class RunnerTests: XCTestCase {
     let originalHash = try WholeFileDigest.sha256(provider)
     let root = folder.appendingPathComponent("preview-session", isDirectory: true)
     let previews = folder.appendingPathComponent("preview-cache", isDirectory: true)
-    let store = NativeSessionStore(root: root, previewRoot: previews)
+    let store = NativeSessionStore(authorize: {}, root: root, previewRoot: previews)
     let session = try await store.importFile(provider)
     let map = try await store.bridgeMap(session)
     let path = try XCTUnwrap(map["previewPath"] as? String)
@@ -513,7 +583,7 @@ class RunnerTests: XCTestCase {
     try Data("private partial source".utf8).write(to: orphan.appendingPathComponent("source.jpg"))
     let partial = root.appendingPathComponent(session.id.uuidString).appendingPathComponent("output-\(UUID().uuidString).jpg")
     try Data().write(to: partial)
-    let recovered = try await NativeSessionStore(root: root).list()
+    let recovered = try await NativeSessionStore(authorize: {}, root: root).list()
     XCTAssertEqual(recovered.count, 1)
     XCTAssertFalse(FileManager.default.fileExists(atPath: orphan.path))
     XCTAssertFalse(FileManager.default.fileExists(atPath: partial.path))
@@ -533,7 +603,7 @@ class RunnerTests: XCTestCase {
       processing["integrity"] = integrity; entries[0]["processing"] = processing; map["sessions"] = entries
       try JSONSerialization.data(withJSONObject: map).write(to: manifest)
       do {
-        _ = try await NativeSessionStore(root: root).exportURL(sessionID: session.id, processingID: session.processing!.id, acknowledgeIncomplete: true)
+        _ = try await NativeSessionStore(authorize: {}, root: root).exportURL(sessionID: session.id, processingID: session.processing!.id, acknowledgeIncomplete: true)
         XCTFail("A misleading verified summary bypassed native checks")
       } catch NativeMediaError.processing { }
     }
@@ -544,7 +614,7 @@ class RunnerTests: XCTestCase {
     let session = try persistedSession(root: root, status: .verified)
     let inspection = session.inspection
     let limit: Int64 = 8192
-    let store = NativeSessionStore(root: root, mediaSizeLimit: limit, processOperation: { _, output, _ in
+    let store = NativeSessionStore(authorize: {}, root: root, mediaSizeLimit: limit, processOperation: { _, output, _ in
       XCTAssertTrue(FileManager.default.createFile(atPath: output.path, contents: nil))
       let file = try FileHandle(forWritingTo: output)
       try file.truncate(atOffset: UInt64(limit + 1)); try file.close()
@@ -560,7 +630,7 @@ class RunnerTests: XCTestCase {
     })
     do { _ = try await store.process(sessionID: session.id, patch: CameraPatch()); XCTFail("Oversized output was committed") }
     catch NativeMediaError.storage { }
-    let recovered = try await NativeSessionStore(root: root).list()
+    let recovered = try await NativeSessionStore(authorize: {}, root: root).list()
     XCTAssertNil(recovered[0].processing)
     let files = try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent(session.id.uuidString).path)
     XCTAssertEqual(Set(files), Set([session.sourceName, session.processing!.outputName]))
@@ -570,7 +640,7 @@ class RunnerTests: XCTestCase {
     let provider = folder.appendingPathComponent("recovery-source.jpg")
     try jpeg().write(to: provider)
     let root = folder.appendingPathComponent("real-recovery", isDirectory: true)
-    let store = NativeSessionStore(root: root)
+    let store = NativeSessionStore(authorize: {}, root: root)
     let source = try await store.importFile(provider)
     let changed = try await store.process(sessionID: source.id, patch: CameraPatch(make: "Changed maker", model: "Changed model"))
     let processed = try XCTUnwrap(changed.processing)
@@ -583,7 +653,7 @@ class RunnerTests: XCTestCase {
     integrity["status"] = "verified"; integrity["limitations"] = []
     processing["integrity"] = integrity; entries[0]["processing"] = processing; map["sessions"] = entries
     try JSONSerialization.data(withJSONObject: map).write(to: manifest)
-    let recoveredStore = NativeSessionStore(root: root)
+    let recoveredStore = NativeSessionStore(authorize: {}, root: root)
     do {
       _ = try await recoveredStore.exportURL(sessionID: source.id, processingID: processed.id, acknowledgeIncomplete: false)
       XCTFail("Recovered quality limitations were ignored")
@@ -610,7 +680,7 @@ class RunnerTests: XCTestCase {
       outputSHA256: originalSecond.outputSHA256)
     struct Journal: Encodable { let schemaVersion = 1; let sessions: [NativeSession] }
     try JSONEncoder().encode(Journal(sessions: [first, second])).write(to: root.appendingPathComponent("manifest.json"))
-    let recovered = NativeSessionStore(root: root)
+    let recovered = NativeSessionStore(authorize: {}, root: root)
     _ = try await recovered.exportURL(sessionID: first.id, processingID: sharedID, acknowledgeIncomplete: true)
     do {
       _ = try await recovered.exportURL(sessionID: second.id, processingID: sharedID, acknowledgeIncomplete: true)
@@ -622,7 +692,7 @@ class RunnerTests: XCTestCase {
     let provider = folder.appendingPathComponent("cache-lifecycle-source.jpg")
     try jpeg().write(to: provider)
     let root = folder.appendingPathComponent("cache-lifecycle", isDirectory: true)
-    let store = NativeSessionStore(root: root)
+    let store = NativeSessionStore(authorize: {}, root: root)
     let first = try await store.importFile(provider)
     var processingIDs = Set<UUID>()
     for index in 0..<3 {
@@ -640,7 +710,7 @@ class RunnerTests: XCTestCase {
     try await store.delete(first.id)
     let afterDeletion = await store.cachedQualificationCount
     XCTAssertEqual(afterDeletion, 1)
-    let recovered = NativeSessionStore(root: root)
+    let recovered = NativeSessionStore(authorize: {}, root: root)
     _ = try await recovered.list()
     let beforeRequalification = await recovered.cachedQualificationCount
     XCTAssertEqual(beforeRequalification, 0)
@@ -685,7 +755,7 @@ class RunnerTests: XCTestCase {
     try await syntheticMP4(provider)
     let providerHash = try WholeFileDigest.sha256(provider)
     let root = folder.appendingPathComponent("video-sessions", isDirectory: true)
-    let store = NativeSessionStore(root: root)
+    let store = NativeSessionStore(authorize: {}, root: root)
     let imported = try await store.importFile(provider)
     let source = root.appendingPathComponent(imported.id.uuidString).appendingPathComponent(imported.sourceName)
     let originalPermissions = try FileManager.default.attributesOfItem(atPath: source.path)[.posixPermissions] as? NSNumber
@@ -758,7 +828,7 @@ class RunnerTests: XCTestCase {
     let original = png()
     try original.write(to: provider)
     let root = folder.appendingPathComponent("screenshot-sessions", isDirectory: true)
-    let store = NativeSessionStore(root: root)
+    let store = NativeSessionStore(authorize: {}, root: root)
     let imported = try await store.importFile(provider)
     XCTAssertEqual(imported.inspection.kind, .png)
     XCTAssertNil(imported.inspection.metadata["model"])
@@ -784,7 +854,7 @@ class RunnerTests: XCTestCase {
     let exported = try await store.exportCopyURL(sessionID: imported.id, processingID: output.id, acknowledgeIncomplete: true)
     XCTAssertEqual(exported.lastPathComponent, expectedName)
     XCTAssertEqual(try WholeFileDigest.sha256(exported), output.outputSHA256)
-    let recovered = NativeSessionStore(root: root)
+    let recovered = NativeSessionStore(authorize: {}, root: root)
     let recoveredExport = try await recovered.exportCopyURL(sessionID: imported.id, processingID: output.id, acknowledgeIncomplete: true)
     XCTAssertEqual(try WholeFileDigest.sha256(recoveredExport), output.outputSHA256)
     XCTAssertEqual(try Data(contentsOf: provider), original)
@@ -828,10 +898,10 @@ class RunnerTests: XCTestCase {
 
   func testEditorStateAndPresetExportPersistWithoutChangingSource() async throws {
     let root = folder.appendingPathComponent("state", isDirectory: true)
-    let store = NativeSessionStore(root: root)
+    let store = NativeSessionStore(authorize: {}, root: root)
     let state: [String: Any] = ["schemaVersion": 1, "presets": [], "queue": [["id": UUID().uuidString, "status": "pending"]]]
     try await store.saveEditorState(state)
-    let restored = try await NativeSessionStore(root: root).loadEditorState()
+    let restored = try await NativeSessionStore(authorize: {}, root: root).loadEditorState()
     XCTAssertEqual(restored["schemaVersion"] as? Int, 1)
     XCTAssertEqual((restored["queue"] as? [[String: Any]])?.count, 1)
     let preset: [String: Any] = ["schemaVersion": 1, "id": UUID().uuidString, "name": "My preset", "patch": ["values": ["iso": 320], "removals": []]]
@@ -859,7 +929,7 @@ class RunnerTests: XCTestCase {
     try jpeg().write(to: provider)
     let sourceHash = try WholeFileDigest.sha256(provider)
     let root = folder.appendingPathComponent("full-pipeline", isDirectory: true)
-    let store = NativeSessionStore(root: root)
+    let store = NativeSessionStore(authorize: {}, root: root)
     let source = try await store.importFile(provider)
     let patch = MetadataPatch(values: ["make": .string("Apple"), "model": .string("iPhone 15 Pro Max"),
       "lensModel": .string("Main camera"), "iso": .number(400), "exposureTime": .number(1.0 / 120),
@@ -878,7 +948,7 @@ class RunnerTests: XCTestCase {
     XCTAssertEqual(verification["exactMatch"] as? Bool, true)
     let different = try await store.verifyOriginal(sessionID: source.id, processingID: output.id, providerURL: provider)
     XCTAssertEqual(different["exactMatch"] as? Bool, false)
-    let recovered = NativeSessionStore(root: root)
+    let recovered = NativeSessionStore(authorize: {}, root: root)
     let recoveredExport = try await recovered.exportCopyURL(sessionID: source.id, processingID: output.id, acknowledgeIncomplete: true)
     XCTAssertEqual(recoveredExport.lastPathComponent, name)
     XCTAssertEqual(try WholeFileDigest.sha256(provider), sourceHash)
@@ -902,7 +972,7 @@ class RunnerTests: XCTestCase {
     let provider = folder.appendingPathComponent("history-source.jpg")
     try jpeg().write(to: provider)
     let root = folder.appendingPathComponent("history-links", isDirectory: true)
-    let store = NativeSessionStore(root: root)
+    let store = NativeSessionStore(authorize: {}, root: root)
     let imported = try await store.importFile(provider)
     var firstExport: URL?
     for index in 0..<12 {
@@ -923,7 +993,7 @@ class RunnerTests: XCTestCase {
     try jpeg().write(to: provider)
     let root = folder.appendingPathComponent("auto-folder-sessions", isDirectory: true)
     let autoFolder = folder.appendingPathComponent("Processed Media", isDirectory: true)
-    let store = NativeSessionStore(root: root, autoExportRoot: autoFolder, processOperation: Self.verifiedCopy)
+    let store = NativeSessionStore(authorize: {}, root: root, autoExportRoot: autoFolder, processOperation: Self.verifiedCopy)
     let imported = try await store.importFile(provider)
     let patch = CameraPatch(make: "Auto maker", model: "Auto model")
     let changed = try await store.process(sessionID: imported.id, patch: patch)
@@ -985,7 +1055,7 @@ class RunnerTests: XCTestCase {
   func testBatchProcessingAcrossMultipleFilesAndFormats() async throws {
     let root = folder.appendingPathComponent("batch-multi-format-sessions", isDirectory: true)
     let autoFolder = folder.appendingPathComponent("batch-processed-media", isDirectory: true)
-    let store = NativeSessionStore(root: root, autoExportRoot: autoFolder)
+    let store = NativeSessionStore(authorize: {}, root: root, autoExportRoot: autoFolder)
     let f1 = folder.appendingPathComponent("batch-photo1.jpg")
     let f2 = folder.appendingPathComponent("batch-photo2.jpg")
     let f3 = folder.appendingPathComponent("batch-graphic.png")
@@ -1033,7 +1103,7 @@ class RunnerTests: XCTestCase {
     let provider = folder.appendingPathComponent("incomplete-source.jpg")
     try jpeg().write(to: provider)
     let autoFolder = folder.appendingPathComponent("incomplete-public", isDirectory: true)
-    let store = NativeSessionStore(root: folder.appendingPathComponent("incomplete-sessions"), autoExportRoot: autoFolder,
+    let store = NativeSessionStore(authorize: {}, root: folder.appendingPathComponent("incomplete-sessions"), autoExportRoot: autoFolder,
       processOperation: { source, output, patch in
         let result = try await Self.verifiedCopy(source, output, patch)
         return ProcessingResult(outputURL: output, sourceInspection: result.sourceInspection, outputInspection: result.outputInspection,
@@ -1060,7 +1130,7 @@ class RunnerTests: XCTestCase {
     try jpeg().write(to: provider)
     let root = folder.appendingPathComponent("warning-sessions")
     let autoFolder = folder.appendingPathComponent("warning-files")
-    let store = NativeSessionStore(root: root, autoExportRoot: autoFolder, metadataProcessOperation: { source, output, patch in
+    let store = NativeSessionStore(authorize: {}, root: root, autoExportRoot: autoFolder, metadataProcessOperation: { source, output, patch in
       let result = try await MetadataEngine.processMetadataPatch(source: source, output: output, patch: patch)
       let warning = IntegrityComparison(status: .warning,
         checks: result.integrity.checks.map { check in
@@ -1075,7 +1145,7 @@ class RunnerTests: XCTestCase {
     XCTAssertNil(output.autoExportFolder)
     XCTAssertFalse(FileManager.default.fileExists(atPath: autoFolder.path))
     _ = try await store.exportURL(sessionID: changed.id, processingID: output.id, acknowledgeIncomplete: false)
-    let recovered = NativeSessionStore(root: root, autoExportRoot: autoFolder)
+    let recovered = NativeSessionStore(authorize: {}, root: root, autoExportRoot: autoFolder)
     // Reinspection replaces the injected receipt with actual JPEG evidence.
     // Genuine limitations still require acknowledgment; the warning cannot
     // carry an implicit acknowledgment into a recovered project.
@@ -1107,7 +1177,7 @@ class RunnerTests: XCTestCase {
     try await syntheticMP4(provider, fileType: .mov)
     let original = try WholeFileDigest.sha256(provider)
     let root = folder.appendingPathComponent("movie-warning-sessions")
-    let store = NativeSessionStore(root: root, metadataProcessOperation: { source, output, expected in
+    let store = NativeSessionStore(authorize: {}, root: root, metadataProcessOperation: { source, output, expected in
       let actual = MetadataPatch(values: ["movieCreateDate": .string("2026-04-05T06:07:08Z"), "trackModifyDate": .string("2001-01-01T00:00:00Z")])
       _ = try await VideoMetadataWriter.write(source: source, output: output, patch: actual)
       let sourceInspection = try await MetadataEngine.inspect(source)
@@ -1123,7 +1193,7 @@ class RunnerTests: XCTestCase {
     XCTAssertNotEqual(output.integrity.status, .verified)
     XCTAssertEqual(output.integrity.checks.first { $0.name == "retained embedded metadata" }?.status, .warning)
     _ = try await store.exportURL(sessionID: changed.id, processingID: output.id, acknowledgeIncomplete: output.integrity.status == .incomplete)
-    let recovered = NativeSessionStore(root: root)
+    let recovered = NativeSessionStore(authorize: {}, root: root)
     _ = try await recovered.exportURL(sessionID: changed.id, processingID: output.id, acknowledgeIncomplete: output.integrity.status == .incomplete)
     let sessions = try await recovered.list()
     let recomputed = try XCTUnwrap(sessions.first?.processing?.integrity)
@@ -1136,7 +1206,7 @@ class RunnerTests: XCTestCase {
   func testMixedMetadataWarningAndFailedMediaReceiptCannotBecomeAnOutput() async throws {
     let provider = folder.appendingPathComponent("mixed-failure-source.jpg")
     try jpeg().write(to: provider)
-    let store = NativeSessionStore(root: folder.appendingPathComponent("mixed-failure-sessions"), metadataProcessOperation: { source, output, patch in
+    let store = NativeSessionStore(authorize: {}, root: folder.appendingPathComponent("mixed-failure-sessions"), metadataProcessOperation: { source, output, patch in
       let result = try await MetadataEngine.processMetadataPatch(source: source, output: output, patch: patch)
       let report = IntegrityComparison(status: .warning, checks: [
         IntegrityCheck(name: "retained embedded metadata", status: .warning, detail: "Other details changed"),
@@ -1179,7 +1249,7 @@ class RunnerTests: XCTestCase {
     try jpeg().write(to: provider)
     for (index, report) in reports.enumerated() {
       let autoFolder = folder.appendingPathComponent("inconsistent-public-\(index)")
-      let store = NativeSessionStore(root: folder.appendingPathComponent("inconsistent-session-\(index)"), autoExportRoot: autoFolder,
+      let store = NativeSessionStore(authorize: {}, root: folder.appendingPathComponent("inconsistent-session-\(index)"), autoExportRoot: autoFolder,
         processOperation: { source, output, patch in
           let result = try await Self.verifiedCopy(source, output, patch)
           return ProcessingResult(outputURL: output, sourceInspection: result.sourceInspection,
@@ -1204,7 +1274,7 @@ class RunnerTests: XCTestCase {
     try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: false)
     let linkedFolder = folder.appendingPathComponent("linked-auto", isDirectory: true)
     try FileManager.default.createSymbolicLink(at: linkedFolder, withDestinationURL: outside)
-    let store = NativeSessionStore(root: root, autoExportRoot: linkedFolder, processOperation: Self.verifiedCopy)
+    let store = NativeSessionStore(authorize: {}, root: root, autoExportRoot: linkedFolder, processOperation: Self.verifiedCopy)
     let imported = try await store.importFile(provider)
     let changed = try await store.process(sessionID: imported.id, patch: CameraPatch(make: "Synthetic", model: "Synthetic"))
     let output = try XCTUnwrap(changed.processing)
@@ -1222,7 +1292,7 @@ class RunnerTests: XCTestCase {
     let outsideJournal = folder.appendingPathComponent("outside-journal.json")
     let sentinel = Data("Untouched external journal".utf8)
     try sentinel.write(to: outsideJournal)
-    let store = NativeSessionStore(root: root, autoExportRoot: autoFolder,
+    let store = NativeSessionStore(authorize: {}, root: root, autoExportRoot: autoFolder,
       processOperation: { source, output, patch in
         let result = try await Self.verifiedCopy(source, output, patch)
         let manifest = root.appendingPathComponent("manifest.json")
@@ -1313,7 +1383,7 @@ class RunnerTests: XCTestCase {
   func testSessionFailureRetainsSafeFailingCheckNamesWithoutPublishingOutput() async throws {
     let provider = folder.appendingPathComponent("synthetic-failing-report.jpg")
     try jpeg().write(to: provider)
-    let store = NativeSessionStore(root: folder.appendingPathComponent("synthetic-report-sessions"),
+    let store = NativeSessionStore(authorize: {}, root: folder.appendingPathComponent("synthetic-report-sessions"),
       processOperation: { source, output, patch in
         let result = try await Self.verifiedCopy(source, output, patch)
         return ProcessingResult(outputURL: output, sourceInspection: result.sourceInspection,
@@ -1395,5 +1465,13 @@ class RunnerTests: XCTestCase {
     struct Journal: Encodable { let schemaVersion = 1; let sessions: [NativeSession] }
     try JSONEncoder().encode(Journal(sessions: [session])).write(to: root.appendingPathComponent("manifest.json"), options: .atomic)
     return session
+  }
+}
+private actor LicenseTestAuthorization {
+  private var remaining: Int
+  init(allowedChecks: Int) { remaining = allowedChecks }
+  func check() throws {
+    guard remaining > 0 else { throw NativeMediaError.unsupported("License expired") }
+    remaining -= 1
   }
 }
