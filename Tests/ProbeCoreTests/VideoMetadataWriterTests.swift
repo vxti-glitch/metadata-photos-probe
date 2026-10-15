@@ -29,7 +29,7 @@ final class VideoMetadataWriterTests: XCTestCase {
         try await assertAVFoundationCameraRepresentations(kind: .mov)
     }
 
-    func testAVFoundationReadsBothCameraRepresentationsInMP4() async throws {
+    func testAVFoundationReadsKeyedCameraRepresentationInMP4() async throws {
         try await assertAVFoundationCameraRepresentations(kind: .mp4)
     }
 
@@ -593,16 +593,23 @@ final class VideoMetadataWriterTests: XCTestCase {
             let readable = try await asset.load(.isReadable)
             XCTAssertTrue(readable)
             let formats = try await asset.load(.availableMetadataFormats)
-            XCTAssertTrue(formats.contains(.quickTimeUserData), "Classic camera tags must be exposed by AVFoundation in \(kind.rawValue)")
+            if kind == .mov {
+                XCTAssertTrue(formats.contains(.quickTimeUserData), "MOV must expose classic camera tags")
+            }
             XCTAssertTrue(formats.contains(.quickTimeMetadata), "Keyed camera metadata must remain exposed in \(kind.rawValue)")
             let userData = try await asset.loadMetadata(for: .quickTimeUserData)
             let keyedMetadata = try await asset.loadMetadata(for: .quickTimeMetadata)
-            let expected: [(AVMetadataIdentifier, [AVMetadataItem], String)] = [
-                (.quickTimeUserDataMake, userData, "Apple"),
-                (.quickTimeUserDataModel, userData, "iPhone 15 Pro Max"),
+            // AVFoundation exposes classic camera user data for MOV, but not
+            // necessarily MP4. Both containers must expose the primary mdta
+            // camera fields through Apple's parser; there is no binary fallback.
+            var expected: [(AVMetadataIdentifier, [AVMetadataItem], String)] = [
                 (.quickTimeMetadataMake, keyedMetadata, "Apple"),
                 (.quickTimeMetadataModel, keyedMetadata, "iPhone 15 Pro Max")
             ]
+            if kind == .mov {
+                expected += [(.quickTimeUserDataMake, userData, "Apple"),
+                             (.quickTimeUserDataModel, userData, "iPhone 15 Pro Max")]
+            }
             for (identifier, items, value) in expected {
                 let matches = AVMetadataItem.metadataItems(from: items, filteredByIdentifier: identifier)
                 XCTAssertEqual(matches.count, 1, "Expected one independently readable \(identifier.rawValue) in \(kind.rawValue)")

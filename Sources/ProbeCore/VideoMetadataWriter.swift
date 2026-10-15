@@ -494,11 +494,11 @@ private enum VideoBMFF {
                 try writeField(entry.type, text: patch.values["software"]?.text)
             } else if entry.type == 0xa96e616d /* ©nam */, patch.targetedKeys.contains("title") {
                 try writeField(entry.type, text: patch.values["title"]?.text)
-            } else if entry.type == 0xa9637079 /* ©cpr */, patch.targetedKeys.contains("copyright") {
+            } else if entry.type == 0xa9637079 /* ©cpy */, patch.targetedKeys.contains("copyright") {
                 try writeField(entry.type, text: patch.values["copyright"]?.text)
             } else if entry.type == 0xa9415254 /* ©ART */, patch.targetedKeys.contains("artist") {
                 try writeField(entry.type, text: patch.values["artist"]?.text)
-            } else if entry.type == 0xa9636d74 /* ©des */, patch.targetedKeys.contains("description") {
+            } else if entry.type == 0xa9636d74 /* ©cmt */, patch.targetedKeys.contains("description") {
                 try writeField(entry.type, text: patch.values["description"]?.text)
             } else if entry.type == 0xa978797a /* ©xyz */, !patch.targetedKeys.isDisjoint(with: VideoMetadataFields.gpsKeys) {
                 let loc = movieValues[VideoMetadataFields.locationKey] ?? nil

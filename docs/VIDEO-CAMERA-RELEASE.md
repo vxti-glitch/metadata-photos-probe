@@ -16,6 +16,8 @@ The writer must consistently write and read back requested make, model, lens and
 
 User-supplied MOV and MP4 files remain local. Do not copy them, their filenames, GPS or other private metadata into Git, CI, release packages or the public listing. Use synthetic fixture media for checked-in regressions.
 
+The first candidate CI run confirmed independent AVFoundation camera make/model readback in MOV, but rejected an assumption that MP4 exposes classic QuickTime user data. MOV therefore requires both channels in the regression; MP4 requires its primary keyed metadata channel. Neither test uses the writer's parser as a substitute for Apple's reader. This format distinction does not establish Photos presentation.
+
 ## Build and package
 
 The existing `ios-editor.yml` workflow runs the pinned Flutter/Swift checks, hosted native checks, simulator launch and arm64 device archive. Preserve that workflow. Local helpers under `build/audit/video-camera-release/` must bind downloaded artifacts, IPA metadata, source ZIP blobs, recorded checks and hashes to the exact frozen successful push run.
