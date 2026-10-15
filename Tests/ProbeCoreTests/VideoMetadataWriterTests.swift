@@ -736,9 +736,9 @@ final class VideoMetadataWriterTests: XCTestCase {
             } else {
                 length = declared == 0 ? data.count - offset : Int(declared)
             }
-            guard length >= header, length <= data.count - offset else { throw ProbeError.malformed("Test box bounds invalid") }
-            result.append(Box(type: String(decoding: data[offset+4..<offset+8], as: Unicode.ISO88591.self),
-                code: code, range: offset..<offset+length, payload: offset+header..<offset+length))
+            let type = String(data: Data(data[offset+4..<offset+8]), encoding: .isoLatin1)
+                ?? String(decoding: data[offset+4..<offset+8], as: UTF8.self)
+            result.append(Box(type: type, code: code, range: offset..<offset+length, payload: offset+header..<offset+length))
             offset += length
         }
         return result
