@@ -173,7 +173,8 @@ final class ZlarpLicenseService {
                   let token = json["token"] as? String else { throw LicenseFailure.invalidResponse }
             _ = try verify(token: token, device: device, nonce: nonce)
             record?.token = token; record?.nonce = nonce
-            record?.lastSeen = max(record?.lastSeen ?? 0, now().timeIntervalSince1970)
+            let lastSeen = max(record?.lastSeen ?? 0, now().timeIntervalSince1970)
+            record?.lastSeen = lastSeen
             try persist()
             reason = "active"; retryUntil = nil
         } catch let error as URLError {
