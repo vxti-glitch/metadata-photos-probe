@@ -112,14 +112,14 @@ public enum MediaIntegrity {
             keys.insert("quickTimeUserData/" + raw)
         }
         let legacyUserDataMap: [String: [String]] = [
-            "make": ["©mak", "udta/©mak", "quickTimeUserData/©mak", "commonIdentifier/make", "common/make"],
-            "model": ["©mod", "udta/©mod", "quickTimeUserData/©mod", "commonIdentifier/model", "common/model"],
-            "software": ["©swr", "udta/©swr", "quickTimeUserData/©swr", "commonIdentifier/software", "common/software"],
-            "title": ["©nam", "udta/©nam", "quickTimeUserData/©nam", "titl", "udta/titl", "quickTimeUserData/titl", "commonIdentifier/title", "common/title"],
-            "copyright": ["©cpr", "udta/©cpr", "quickTimeUserData/©cpr", "cprt", "udta/cprt", "quickTimeUserData/cprt", "commonIdentifier/copyrights", "common/copyright"],
-            "artist": ["©ART", "udta/©ART", "quickTimeUserData/©ART", "auth", "udta/auth", "quickTimeUserData/auth", "perf", "udta/perf", "quickTimeUserData/perf", "commonIdentifier/author", "common/artist"],
-            "description": ["©des", "udta/©des", "quickTimeUserData/©des", "dscp", "udta/dscp", "quickTimeUserData/dscp", "commonIdentifier/description", "common/description"],
-            "dateTimeOriginal": ["commonIdentifier/creationDate", "common/creationDate"]
+            "make": ["©mak", "%A9mak", "udta/©mak", "udta/%A9mak", "quickTimeUserData/©mak", "quickTimeUserData/%A9mak", "commonIdentifier/make", "common/make"],
+            "model": ["©mod", "%A9mod", "udta/©mod", "udta/%A9mod", "quickTimeUserData/©mod", "quickTimeUserData/%A9mod", "commonIdentifier/model", "common/model"],
+            "software": ["©swr", "%A9swr", "udta/©swr", "udta/%A9swr", "quickTimeUserData/©swr", "quickTimeUserData/%A9swr", "commonIdentifier/software", "common/software"],
+            "title": ["©nam", "%A9nam", "udta/©nam", "udta/%A9nam", "quickTimeUserData/©nam", "quickTimeUserData/%A9nam", "titl", "udta/titl", "quickTimeUserData/titl", "commonIdentifier/title", "common/title"],
+            "copyright": ["©cpr", "%A9cpr", "udta/©cpr", "udta/%A9cpr", "quickTimeUserData/©cpr", "quickTimeUserData/%A9cpr", "cprt", "udta/cprt", "quickTimeUserData/cprt", "commonIdentifier/copyrights", "common/copyright"],
+            "artist": ["©ART", "%A9ART", "udta/©ART", "udta/%A9ART", "quickTimeUserData/©ART", "quickTimeUserData/%A9ART", "auth", "udta/auth", "quickTimeUserData/auth", "perf", "udta/perf", "quickTimeUserData/perf", "commonIdentifier/author", "common/artist"],
+            "description": ["©des", "%A9des", "udta/©des", "udta/%A9des", "quickTimeUserData/©des", "quickTimeUserData/%A9des", "dscp", "udta/dscp", "quickTimeUserData/dscp", "commonIdentifier/description", "common/description"],
+            "dateTimeOriginal": ["commonIdentifier/creationDate", "common/creationDate", "©day", "%A9day", "udta/©day", "udta/%A9day"]
         ]
         for (target, aliases) in legacyUserDataMap where keys.contains(target) {
             keys.formUnion(aliases)
@@ -139,7 +139,11 @@ public enum MediaIntegrity {
             keys.insert("common/location")
             keys.insert("location")
             keys.insert("udta/©xyz")
+            keys.insert("udta/%A9xyz")
             keys.insert("©xyz")
+            keys.insert("%A9xyz")
+            keys.insert("quickTimeUserData/©xyz")
+            keys.insert("quickTimeUserData/%A9xyz")
             keys.insert("udta/loci")
             keys.insert("loci")
             keys.insert("3gp/loci")
@@ -199,6 +203,9 @@ public enum MediaIntegrity {
         for prefix in ["mdta/", "quickTimeMetadata/", "quickTimeUserData/", "udta/", "commonIdentifier/", "common/"] {
             if rawKey.hasPrefix(prefix) { rawKey = String(rawKey.dropFirst(prefix.count)); break }
         }
+        if rawKey.hasPrefix("%A9") {
+            rawKey = "©" + rawKey.dropFirst(3)
+        }
         if MetadataPatch.allKeys.contains(rawKey) { return rawKey }
         for (field, raw) in VideoMetadataFields.keys.merging(VideoMetadataFields.trackKeys, uniquingKeysWith: { a, _ in a }) {
             if rawKey == raw { return field }
@@ -218,6 +225,9 @@ public enum MediaIntegrity {
         var rawKey = key
         for prefix in ["mdta/", "quickTimeMetadata/", "quickTimeUserData/", "udta/", "commonIdentifier/", "common/", "3gp/"] {
             if rawKey.hasPrefix(prefix) { rawKey = String(rawKey.dropFirst(prefix.count)); break }
+        }
+        if rawKey.hasPrefix("%A9") {
+            rawKey = "©" + rawKey.dropFirst(3)
         }
         return [VideoMetadataFields.locationKey, "©xyz", "loci", "location"].contains(rawKey)
     }
@@ -459,9 +469,11 @@ public enum MediaIntegrity {
             "mdta/com.apple.quicktime.make", "mdta/com.apple.quicktime.model",
             "quickTimeMetadata/com.apple.quicktime.make", "quickTimeMetadata/com.apple.quicktime.model",
             "quickTimeUserData/©mak", "quickTimeUserData/©mod",
+            "quickTimeUserData/%A9mak", "quickTimeUserData/%A9mod",
             "commonIdentifier/make", "commonIdentifier/model",
             "common/make", "common/model",
-            "©mak", "©mod", "udta/©mak", "udta/©mod",
+            "©mak", "©mod", "%A9mak", "%A9mod",
+            "udta/©mak", "udta/©mod", "udta/%A9mak", "udta/%A9mod",
             AVMetadataIdentifier.quickTimeMetadataMake.rawValue,
             AVMetadataIdentifier.quickTimeMetadataModel.rawValue
         ]
