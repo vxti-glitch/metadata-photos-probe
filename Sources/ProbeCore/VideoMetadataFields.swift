@@ -50,7 +50,13 @@ enum VideoMetadataFields {
             _ = try MetadataPatch.date(value.text)
         }
         var result = [String: String?]()
-        for (key, atom) in (track ? trackKeys : keys) where patch.targetedKeys.contains(key) { result[atom] = .some(patch.values[key]?.text) }
+        for (key, atom) in (track ? trackKeys : keys) where patch.targetedKeys.contains(key) {
+            var text = patch.values[key]?.text
+            // Apple's camera files use the UTF-8 iris convention F1.78.
+            // Keep the public numeric patch API independent of this encoding.
+            if key == "fNumber", let value = text { text = "F" + value }
+            result[atom] = .some(text)
+        }
         if !track, !patch.targetedKeys.isDisjoint(with: gpsKeys) {
             if patch.removals.contains("latitude") || patch.removals.contains("longitude") { result[locationKey] = .some(nil) }
             else {
@@ -70,6 +76,12 @@ enum VideoMetadataFields {
             }
         }
         return result
+    }
+    static func canonicalValue(_ text: String?, for key: String) -> String? {
+        guard key == "fNumber", let text, text.hasPrefix("F") else { return text }
+        let number = String(text.dropFirst())
+        guard let value = Double(number), value.isFinite, value > 0 else { return text }
+        return number
     }
     static func decodeLocation(_ text: String) -> [String: String] {
         let regex = try? NSRegularExpression(pattern: "^([+-][0-9]{2}(?:\\.[0-9]+)?)([+-][0-9]{3}(?:\\.[0-9]+)?)([+-][0-9]+(?:\\.[0-9]+)?)?/$")

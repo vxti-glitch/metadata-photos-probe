@@ -27,6 +27,35 @@ final class RetainedMetadataDiagnosticsTests: XCTestCase {
             "retained metadata field dateTimeOriginal", "retained metadata location tuple"])
     }
 
+    func testSelectedCopyrightAndDescriptionExcludeEmittedAndOlderUserDataAliases() {
+        for (field, suffixes) in [("copyright", ["©cpr", "%A9cpr", "©cpy", "%A9cpy"]),
+                                  ("description", ["©des", "%A9des", "©cmt", "%A9cmt"])] {
+            let aliases = Set(["", "udta/", "quickTimeUserData/"].flatMap { prefix in suffixes.map { prefix + $0 } })
+            let exclusions = MediaIntegrity.retainedMetadataLegacyAliases(for: [field])
+            XCTAssertTrue(aliases.isSubset(of: exclusions), "Selected \(field) must exclude each equivalent user-data spelling")
+            let before = Dictionary(uniqueKeysWithValues: aliases.map { ($0, "original synthetic text") })
+            let after = Dictionary(uniqueKeysWithValues: aliases.map { ($0, "edited synthetic text") })
+            XCTAssertTrue(MediaIntegrity.retainedMetadataDifferenceChecks(before: before, after: after, excluding: exclusions).isEmpty)
+        }
+    }
+
+    func testUnselectedCopyrightAndDescriptionAliasesStillFailWithSafeLogicalNames() {
+        let exclusions = MediaIntegrity.retainedMetadataLegacyAliases(for: ["make", "model"])
+        for (field, suffixes) in [("copyright", ["©cpr", "%A9cpr", "©cpy", "%A9cpy"]),
+                                  ("description", ["©des", "%A9des", "©cmt", "%A9cmt"])] {
+            for prefix in ["", "udta/", "quickTimeUserData/"] {
+                for suffix in suffixes {
+                    let alias = prefix + suffix
+                    XCTAssertFalse(exclusions.contains(alias))
+                    let checks = MediaIntegrity.retainedMetadataDifferenceChecks(
+                        before: [alias: "original synthetic text"], after: [alias: "edited synthetic text"], excluding: exclusions)
+                    XCTAssertEqual(checks.map(\.name), ["retained metadata field " + field])
+                    XCTAssertTrue(checks.allSatisfy { $0.status == .failed })
+                }
+            }
+        }
+    }
+
     func testMaliciousKeysAndValuesNeverEnterDiagnosticNamesOrDetails() {
         let privateKey = "private://filename-and-GPS, retained metadata field iso"
         let privateValue = "private filename and precise coordinates"

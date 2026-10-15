@@ -111,19 +111,7 @@ public enum MediaIntegrity {
             keys.insert("quickTimeMetadata/" + raw)
             keys.insert("quickTimeUserData/" + raw)
         }
-        let legacyUserDataMap: [String: [String]] = [
-            "make": ["©mak", "%A9mak", "udta/©mak", "udta/%A9mak", "quickTimeUserData/©mak", "quickTimeUserData/%A9mak", "commonIdentifier/make", "common/make"],
-            "model": ["©mod", "%A9mod", "udta/©mod", "udta/%A9mod", "quickTimeUserData/©mod", "quickTimeUserData/%A9mod", "commonIdentifier/model", "common/model"],
-            "software": ["©swr", "%A9swr", "udta/©swr", "udta/%A9swr", "quickTimeUserData/©swr", "quickTimeUserData/%A9swr", "commonIdentifier/software", "common/software"],
-            "title": ["©nam", "%A9nam", "udta/©nam", "udta/%A9nam", "quickTimeUserData/©nam", "quickTimeUserData/%A9nam", "titl", "udta/titl", "quickTimeUserData/titl", "commonIdentifier/title", "common/title"],
-            "copyright": ["©cpr", "%A9cpr", "udta/©cpr", "udta/%A9cpr", "quickTimeUserData/©cpr", "quickTimeUserData/%A9cpr", "cprt", "udta/cprt", "quickTimeUserData/cprt", "commonIdentifier/copyrights", "common/copyright"],
-            "artist": ["©ART", "%A9ART", "udta/©ART", "udta/%A9ART", "quickTimeUserData/©ART", "quickTimeUserData/%A9ART", "auth", "udta/auth", "quickTimeUserData/auth", "perf", "udta/perf", "quickTimeUserData/perf", "commonIdentifier/author", "common/artist"],
-            "description": ["©des", "%A9des", "udta/©des", "udta/%A9des", "quickTimeUserData/©des", "quickTimeUserData/%A9des", "dscp", "udta/dscp", "quickTimeUserData/dscp", "commonIdentifier/description", "common/description"],
-            "dateTimeOriginal": ["commonIdentifier/creationDate", "common/creationDate", "©day", "%A9day", "udta/©day", "udta/%A9day"]
-        ]
-        for (target, aliases) in legacyUserDataMap where keys.contains(target) {
-            keys.formUnion(aliases)
-        }
+        keys.formUnion(retainedMetadataLegacyAliases(for: keys))
         if !keys.isDisjoint(with: VideoMetadataFields.gpsKeys) {
             // The serialized tuple changes, but unselected normalized components
             // (notably altitude for a map-only edit) must still compare exactly.
@@ -172,6 +160,24 @@ public enum MediaIntegrity {
             checks += try await videoTargetReadback(output, patch: patch)
         }
         return integrityPolicy.applying(to: IntegrityComparison(status: checks.contains(where: { $0.status == .failed }) ? .mismatch : (limitations.isEmpty && !checks.contains(where: { $0.status == .notChecked }) ? .verified : .incomplete), checks: checks, limitations: limitations))
+    }
+
+    /// Only selected logical fields may exempt their equivalent user-data tags.
+    /// Keep both older aliases and the actual atom names emitted by our writer.
+    static func retainedMetadataLegacyAliases(for targets: Set<String>) -> Set<String> {
+        let legacyUserDataMap: [String: [String]] = [
+            "make": ["©mak", "%A9mak", "udta/©mak", "udta/%A9mak", "quickTimeUserData/©mak", "quickTimeUserData/%A9mak", "commonIdentifier/make", "common/make"],
+            "model": ["©mod", "%A9mod", "udta/©mod", "udta/%A9mod", "quickTimeUserData/©mod", "quickTimeUserData/%A9mod", "commonIdentifier/model", "common/model"],
+            "software": ["©swr", "%A9swr", "udta/©swr", "udta/%A9swr", "quickTimeUserData/©swr", "quickTimeUserData/%A9swr", "commonIdentifier/software", "common/software"],
+            "title": ["©nam", "%A9nam", "udta/©nam", "udta/%A9nam", "quickTimeUserData/©nam", "quickTimeUserData/%A9nam", "titl", "udta/titl", "quickTimeUserData/titl", "commonIdentifier/title", "common/title"],
+            "copyright": ["©cpr", "%A9cpr", "udta/©cpr", "udta/%A9cpr", "quickTimeUserData/©cpr", "quickTimeUserData/%A9cpr", "©cpy", "%A9cpy", "udta/©cpy", "udta/%A9cpy", "quickTimeUserData/©cpy", "quickTimeUserData/%A9cpy", "cprt", "udta/cprt", "quickTimeUserData/cprt", "commonIdentifier/copyrights", "common/copyright"],
+            "artist": ["©ART", "%A9ART", "udta/©ART", "udta/%A9ART", "quickTimeUserData/©ART", "quickTimeUserData/%A9ART", "auth", "udta/auth", "quickTimeUserData/auth", "perf", "udta/perf", "quickTimeUserData/perf", "commonIdentifier/author", "common/artist"],
+            "description": ["©des", "%A9des", "udta/©des", "udta/%A9des", "quickTimeUserData/©des", "quickTimeUserData/%A9des", "©cmt", "%A9cmt", "udta/©cmt", "udta/%A9cmt", "quickTimeUserData/©cmt", "quickTimeUserData/%A9cmt", "dscp", "udta/dscp", "quickTimeUserData/dscp", "commonIdentifier/description", "common/description"],
+            "dateTimeOriginal": ["commonIdentifier/creationDate", "common/creationDate", "©day", "%A9day", "udta/©day", "udta/%A9day"]
+        ]
+        return legacyUserDataMap.reduce(into: Set<String>()) { aliases, entry in
+            if targets.contains(entry.key) { aliases.formUnion(entry.value) }
+        }
     }
 
     /// Closed diagnostic names only. Raw keys and values may contain personal

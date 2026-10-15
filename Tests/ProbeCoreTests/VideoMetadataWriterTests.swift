@@ -25,6 +25,37 @@ final class VideoMetadataWriterTests: XCTestCase {
         try await assertNativeMOV(includeMetadata: false)
     }
 
+    func testAVFoundationReadsBothCameraRepresentationsInMOV() async throws {
+        try await assertAVFoundationCameraRepresentations(kind: .mov)
+    }
+
+    func testAVFoundationReadsBothCameraRepresentationsInMP4() async throws {
+        try await assertAVFoundationCameraRepresentations(kind: .mp4)
+    }
+
+    func testSelectedMovieCopyrightAndDescriptionDoNotTriggerRetainedMetadataFailure() async throws {
+        for kind in [MediaKind.mov, .mp4] {
+            let source = directory.appendingPathComponent("text-source.\(kind.rawValue)")
+            let output = directory.appendingPathComponent("text-edited.\(kind.rawValue)")
+            try await makeNativeMOV(source, includeMetadata: false, kind: kind, includeAudio: true)
+            let patch = MetadataPatch(values: ["copyright": .string("Synthetic owner"),
+                                               "description": .string("Synthetic description")])
+            let result = try await MetadataEngine.processMetadataPatch(source: source, output: output, patch: patch)
+            XCTAssertFalse(result.integrity.checks.contains { $0.status == .failed }, "\(result.integrity.checks)")
+            try patch.validateReadback(try await MetadataEngine.inspect(output))
+        }
+    }
+
+    func testVideoApertureCanonicalizationPreservesRawAndMalformedValues() {
+        XCTAssertEqual(VideoMetadataFields.canonicalValue("F1.78", for: "fNumber"), "1.78")
+        XCTAssertEqual(VideoMetadataFields.canonicalValue("1.78", for: "fNumber"), "1.78")
+        for value in ["F", "FNaN", "Finf", "F-1.78", "Funknown"] {
+            XCTAssertEqual(VideoMetadataFields.canonicalValue(value, for: "fNumber"), value)
+        }
+        XCTAssertNil(VideoMetadataFields.canonicalValue(nil, for: "fNumber"))
+        XCTAssertEqual(VideoMetadataFields.canonicalValue("F1.78", for: "lensModel"), "F1.78")
+    }
+
     func testSynthetic4KWithAudioPreservesSamplesAndRecordsProcessingTime() async throws {
         let source = directory.appendingPathComponent("synthetic-4k.mp4"), output = directory.appendingPathComponent("synthetic-4k-edited.mp4")
         try await makeNativeMOV(source, includeMetadata: true, kind: .mp4, includeAudio: true,
@@ -69,6 +100,9 @@ final class VideoMetadataWriterTests: XCTestCase {
                 _ = try await VideoMetadataWriter.write(source: source, output: output, patch: patch)
                 let inspected = try await MetadataEngine.inspect(output)
                 try patch.validateReadback(inspected)
+                let raw = try VideoMetadataWriter.inspect(output)
+                XCTAssertEqual(raw[VideoMetadataFields.trackKeys["fNumber"]!], "F1.78")
+                XCTAssertEqual(raw["fNumber"], "1.78")
                 let comparison = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: patch)
                 XCTAssertFalse(comparison.checks.contains { $0.status == .failed }, "Synthetic \(kind) \(suffix): \(comparison.checks)")
                 XCTAssertTrue(comparison.checks.contains { $0.name.contains("compressed data") && $0.status == .passed })
@@ -540,6 +574,44 @@ final class VideoMetadataWriterTests: XCTestCase {
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: output.path), file: file, line: line)
         XCTAssertEqual(try Data(contentsOf: source), bytes, file: file, line: line)
+    }
+
+    private func assertAVFoundationCameraRepresentations(kind: MediaKind) async throws {
+        // Generate disposable, playable fixtures. Read the output through Apple's
+        // parser rather than the writer's own BMFF inspector. This establishes
+        // embedded-tag compatibility, not physical Photos indexing or lens UI.
+        for includeMetadata in [false, true] {
+            let suffix = includeMetadata ? "existing" : "untagged"
+            let source = directory.appendingPathComponent("camera-readback-\(suffix).\(kind.rawValue)")
+            let output = directory.appendingPathComponent("camera-readback-\(suffix)-edited.\(kind.rawValue)")
+            try await makeNativeMOV(source, includeMetadata: includeMetadata, kind: kind, includeAudio: true)
+            let originalDigest = try WholeFileDigest.sha256(source)
+            _ = try await VideoMetadataWriter.write(source: source, output: output,
+                patch: MetadataPatch(values: ["make": .string("Apple"), "model": .string("iPhone 15 Pro Max")]))
+
+            let asset = AVURLAsset(url: output)
+            let readable = try await asset.load(.isReadable)
+            XCTAssertTrue(readable)
+            let formats = try await asset.load(.availableMetadataFormats)
+            XCTAssertTrue(formats.contains(.quickTimeUserData), "Classic camera tags must be exposed by AVFoundation in \(kind.rawValue)")
+            XCTAssertTrue(formats.contains(.quickTimeMetadata), "Keyed camera metadata must remain exposed in \(kind.rawValue)")
+            let userData = try await asset.loadMetadata(for: .quickTimeUserData)
+            let keyedMetadata = try await asset.loadMetadata(for: .quickTimeMetadata)
+            let expected: [(AVMetadataIdentifier, [AVMetadataItem], String)] = [
+                (.quickTimeUserDataMake, userData, "Apple"),
+                (.quickTimeUserDataModel, userData, "iPhone 15 Pro Max"),
+                (.quickTimeMetadataMake, keyedMetadata, "Apple"),
+                (.quickTimeMetadataModel, keyedMetadata, "iPhone 15 Pro Max")
+            ]
+            for (identifier, items, value) in expected {
+                let matches = AVMetadataItem.metadataItems(from: items, filteredByIdentifier: identifier)
+                XCTAssertEqual(matches.count, 1, "Expected one independently readable \(identifier.rawValue) in \(kind.rawValue)")
+                let item = try XCTUnwrap(matches.first)
+                let actual = try await item.load(.stringValue)
+                XCTAssertEqual(actual, value, "Independent readback of \(identifier.rawValue) in \(kind.rawValue)")
+            }
+            XCTAssertEqual(try WholeFileDigest.sha256(source), originalDigest)
+        }
     }
 
     private func assertNativeMOV(includeMetadata: Bool) async throws {

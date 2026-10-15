@@ -724,7 +724,7 @@ private enum VideoBMFF {
         }
         for (key, values) in dateValues { result[key] = values.sorted().joined(separator: ";") }
         result["createDate"] = result["movieCreateDate"]; result["modifyDate"] = result["movieModifyDate"]
-        for (key, atom) in VideoMetadataFields.keys.merging(VideoMetadataFields.trackKeys, uniquingKeysWith: { a, _ in a }) { result[key] = result[atom] }
+        for (key, atom) in VideoMetadataFields.keys.merging(VideoMetadataFields.trackKeys, uniquingKeysWith: { a, _ in a }) { result[key] = VideoMetadataFields.canonicalValue(result[atom], for: key) }
         if let location = result[VideoMetadataFields.locationKey] { for (key, value) in VideoMetadataFields.decodeLocation(location) { result[key] = value } }
         return result
     }

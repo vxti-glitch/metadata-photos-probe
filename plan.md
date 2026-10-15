@@ -1,59 +1,21 @@
-# Video Camera Metadata & Apple Photos Alignment Plan
+# Video camera compatibility findings
 
-## 1. Defect Analysis & Root Causes
+## Observed defect
 
-Based on physical device inspection of the edited video (Image 1) versus a genuine iPhone capture (Image 2), three discrepancies were identified in Apple Photos' Inspector sheet:
+The owner's processed-video Photos screenshot shows "No camera information" and a raw lens description. A native reference shows the camera model and Main Camera. These are physical observations of earlier files, not proof of the replacement candidate's behavior.
 
-| UI Element | Current App Output (Image 1) | Genuine iPhone Capture (Image 2) | Root Cause |
-|---|---|---|---|
-| **Header Title** | `No camera information` | `Apple iPhone 15 Pro Max` | `VideoMetadataWriter` currently writes `make` and `model` exclusively to `moov/meta` (mdta) and strips legacy `moov/udta` atoms. Apple Photos and ImageIO (`CGImageSource`) query `moov/udta/©mak` and `moov/udta/©mod` to resolve the primary device title. |
-| **Camera Subtitle** | `iPhone 15 Pro Max back triple camera`<br>`6.765mm f1.78` | `Main Camera — 24 mm f1.78` | Because Apple Photos failed to detect the device model in `udta`, its internal profile mapping could not resolve the lens to `"Main Camera"` or pair it with the 35mm equivalent focal length (`24 mm`). It fell back to printing the raw `lensModel` string and physical focal length. |
-| **Location Card** | `Add a location...` | Interactive Map with Pin | Geolocation was either unselected or only written to `com.apple.quicktime.location.ISO6709` in `mdta`. Apple Photos on iOS reads `moov/udta/©xyz` for map indexing. |
+Local inspection of the reference finds movie-level QuickTime mdta make/model, with track-level lens model, a UTF-8 35 mm equivalent value of `24`, and UTF-8 aperture `F1.78`. It does not require classic copyright make/model atoms. The comparison download contains no camera metadata and cannot establish what the earlier processed export contained.
 
----
+## Candidate changes
 
-## 2. Technical Implementation Architecture
+- Preserve movie mdta make/model and add synchronized classic udta make/model for parser compatibility. Do not claim Photos exclusively reads either representation.
+- Preserve camera-only track bytes. Speculative track-level make/model mirroring was removed before this candidate.
+- Keep the researched lens description and focal value. Write the video aperture with the reference's F prefix; normalize only the canonical numeric readback alias. Apple documents both prefixed and unprefixed iris values, so this consistency change alone is not a proven root cause of the Photos heading.
+- Keep encoded samples, codec, dimensions, frame rate, HDR and audio unchanged. Metadata editing cannot turn H.264 into HEVC or SDR into Dolby Vision.
+- Preserve existing selected GPS write/removal behavior. No GPS or map-display guarantee follows from the screenshots.
 
-### Step 1: QuickTime User Data (`udta`) Dual-Channel Synchronization
-In `Sources/ProbeCore/VideoMetadataWriter.swift`:
-- Implement synthesis and updating of classic QuickTime `udta` atoms:
-  - `©mak` (`0xa9, 'm', 'a', 'k'`): 16-bit length + 16-bit language code + Camera Make string (`Apple`).
-  - `©mod` (`0xa9, 'm', 'o', 'd'`): 16-bit length + 16-bit language code + Camera Model string (`iPhone 15 Pro Max`).
-  - `©swr` (`0xa9, 's', 'w', 'r'`): 16-bit length + 16-bit language code + Software version string (e.g. `17.5.1`).
-  - `©xyz` (`0xa9, 'x', 'y', 'z'`): 16-bit length + 16-bit language code + ISO 6709 location string (e.g. `+37.7749-122.4194+010.000/`).
-- If `moov/udta` is missing from the source container, create and insert it.
-- Update `retainUserData` to replace or insert these atoms rather than stripping them.
+## Qualification
 
-### Step 2: Track-Level Camera Metadata Mirroring
-In `Sources/ProbeCore/VideoMetadataWriter.swift`:
-- Mirror `com.apple.quicktime.make` and `com.apple.quicktime.model` into video track metadata (`trak/meta`), ensuring both movie-level and track-level parsers detect the camera identity.
-- Position `moov/meta` immediately after `mvhd` (matching canonical Apple iOS Camera container ordering).
+Use synthetic MOV/MP4 regressions and AVFoundation's metadata reader, plus the existing sample/presentation preservation checks. Keep user media local and out of CI, Git and release packages. Advance build identity to 1.0.11+21 and bind the package to exact successful CI source.
 
-### Step 3: Lens & Focal Length Mapping
-In `Sources/ProbeCore/VideoMetadataFields.swift` and `editor/assets/camera_profiles.json`:
-- Confirm that `com.apple.quicktime.camera.focal_length.35mm_equivalent` (`24`) and `org.smpte.rdd18.lens.irisfnumber` (`1.78`) are written to `trak/meta`.
-- With `udta/©mak` and `udta/©mod` identifying the device as `iPhone 15 Pro Max`, Apple Photos automatically recognizes the 24mm f/1.78 lens and formats the subtitle as `Main Camera — 24 mm f1.78`.
-
-### Step 4: Geolocation Synchronization
-- When GPS coordinates are present in the patch:
-  - Format ISO 6709 string (`+DD.DDDD+DDD.DDDD+AAA.AAA/`).
-  - Write to `moov/meta` (`com.apple.quicktime.location.ISO6709`).
-  - Write to `moov/udta` (`©xyz`).
-- When location removal is requested, cleanly remove both atoms.
-
-### Step 5: Media Integrity & Zero-Reencoding Verification
-In `Sources/ProbeCore/MediaIntegrity.swift`:
-- Verify readback of `©mak`, `©mod`, `©swr`, and `©xyz` in `videoTargetReadback`.
-- Ensure zero-re-encoding checks confirm 100% bit-exact media samples (`mdat`), audio/video sample tables, and track structures.
-
----
-
-## 3. Execution & Validation Plan
-1. Update `VideoMetadataWriter.swift` with `udta` atom construction and dual-channel metadata writing.
-2. Update unit tests in `VideoMetadataWriterTests.swift` and `ProbeCoreTests.swift`.
-3. Run local automated test suites:
-   - Swift Core tests: `swift test`
-   - Flutter tests: `flutter test` (245 tests)
-   - Packaging tests: `scripts/editor-package-tests.py` (28 tests)
-   - Build script tests: `scripts/test-build-scripts.py` (11 tests)
-4. Package updated release candidate and verify on physical iPhone in Apple Photos.
+Apple Photos camera-heading and friendly-lens presentation still require testing the new exported copy on a physical iPhone. Do not substitute passing source, CI or simulator results for that evidence.
