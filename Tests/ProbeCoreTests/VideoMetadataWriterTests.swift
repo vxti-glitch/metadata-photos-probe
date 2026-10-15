@@ -370,6 +370,7 @@ final class VideoMetadataWriterTests: XCTestCase {
             "make": .string("Apple"),
             "model": .string("iPhone 15 Pro Max"),
             "software": .string("17.5.1"),
+            "lensModel": .string("iPhone 15 Pro Max back triple camera 6.765mm f/1.78"),
             "latitude": .number(37.7749),
             "longitude": .number(-122.4194),
             "altitude": .number(10.0)
@@ -385,10 +386,10 @@ final class VideoMetadataWriterTests: XCTestCase {
 
         let userData = try XCTUnwrap(movieBoxes.first { $0.type == "udta" })
         let userBoxes = try boxes(movieData.subdata(in: userData.payload))
-        XCTAssertTrue(userBoxes.contains { $0.type == "©mak" })
-        XCTAssertTrue(userBoxes.contains { $0.type == "©mod" })
-        XCTAssertTrue(userBoxes.contains { $0.type == "©swr" })
-        XCTAssertTrue(userBoxes.contains { $0.type == "©xyz" })
+        XCTAssertTrue(userBoxes.contains { $0.code == 0xa96d616b || $0.type == "©mak" })
+        XCTAssertTrue(userBoxes.contains { $0.code == 0xa96d6f64 || $0.type == "©mod" })
+        XCTAssertTrue(userBoxes.contains { $0.code == 0xa9737772 || $0.type == "©swr" })
+        XCTAssertTrue(userBoxes.contains { $0.code == 0xa978797a || $0.type == "©xyz" })
 
         let track = try XCTUnwrap(movieBoxes.first { $0.type == "trak" })
         let trackData = movieData.subdata(in: track.payload)
@@ -396,8 +397,7 @@ final class VideoMetadataWriterTests: XCTestCase {
         XCTAssertGreaterThan(trackMetadata.range.count, 0)
         let videoTrackValues = try VideoMetadataWriter.inspectVideoTrackMetadata(output)
         XCTAssertFalse(videoTrackValues.isEmpty)
-        XCTAssertEqual(videoTrackValues[0]["com.apple.quicktime.make"], "Apple")
-        XCTAssertEqual(videoTrackValues[0]["com.apple.quicktime.model"], "iPhone 15 Pro Max")
+        XCTAssertEqual(videoTrackValues[0]["com.apple.quicktime.camera.lens_model"], "iPhone 15 Pro Max back triple camera 6.765mm f/1.78")
 
         let inspected = try VideoMetadataWriter.inspect(output)
         XCTAssertEqual(inspected["make"], "Apple")
@@ -718,12 +718,13 @@ final class VideoMetadataWriterTests: XCTestCase {
         XCTAssertThrowsError(try boxes(word(1) + Data("free".utf8) + qword(15)))
     }
 
-    private struct Box { let type: String; let range: Range<Int>; let payload: Range<Int> }
+    private struct Box { let type: String; let code: UInt32; let range: Range<Int>; let payload: Range<Int> }
     private func boxes(_ data: Data) throws -> [Box] {
         var result = [Box](), offset = 0
         while offset < data.count {
             guard offset <= data.count - 8 else { throw ProbeError.malformed("Test box header truncated") }
             let declared = data[offset..<offset+4].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+            let code = data[offset+4..<offset+8].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
             var header = 8
             let length: Int
             if declared == 1 {
@@ -736,8 +737,8 @@ final class VideoMetadataWriterTests: XCTestCase {
                 length = declared == 0 ? data.count - offset : Int(declared)
             }
             guard length >= header, length <= data.count - offset else { throw ProbeError.malformed("Test box bounds invalid") }
-            result.append(Box(type: String(decoding: data[offset+4..<offset+8], as: UTF8.self),
-                range: offset..<offset+length, payload: offset+header..<offset+length))
+            result.append(Box(type: String(decoding: data[offset+4..<offset+8], as: Unicode.ISO88591.self),
+                code: code, range: offset..<offset+length, payload: offset+header..<offset+length))
             offset += length
         }
         return result

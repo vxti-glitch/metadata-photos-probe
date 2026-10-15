@@ -81,10 +81,6 @@ public enum VideoMetadataWriter {
         let movieAtom = try VideoBMFF.atoms(originalMovie).first!
         let children = try VideoBMFF.atoms(movieAtom.payload)
         let validation = try VideoBMFF.validateMovie(children, media: dataAtoms)
-        let cameraValues = movieValues.filter {
-            $0.key == VideoMetadataFields.keys["make"] || $0.key == VideoMetadataFields.keys["model"]
-        }
-        let trackScopedValues = trackValues.merging(cameraValues, uniquingKeysWith: { _, new in new })
         let existingUdta = children.first { $0.type == VideoBMFF.code("udta") }
         let topLevelMeta = children.first { $0.type == VideoBMFF.code("meta") }
         let hasUdtaMdtaMeta = (try? VideoBMFF.atoms(existingUdta?.payload ?? Data()))?.contains {
@@ -107,7 +103,7 @@ public enum VideoMetadataWriter {
                     rebuilt.append(editedUdta)
                 }
             } else if child.type == VideoBMFF.code("trak") {
-                rebuilt.append(try VideoBMFF.editTrack(child, patch: patch, values: trackScopedValues,
+                rebuilt.append(try VideoBMFF.editTrack(child, patch: patch, values: trackValues,
                     locationValues: movieValues.filter { $0.key == VideoMetadataFields.locationKey }))
             } else if child.type == VideoBMFF.code("mvhd") {
                 rebuilt.append(try VideoBMFF.editDates(child, patch: patch, create: "movieCreateDate", modify: "movieModifyDate"))
