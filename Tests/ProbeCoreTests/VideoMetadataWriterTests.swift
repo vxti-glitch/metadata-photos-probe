@@ -340,9 +340,17 @@ final class VideoMetadataWriterTests: XCTestCase {
             let track = try XCTUnwrap(boxes(movieData).first { $0.type == "trak" })
             let trackData = movieData.subdata(in: track.payload)
             let media = try XCTUnwrap(boxes(trackData).first { $0.type == "mdia" })
-            for scope in [movieData, trackData, trackData.subdata(in: media.payload)] {
+            for (scopeIndex, scope) in [movieData, trackData, trackData.subdata(in: media.payload)].enumerated() {
                 let userData = try XCTUnwrap(boxes(scope).first { $0.type == "udta" })
-                XCTAssertEqual(scope.subdata(in: userData.payload), retained)
+                let payload = scope.subdata(in: userData.payload)
+                if index == 0 || scopeIndex > 0 {
+                    XCTAssertEqual(payload, retained)
+                } else {
+                    XCTAssertTrue(payload.contains(retained))
+                    let userBoxes = try boxes(payload)
+                    XCTAssertTrue(userBoxes.contains { $0.type == "©xyz" })
+                    XCTAssertFalse(userBoxes.contains { $0.type == "loci" })
+                }
             }
             let mdat = try XCTUnwrap(boxes(original).first { $0.type == "mdat" })
             XCTAssertEqual(edited.subdata(in: mdat.range), original.subdata(in: mdat.range))
@@ -351,6 +359,52 @@ final class VideoMetadataWriterTests: XCTestCase {
             else { XCTAssertEqual(readback["latitude"], "-12.5"); XCTAssertEqual(readback["longitude"], "44.25"); XCTAssertEqual(readback["altitude"], "-10") }
         }
         XCTAssertEqual(try Data(contentsOf: source), original)
+    }
+
+    func testVideoMetadataWriterSynthesizesDualChannelUserDataAtoms() async throws {
+        let source = directory.appendingPathComponent("dual-channel-source.mov")
+        let output = directory.appendingPathComponent("dual-channel-output.mov")
+        try structuralMovie(userData: Data()).write(to: source)
+
+        let patch = MetadataPatch(values: [
+            "make": .string("Apple"),
+            "model": .string("iPhone 15 Pro Max"),
+            "software": .string("17.5.1"),
+            "latitude": .number(37.7749),
+            "longitude": .number(-122.4194),
+            "altitude": .number(10.0)
+        ])
+        _ = try await VideoMetadataWriter.write(source: source, output: output, patch: patch)
+        let edited = try Data(contentsOf: output)
+        let movie = try XCTUnwrap(boxes(edited).last { $0.type == "moov" })
+        let movieData = edited.subdata(in: movie.payload)
+        let movieBoxes = try boxes(movieData)
+
+        XCTAssertEqual(movieBoxes.first?.type, "mvhd")
+        XCTAssertEqual(movieBoxes.dropFirst().first?.type, "meta")
+
+        let userData = try XCTUnwrap(movieBoxes.first { $0.type == "udta" })
+        let userBoxes = try boxes(movieData.subdata(in: userData.payload))
+        XCTAssertTrue(userBoxes.contains { $0.type == "©mak" })
+        XCTAssertTrue(userBoxes.contains { $0.type == "©mod" })
+        XCTAssertTrue(userBoxes.contains { $0.type == "©swr" })
+        XCTAssertTrue(userBoxes.contains { $0.type == "©xyz" })
+
+        let track = try XCTUnwrap(movieBoxes.first { $0.type == "trak" })
+        let trackData = movieData.subdata(in: track.payload)
+        let trackMetadata = try XCTUnwrap(boxes(trackData).first { $0.type == "meta" })
+        XCTAssertGreaterThan(trackMetadata.range.count, 0)
+        let videoTrackValues = try VideoMetadataWriter.inspectVideoTrackMetadata(output)
+        XCTAssertFalse(videoTrackValues.isEmpty)
+        XCTAssertEqual(videoTrackValues[0]["com.apple.quicktime.make"], "Apple")
+        XCTAssertEqual(videoTrackValues[0]["com.apple.quicktime.model"], "iPhone 15 Pro Max")
+
+        let inspected = try VideoMetadataWriter.inspect(output)
+        XCTAssertEqual(inspected["make"], "Apple")
+        XCTAssertEqual(inspected["model"], "iPhone 15 Pro Max")
+        XCTAssertEqual(inspected["software"], "17.5.1")
+        XCTAssertEqual(inspected["latitude"], "37.7749")
+        XCTAssertEqual(inspected["longitude"], "-122.4194")
     }
 
     func testRemovingCoordinatesMustExplicitlyRemoveExistingAltitude() async throws {
