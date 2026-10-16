@@ -79,6 +79,15 @@ final class VideoMetadataWriterTests: XCTestCase {
                 XCTAssertEqual(actual, value)
             }
             XCTAssertEqual(try movieTrackBytes(original), try movieTrackBytes(edited))
+            // These files and every metadata value were generated in this test.
+            // Keep diagnostics here, never in the production inspector or on
+            // imported media, so CI can identify parser-exposure differences.
+            let beforeInspection = try await MetadataEngine.inspect(source)
+            let afterInspection = try await MetadataEngine.inspect(output)
+            for key in Set(beforeInspection.metadata.keys).union(afterInspection.metadata.keys).sorted()
+                where beforeInspection.metadata[key] != afterInspection.metadata[key] {
+                print("Synthetic camera layout \(kind.rawValue) changed \(key): \(String(describing: beforeInspection.metadata[key])) -> \(String(describing: afterInspection.metadata[key]))")
+            }
             let comparison = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: patch)
             XCTAssertFalse(comparison.checks.contains { $0.status == .failed }, "\(comparison.checks)")
             XCTAssertEqual(comparison.checks.filter { $0.name.contains("compressed data") && $0.status == .passed }.count, 2)
