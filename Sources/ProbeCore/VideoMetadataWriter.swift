@@ -82,10 +82,22 @@ public enum VideoMetadataWriter {
         let children = try VideoBMFF.atoms(movieAtom.payload)
         let validation = try VideoBMFF.validateMovie(children, media: dataAtoms)
         let existingUdta = children.first { $0.type == VideoBMFF.code("udta") }
-        let topLevelMeta = children.first { $0.type == VideoBMFF.code("meta") }
-        let hasUdtaMdtaMeta = (try? VideoBMFF.atoms(existingUdta?.payload ?? Data()))?.contains {
+        let directMetadata = children.filter {
             $0.type == VideoBMFF.code("meta") && (try? VideoBMFF.handler($0)) == VideoBMFF.code("mdta")
-        } ?? false
+        }
+        let topLevelMeta = directMetadata.first
+        let nestedMetadata = try children.filter { $0.type == VideoBMFF.code("udta") }.flatMap {
+            try VideoBMFF.atoms($0.payload)
+        }.filter {
+            $0.type == VideoBMFF.code("meta") && (try? VideoBMFF.handler($0)) == VideoBMFF.code("mdta")
+        }
+        let hasUdtaMdtaMeta = !nestedMetadata.isEmpty
+        // Camera identity edits normalize to the direct, unversioned QuickTime
+        // layout used by native camera movies. Retain the complete contents when moving
+        // it out of user data; rebuilding only camera fields would lose metadata.
+        let normalizeCamera = !patch.targetedKeys.isDisjoint(with: ["make", "model"])
+        let movieMetadata = directMetadata + nestedMetadata
+        guard movieMetadata.count <= 1 else { throw ProbeError.unsupported("Ambiguous multiple movie-level mdta containers") }
 
         var metadataCount = 0
         var rebuilt = Data()
@@ -93,12 +105,12 @@ public enum VideoMetadataWriter {
             if child.type == VideoBMFF.code("meta") {
                 if let h = try? VideoBMFF.handler(child), h == VideoBMFF.code("mdta") {
                     metadataCount += 1
-                    rebuilt.append(try VideoBMFF.editMetadata(child, values: movieValues))
+                    rebuilt.append(try VideoBMFF.editMetadata(child, values: movieValues, unversioned: normalizeCamera))
                 } else {
                     rebuilt.append(child.raw)
                 }
             } else if child.type == VideoBMFF.code("udta") {
-                let editedUdta = try VideoBMFF.editMovieUserData(child, patch: patch, movieValues: movieValues, metadataCount: &metadataCount)
+                let editedUdta = try VideoBMFF.editMovieUserData(child, patch: patch, movieValues: movieValues, metadataCount: &metadataCount, relocateMetadata: normalizeCamera)
                 if !editedUdta.isEmpty {
                     rebuilt.append(editedUdta)
                 }
@@ -107,6 +119,10 @@ public enum VideoMetadataWriter {
                     locationValues: movieValues.filter { $0.key == VideoMetadataFields.locationKey }))
             } else if child.type == VideoBMFF.code("mvhd") {
                 rebuilt.append(try VideoBMFF.editDates(child, patch: patch, create: "movieCreateDate", modify: "movieModifyDate"))
+                if normalizeCamera, hasUdtaMdtaMeta, let metadata = movieMetadata.first {
+                    metadataCount += 1
+                    rebuilt.append(try VideoBMFF.editMetadata(metadata, values: movieValues, unversioned: true))
+                }
                 if topLevelMeta == nil && !hasUdtaMdtaMeta && !movieValues.isEmpty {
                     metadataCount += 1
                     rebuilt.append(try VideoBMFF.newMetadata(movieValues, fullBox: false))
@@ -466,7 +482,7 @@ private enum VideoBMFF {
         guard length >= 0, payload.count >= 4 + length else { return nil }
         return String(data: payload.subdata(in: 4..<4+length), encoding: .utf8)
     }
-    static func editMovieUserData(_ existing: Atom?, patch: MetadataPatch, movieValues: [String: String?], metadataCount: inout Int) throws -> Data {
+    static func editMovieUserData(_ existing: Atom?, patch: MetadataPatch, movieValues: [String: String?], metadataCount: inout Int, relocateMetadata: Bool = false) throws -> Data {
         var existingEntries = [Atom]()
         if let existing {
             existingEntries = try atoms(existing.payload)
@@ -484,6 +500,7 @@ private enum VideoBMFF {
 
         for entry in existingEntries {
             if entry.type == code("meta"), (try? handler(entry)) == code("mdta") {
+                if relocateMetadata { continue }
                 metadataCount += 1
                 body.append(try editMetadata(entry, values: movieValues))
             } else if entry.type == 0xa96d616b /* ©mak */, patch.targetedKeys.contains("make") {
@@ -739,7 +756,7 @@ private enum VideoBMFF {
         let meta = try atom("meta", (fullBox ? number(0) : Data()) + hdlr + keys + items)
         return try editMetadata(atoms(meta)[0], values: values)
     }
-    static func editMetadata(_ meta: Atom, values: [String: String?]) throws -> Data {
+    static func editMetadata(_ meta: Atom, values: [String: String?], unversioned: Bool = false) throws -> Data {
         let parts = try metadataChildren(meta)
         guard try handler(meta) == code("mdta") else { throw ProbeError.unsupported("Metadata handler is not mdta") }
         let keys = try unique(parts.children, "keys").payload
@@ -782,7 +799,7 @@ private enum VideoBMFF {
         }
         var keyBody = number(0) + number(UInt32(definitions.count))
         for definition in definitions { keyBody.append(number(UInt32(definition.value.count + 8)) + number(definition.namespace) + definition.value) }
-        var body = parts.prefix
+        var body = unversioned ? Data() : parts.prefix
         for child in parts.children {
             if child.type == code("keys") { body.append(try atom("keys", keyBody)) }
             else if child.type == code("ilst") { body.append(try atom("ilst", items.reduce(into: Data()) { $0.append($1.raw) })) }

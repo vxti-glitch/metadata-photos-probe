@@ -33,6 +33,116 @@ final class VideoMetadataWriterTests: XCTestCase {
         try await assertAVFoundationCameraRepresentations(kind: .mp4)
     }
 
+    func testNestedVersionedCameraMetadataMovesToNativeMovieScopeWithoutLosingContent() async throws {
+        for kind in [MediaKind.mov, .mp4] {
+            let source = directory.appendingPathComponent("nested-camera.\(kind.rawValue)")
+            try await makeNativeMOV(source, includeMetadata: false, kind: kind, includeAudio: true)
+            let metadata = try layoutFixtureMetadata()
+            let sibling = box("free", Data("retained user data".utf8))
+            let otherMeta = box("meta", box("hdlr", word(0) + word(0) + Data("mdir".utf8) + Data(repeating: 0, count: 13)))
+            try rewriteFixtureMovie(source, metadata: metadata, nested: true, sibling: sibling + otherMeta)
+            let sourceHash = try WholeFileDigest.sha256(source)
+            let original = try Data(contentsOf: source)
+            let output = directory.appendingPathComponent("normalized-camera.\(kind.rawValue)")
+            let patch = MetadataPatch(values: ["make": .string("Apple"), "model": .string("iPhone 15 Pro Max")])
+            _ = try await VideoMetadataWriter.write(source: source, output: output, patch: patch)
+            let edited = try Data(contentsOf: output)
+            let direct = try onlyDirectCameraMetadata(edited)
+            XCTAssertEqual(Data(direct.prefix(4)), word(33), "Direct metadata begins with the hdlr atom, not full-box flags")
+            let originalChildren = try boxes(Data(metadata.dropFirst(12)))
+            let newChildren = try boxes(direct)
+            for type in ["mhdr", "ctry", "lang", "free"] {
+                let before = try XCTUnwrap(originalChildren.first { $0.type == type })
+                let after = try XCTUnwrap(newChildren.first { $0.type == type })
+                XCTAssertEqual(Data(metadata.dropFirst(12)).subdata(in: before.range), direct.subdata(in: after.range))
+            }
+            // Item 3 is deliberately non-UTF8 with a nonzero locale and a name
+            // child. Its entire raw bytes, not just a decoded string, must survive.
+            let beforeItems = Data(metadata.dropFirst(12)).subdata(in: try XCTUnwrap(originalChildren.first { $0.type == "ilst" }).payload)
+            let afterItems = direct.subdata(in: try XCTUnwrap(newChildren.first { $0.type == "ilst" }).payload)
+            let retainedBefore = try XCTUnwrap(boxes(beforeItems).first { $0.code == 3 })
+            let retainedAfter = try XCTUnwrap(boxes(afterItems).first { $0.code == 3 })
+            XCTAssertEqual(beforeItems.subdata(in: retainedBefore.range), afterItems.subdata(in: retainedAfter.range))
+            let userData = try movieUserData(edited)
+            XCTAssertTrue(userData.range(of: sibling) != nil)
+            XCTAssertTrue(userData.range(of: otherMeta) != nil)
+            XCTAssertEqual(try boxes(userData).filter { $0.type == "meta" }.count, 1, "Only the unrelated namespace remains nested")
+            let asset = AVURLAsset(url: output)
+            let readable = try await asset.load(.isReadable)
+            XCTAssertTrue(readable)
+            let items = try await asset.loadMetadata(for: .quickTimeMetadata)
+            for (identifier, value) in [(AVMetadataIdentifier.quickTimeMetadataMake, "Apple"), (.quickTimeMetadataModel, "iPhone 15 Pro Max")] {
+                let matches = AVMetadataItem.metadataItems(from: items, filteredByIdentifier: identifier)
+                XCTAssertEqual(matches.count, 1)
+                let item = try XCTUnwrap(matches.first)
+                let actual = try await item.load(.stringValue)
+                XCTAssertEqual(actual, value)
+            }
+            XCTAssertEqual(try movieTrackBytes(original), try movieTrackBytes(edited))
+            let comparison = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: patch)
+            XCTAssertFalse(comparison.checks.contains { $0.status == .failed }, "\(comparison.checks)")
+            XCTAssertEqual(comparison.checks.filter { $0.name.contains("compressed data") && $0.status == .passed }.count, 2)
+            let repeated = directory.appendingPathComponent("normalized-again.\(kind.rawValue)")
+            _ = try await VideoMetadataWriter.write(source: output, output: repeated, patch: patch)
+            XCTAssertEqual(try onlyDirectCameraMetadata(Data(contentsOf: repeated)), direct)
+            XCTAssertEqual(try WholeFileDigest.sha256(source), sourceHash)
+        }
+    }
+
+    func testDirectVersionedCameraMetadataNormalizesForEditsAndRemovals() async throws {
+        for (remove, nested) in [(false, false), (true, false), (true, true)] {
+            let source = directory.appendingPathComponent("direct-versioned-\(remove)-\(nested).mov")
+            try structuralMovie(userData: Data()).write(to: source)
+            try rewriteFixtureMovie(source, metadata: layoutFixtureMetadata(), nested: nested)
+            let output = directory.appendingPathComponent("direct-normalized-\(remove)-\(nested).mov")
+            let patch = remove ? MetadataPatch(removals: ["make", "model"]) : MetadataPatch(values: ["model": .string("Selected Camera")])
+            _ = try await VideoMetadataWriter.write(source: source, output: output, patch: patch)
+            _ = try onlyDirectCameraMetadata(Data(contentsOf: output))
+            let values = try VideoMetadataWriter.inspect(output)
+            XCTAssertEqual(values["make"], remove ? nil : "Old Maker")
+            XCTAssertEqual(values["model"], remove ? nil : "Selected Camera")
+        }
+    }
+
+    func testUnrelatedEditsKeepNestedVersionedMetadataLayout() async throws {
+        for patch in [MetadataPatch(values: ["movieCreateDate": .string("2026-04-05T06:07:08Z")]), MetadataPatch(removals: ["latitude", "longitude", "altitude"])] {
+            let source = directory.appendingPathComponent(UUID().uuidString + ".mov")
+            try structuralMovie(userData: Data()).write(to: source)
+            try rewriteFixtureMovie(source, metadata: layoutFixtureMetadata(), nested: true)
+            let output = directory.appendingPathComponent(UUID().uuidString + ".mov")
+            _ = try await VideoMetadataWriter.write(source: source, output: output, patch: patch)
+            let userData = try movieUserData(Data(contentsOf: output))
+            let meta = try XCTUnwrap(boxes(userData).first { $0.type == "meta" })
+            XCTAssertEqual(userData.subdata(in: meta.payload).prefix(4), word(0))
+        }
+    }
+
+    func testMultipleMovieCameraContainersRemainAmbiguous() async throws {
+        for duplicateDirect in [false, true] {
+            let source = directory.appendingPathComponent("ambiguous-\(duplicateDirect).mov")
+            try structuralMovie(userData: Data()).write(to: source)
+            let metadata = try layoutFixtureMetadata()
+            try rewriteFixtureMovie(source, metadata: metadata, nested: true,
+                sibling: duplicateDirect ? Data() : metadata, extraDirect: duplicateDirect ? metadata : Data())
+            try await assertRefused(Data(contentsOf: source))
+        }
+    }
+
+    func testCameraMigrationPreservesDirectNonMdtaContainer() async throws {
+        let source = directory.appendingPathComponent("separate-namespace.mov")
+        try structuralMovie(userData: Data()).write(to: source)
+        let other = box("meta", box("hdlr", word(0) + word(0) + Data("mdir".utf8) + Data(repeating: 0, count: 13)))
+        try rewriteFixtureMovie(source, metadata: layoutFixtureMetadata(), nested: true, extraDirect: other)
+        let output = directory.appendingPathComponent("separate-namespace-edited.mov")
+        _ = try await VideoMetadataWriter.write(source: source, output: output,
+            patch: MetadataPatch(values: ["model": .string("Selected Camera")]))
+        let bytes = try Data(contentsOf: output)
+        _ = try onlyDirectCameraMetadata(bytes)
+        let movie = try XCTUnwrap(boxes(bytes).last { $0.type == "moov" })
+        let body = bytes.subdata(in: movie.payload)
+        XCTAssertTrue(try boxes(body).contains { body.subdata(in: $0.range) == other })
+    }
+
     func testSelectedMovieCopyrightAndDescriptionDoNotTriggerRetainedMetadataFailure() async throws {
         for kind in [MediaKind.mov, .mp4] {
             let source = directory.appendingPathComponent("text-source.\(kind.rawValue)")
@@ -798,6 +908,61 @@ final class VideoMetadataWriterTests: XCTestCase {
     }
 
     private struct Box { let type: String; let code: UInt32; let range: Range<Int>; let payload: Range<Int> }
+
+    private func layoutFixtureMetadata() throws -> Data {
+        let definitions = ["com.apple.quicktime.make", "com.apple.quicktime.model", "com.example.retained.counter"]
+        var keys = word(0) + word(UInt32(definitions.count))
+        for key in definitions { keys += word(UInt32(key.utf8.count + 8)) + Data("mdta".utf8) + Data(key.utf8) }
+        func item(_ index: UInt32, _ payload: Data) -> Data { word(UInt32(payload.count + 8)) + word(index) + payload }
+        let retained = box("name", Data("Retained label".utf8)) + box("data", word(21) + word(0x01020304) + word(42))
+        let items = item(1, box("data", word(1) + word(0) + Data("Old Maker".utf8)))
+            + item(2, box("data", word(1) + word(0) + Data("Old Model".utf8))) + item(3, retained)
+        let hdlr = box("hdlr", word(0) + word(0) + Data("mdta".utf8) + Data(repeating: 0, count: 13))
+        return box("meta", word(0) + hdlr + box("keys", keys) + box("ilst", items)
+            + box("mhdr", word(0)) + box("ctry", word(1)) + box("lang", word(2)) + box("free", Data([1, 3, 5, 7])))
+    }
+
+    /// Change only a disposable generated fixture's movie header. Keeping the
+    /// original header as free space leaves every absolute chunk offset valid.
+    private func rewriteFixtureMovie(_ url: URL, metadata: Data, nested: Bool, sibling: Data = Data(), extraDirect: Data = Data()) throws {
+        var bytes = try Data(contentsOf: url)
+        let movie = try XCTUnwrap(boxes(bytes).last { $0.type == "moov" })
+        let body = bytes.subdata(in: movie.payload)
+        var replacement = Data()
+        for child in try boxes(body) where child.type != "meta" && child.type != "udta" {
+            replacement.append(body.subdata(in: child.range))
+        }
+        replacement.append(nested ? box("udta", metadata + sibling) : metadata + (sibling.isEmpty ? Data() : box("udta", sibling)))
+        replacement.append(extraDirect)
+        bytes.replaceSubrange(movie.range.lowerBound + 4..<movie.range.lowerBound + 8, with: Data("free".utf8))
+        bytes.replaceSubrange(movie.payload, with: Data(repeating: 0, count: movie.payload.count))
+        bytes.append(box("moov", replacement))
+        try bytes.write(to: url)
+    }
+
+    private func onlyDirectCameraMetadata(_ bytes: Data) throws -> Data {
+        let movie = try XCTUnwrap(boxes(bytes).last { $0.type == "moov" })
+        let body = bytes.subdata(in: movie.payload)
+        let metadata = try boxes(body).filter { child in
+            guard child.type == "meta" else { return false }
+            let payload = body.subdata(in: child.payload)
+            let contents = payload.prefix(4) == word(0) ? Data(payload.dropFirst(4)) : payload
+            guard let handler = try boxes(contents).first(where: { $0.type == "hdlr" }) else { return false }
+            let data = contents.subdata(in: handler.payload)
+            return data.count >= 12 && data.subdata(in: 8..<12) == Data("mdta".utf8)
+        }
+        XCTAssertEqual(metadata.count, 1)
+        let item = try XCTUnwrap(metadata.first)
+        let payload = body.subdata(in: item.payload)
+        XCTAssertEqual(try boxes(payload).first?.type, "hdlr", "Camera metadata is direct and unversioned")
+        return payload
+    }
+
+    private func movieTrackBytes(_ bytes: Data) throws -> [Data] {
+        let movie = try XCTUnwrap(boxes(bytes).last { $0.type == "moov" })
+        let body = bytes.subdata(in: movie.payload)
+        return try boxes(body).filter { $0.type == "trak" }.map { body.subdata(in: $0.range) }
+    }
     private func boxes(_ data: Data) throws -> [Box] {
         var result = [Box](), offset = 0
         while offset < data.count {
