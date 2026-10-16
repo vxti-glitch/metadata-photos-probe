@@ -36,8 +36,8 @@ public struct MediaInspection: Codable, Sendable {
     }
 }
 
-public enum IntegrityStatus: String, Codable, Sendable { case verified, mismatch, incomplete }
-public enum CheckStatus: String, Codable, Sendable { case passed, failed, notChecked }
+public enum IntegrityStatus: String, Codable, Sendable { case verified, mismatch, incomplete, warning }
+public enum CheckStatus: String, Codable, Sendable { case passed, failed, notChecked, warning }
 public struct IntegrityCheck: Codable, Sendable {
     public let name: String
     public let status: CheckStatus
@@ -57,19 +57,24 @@ public struct ProcessingResult: Codable, Sendable {
     public let sourceInspection: MediaInspection
     public let outputInspection: MediaInspection
     public let integrity: IntegrityComparison
+    public init(outputURL: URL, sourceInspection: MediaInspection, outputInspection: MediaInspection, integrity: IntegrityComparison) {
+        self.outputURL = outputURL; self.sourceInspection = sourceInspection
+        self.outputInspection = outputInspection; self.integrity = integrity
+    }
 }
 
 public enum ProbeError: LocalizedError {
-    case unsupported(String), malformed(String), invalidPatch, outputExists, sameFile, writeFailed(String), readbackFailed(String)
+    case unsupported(String), malformed(String), invalidPatch, outputExists, sameFile, writeFailed(String), readbackFailed(String), integrityMismatch(String)
     public var errorDescription: String? {
         switch self {
         case .unsupported(let detail): return "Unsupported media: \(detail)"
         case .malformed(let detail): return "Invalid media: \(detail)"
-        case .invalidPatch: return "Camera fields must contain 1–256 UTF-8 bytes and no control characters."
+        case .invalidPatch: return "One or more metadata fields has an invalid value, unknown key, or conflicting edit and removal."
         case .outputExists: return "The output already exists. Choose a new output path."
         case .sameFile: return "Source and output must be different files."
         case .writeFailed(let detail): return "Metadata write failed: \(detail)"
         case .readbackFailed(let detail): return "Independent metadata readback failed: \(detail)"
+        case .integrityMismatch(let detail): return "Media integrity verification failed: \(detail)"
         }
     }
 }

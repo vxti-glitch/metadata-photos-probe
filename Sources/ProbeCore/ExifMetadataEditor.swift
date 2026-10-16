@@ -104,6 +104,13 @@ enum ExifMetadataEditor {
         }
         var t = try TIFF(original)
         let directories = try t.allDirectories(), originalRoot = try t.directory(t.root)
+        guard !directories.values.contains(where: { directory in
+            directory.entries.contains(where: { $0.tag == 0x014a || $0.type == 13 })
+        }) else {
+            // A retained SubIFD can alias a targeted payload. Erasing the old
+            // value is unsafe until every referenced directory is inventoried.
+            throw ProbeError.unsupported("EXIF SubIFD pointers require a qualified directory walker before editing")
+        }
         var groups: [UInt16: [UInt16: Data]] = [:], nextValues = [UInt16: UInt32](), offsets = [UInt16: Int](), erased = Set<Int>()
         for group in [UInt16(0), 0x8769, 0x8825] {
             let offset = try t.directoryFor(group); offsets[group] = offset

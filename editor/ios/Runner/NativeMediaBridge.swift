@@ -31,6 +31,9 @@ final class NativeOperationGate {
 
 @MainActor
 final class NativeMediaBridge: NSObject {
+    // A fixed destination keeps arbitrary mail recipients, attachments and body
+    // content out of the bridge. Spaces are percent encoded for mailto handlers.
+    static let supportEmailURL = URL(string: "mailto:vxti.dev@gmail.com?subject=Metadata%20Editor%20Support")!
     private let channel: FlutterMethodChannel
     private let store: NativeSessionStore
     private let gate = NativeOperationGate()
@@ -43,8 +46,10 @@ final class NativeMediaBridge: NSObject {
         channel = FlutterMethodChannel(name: "com.vxtiglitch.metadataeditor/media_v1", binaryMessenger: messenger)
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         store = NativeSessionStore(root: support.appendingPathComponent("NativeMediaSessions", isDirectory: true),
-            previewRoot: cache.appendingPathComponent("NativeMediaPreviews", isDirectory: true))
+            previewRoot: cache.appendingPathComponent("NativeMediaPreviews", isDirectory: true),
+            autoExportRoot: documents.appendingPathComponent("Processed Media", isDirectory: true))
         super.init()
         channel.setMethodCallHandler { [weak self] call, result in
             guard let self else { result(FlutterError(code: "storage", message: "Native media service is unavailable.", details: nil)); return }
@@ -54,6 +59,13 @@ final class NativeMediaBridge: NSObject {
 
     private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         do {
+            // Native enforcement is independent of the Flutter activation screen.
+            // Keep cancellation/support and read-only capability discovery usable.
+            if !["capabilities", "cancel", "openSupportEmail", "getHostDevice"].contains(call.method),
+               !ZlarpLicenseService.shared.allowsAccess {
+                result(FlutterError(code: "license_required", message: "Activate your Zlarp license to continue.", details: nil))
+                return
+            }
             switch call.method {
             case "capabilities":
                 let fields = Dictionary(uniqueKeysWithValues: MediaKind.allCases.map { ($0.rawValue, MetadataPatch.supportedKeys(for: $0).sorted()) })
@@ -97,6 +109,10 @@ final class NativeMediaBridge: NSObject {
                     let session = try await self.store.processMetadata(sessionID: id, patch: patch)
                     return try await self.store.bridgeMap(session)
                 }
+            case "reserveOutputNames":
+                let arguments = try Self.arguments(call.arguments)
+                let ids = try Self.reservationIdentifiers(arguments)
+                try perform(result: result) { try await self.store.reserveOutputNames(sessionIDs: ids) }
             case "verifyOriginal":
                 let arguments = try Self.arguments(call.arguments)
                 let id = try Self.identifier(arguments, "sessionId")
@@ -203,12 +219,21 @@ final class NativeMediaBridge: NSObject {
                 UIApplication.shared.open(url, options: [:]) { opened in
                     result(opened ? nil : FlutterError(code: "unsupported", message: "Could not open URL.", details: nil))
                 }
+            case "openSupportEmail":
+                guard !gate.busy else { throw NativeMediaError.busy }
+                UIApplication.shared.open(Self.supportEmailURL, options: [:]) { opened in
+                    result(opened ? nil : FlutterError(code: "email_unavailable",
+                        message: "No email app could open. Install or configure an email app, then try again, or email vxti.dev@gmail.com with the subject Metadata Editor Support.", details: nil))
+                }
             case "openLocationPicker":
                 guard !gate.busy else { throw NativeMediaError.busy }
-                let args = (call.arguments as? [String: Any]) ?? [:]
+                let args = try Self.arguments(call.arguments)
+                guard Set(args.keys) == Set(["latitude", "longitude", "appearance"]) else { throw NativeMediaError.invalidArgument }
+                let appearance = try Self.locationAppearance(args["appearance"])
                 let initialLat = (args["latitude"] as? NSNumber)?.doubleValue
                 let initialLng = (args["longitude"] as? NSNumber)?.doubleValue
-                try presentLocationPicker(initialLat: initialLat, initialLng: initialLng, result: result)
+                try presentLocationPicker(initialLat: initialLat, initialLng: initialLng,
+                                          appearance: appearance, result: result)
             case "getHostDevice":
                 result(Self.detectHostDevice())
             default: result(FlutterMethodNotImplemented)
@@ -220,6 +245,14 @@ final class NativeMediaBridge: NSObject {
         let token = try gate.begin()
         pendingResult = result
         return token
+    }
+
+    static func reservationIdentifiers(_ arguments: [String: Any]) throws -> [UUID] {
+        guard Set(arguments.keys) == ["sessionIds"], let raw = arguments["sessionIds"] as? [String],
+              !raw.isEmpty, raw.count <= 50 else { throw NativeMediaError.invalidArgument }
+        let ids = try raw.map { try identifier(["sessionId": $0], "sessionId") }
+        guard Set(ids).count == ids.count else { throw NativeMediaError.invalidArgument }
+        return ids
     }
 
     private func perform(result: @escaping FlutterResult, operation: @escaping @MainActor () async throws -> Any?) throws {
@@ -358,6 +391,9 @@ final class NativeMediaBridge: NSObject {
     }
 
     private func presentExport(urls: [URL], token: UUID) throws {
+        guard ZlarpLicenseService.shared.allowsAccess else {
+            throw NativeMediaError.unsupported("Activate your Zlarp license to export.")
+        }
         let controller = try presenter()
         let picker = UIDocumentPickerViewController(forExporting: urls, asCopy: true)
         let delegate = NativePickerDelegate(token: token)
@@ -372,6 +408,9 @@ final class NativeMediaBridge: NSObject {
     }
 
     private func presentShare(urls: [URL], token: UUID) throws {
+        guard ZlarpLicenseService.shared.allowsAccess else {
+            throw NativeMediaError.unsupported("Activate your Zlarp license to share.")
+        }
         let controller = try presenter()
         let activity = UIActivityViewController(activityItems: urls, applicationActivities: nil)
         if let popover = activity.popoverPresentationController {
@@ -387,7 +426,18 @@ final class NativeMediaBridge: NSObject {
         controller.present(activity, animated: true)
     }
 
-    private func presentLocationPicker(initialLat: Double?, initialLng: Double?, result: @escaping FlutterResult) throws {
+    static func locationAppearance(_ raw: Any?) throws -> UIUserInterfaceStyle {
+        guard let value = raw as? String else { throw NativeMediaError.invalidArgument }
+        switch value {
+        case "system": return .unspecified
+        case "light": return .light
+        case "dark": return .dark
+        default: throw NativeMediaError.invalidArgument
+        }
+    }
+
+    private func presentLocationPicker(initialLat: Double?, initialLng: Double?,
+                                       appearance: UIUserInterfaceStyle, result: @escaping FlutterResult) throws {
         let controller = try presenter()
         let token = try start(result)
         let pickerVC = LocationPickerViewController(initialLat: initialLat, initialLng: initialLng) { [weak self] coord in
@@ -399,6 +449,11 @@ final class NativeMediaBridge: NSObject {
             }
         }
         let nav = UINavigationController(rootViewController: pickerVC)
+        nav.overrideUserInterfaceStyle = appearance
+        pickerVC.overrideUserInterfaceStyle = appearance
+        let delegate = NativePickerDelegate(token: token)
+        delegate.onCancel = { [weak self] token in self?.finish(token, value: nil) }
+        pickerDelegate = delegate
         nav.modalPresentationStyle = .pageSheet
         if let sheet = nav.sheetPresentationController {
             sheet.detents = [.large()]
@@ -406,6 +461,7 @@ final class NativeMediaBridge: NSObject {
         }
         presentedPicker = nav
         controller.present(nav, animated: true)
+        nav.presentationController?.delegate = delegate
     }
 
     static func arguments(_ value: Any?) throws -> [String: Any] {
@@ -416,11 +472,13 @@ final class NativeMediaBridge: NSObject {
     static func metadataPatch(_ arguments: [String: Any]) throws -> MetadataPatch {
         guard let map = arguments["patch"] as? [String: Any],
               Set(map.keys) == Set(["values", "removals"]) else { throw NativeMediaError.invalidArgument }
-        let data = try JSONSerialization.data(withJSONObject: map)
-        guard data.count <= 16_384 else { throw NativeMediaError.invalidArgument }
-        let patch = try JSONDecoder().decode(MetadataPatch.self, from: data)
-        try patch.validate()
-        return patch
+        do {
+            let data = try JSONSerialization.data(withJSONObject: map)
+            guard data.count <= 16_384 else { throw NativeMediaError.invalidArgument }
+            let patch = try JSONDecoder().decode(MetadataPatch.self, from: data)
+            try patch.validate()
+            return patch
+        } catch { throw NativeMediaError.invalidArgument }
     }
 
     static func parseBatchItems(_ arguments: [String: Any]) throws -> [(id: UUID, output: UUID, acknowledged: Bool)] {
@@ -530,6 +588,10 @@ final class NativeMediaBridge: NSObject {
             identifier = simModel
         }
         #endif
+        return hostDevice(identifier: identifier)
+    }
+
+    static func hostDevice(identifier: String) -> [String: String] {
         let mapping: [String: (profileId: String, model: String)] = [
             "iPhone12,1": ("apple-iphone-11", "iPhone 11"),
             "iPhone12,3": ("apple-iphone-11-pro", "iPhone 11 Pro"),
@@ -557,20 +619,10 @@ final class NativeMediaBridge: NSObject {
             "iPhone17,3": ("apple-iphone-16", "iPhone 16"),
             "iPhone17,4": ("apple-iphone-16-plus", "iPhone 16 Plus"),
             "iPhone17,5": ("apple-iphone-16e", "iPhone 16e"),
-            "iPhone18,1": ("apple-iphone-17-pro", "iPhone 17 Pro"),
-            "iPhone18,2": ("apple-iphone-17-pro-max", "iPhone 17 Pro Max"),
-            "iPhone18,3": ("apple-iphone-17", "iPhone 17"),
-            "iPhone18,4": ("apple-iphone-17-plus", "iPhone 17 Plus"),
-            "iPhone18,5": ("apple-iphone-17e", "iPhone 17e"),
-            "iPhone18,6": ("apple-iphone-air", "iPhone Air"),
         ]
-        let matched = mapping[identifier] ?? ("apple-iphone-15-pro-max", "iPhone 15 Pro Max")
-        return [
-            "brand": "Apple",
-            "profileId": matched.profileId,
-            "model": matched.model,
-            "hardware": identifier
-        ]
+        var result = ["brand": "Apple", "model": "iPhone", "hardware": identifier]
+        if let matched = mapping[identifier] { result["profileId"] = matched.profileId; result["model"] = matched.model }
+        return result
     }
 
     static func flutterError(_ error: Error) -> FlutterError {
@@ -580,18 +632,121 @@ final class NativeMediaBridge: NSObject {
         case NativeMediaError.busy: code = "busy"; message = "Wait for the current native operation to finish."
         case NativeMediaError.canceled: code = "canceled"; message = "Operation canceled."
         case NativeMediaError.permission: code = "permission"; message = "Allow Photos access to retrieve the selected original resource."
-        case NativeMediaError.invalidArgument, ProbeError.invalidPatch: code = "invalid_argument"; message = "Check the session, processing token and camera fields."
+        case NativeMediaError.invalidArgument, ProbeError.invalidPatch: code = "invalid_argument"; message = "Check the selected metadata values and current file."
         case NativeMediaError.notFound: code = "not_found"; message = "The selected session or current processed output is unavailable."
         case NativeMediaError.storage: code = "storage"; message = "The local media copy or session journal could not be accessed safely."
-        case NativeMediaError.unsupported(let detail), ProbeError.unsupported(let detail): code = "unsupported"; message = detail
-        case ProbeError.malformed(let detail): code = "unsupported"; message = "The selected file has an invalid or unqualified media structure: \(detail)"
-        case ProbeError.outputExists: code = "storage"; message = "The output copy already exists. Choose a new output path."
+        case NativeMediaError.unsupported(let detail): code = "unsupported"; message = Self.safeUnsupportedMessage(detail)
+        case ProbeError.unsupported(let detail): code = "unsupported"; message = Self.safeUnsupportedMessage(detail)
+        case ProbeError.malformed: code = "malformed"; message = "The file contains damaged or inconsistent media data. Try its original version."
+        case ProbeError.outputExists: code = "storage"; message = "The output copy already exists. Retry processing to create a new copy."
         case ProbeError.sameFile: code = "invalid_argument"; message = "Source and output must be different files."
-        case ProbeError.writeFailed(let detail): code = "processing"; message = detail
-        case ProbeError.readbackFailed(let detail): code = "processing"; message = detail
-        default: code = "processing"; message = "Native metadata processing or independent integrity verification failed. No new output is available."
+        case ProbeError.writeFailed: code = "processing"; message = "The metadata writer could not finish creating the edited copy. No new output is available."
+        case ProbeError.readbackFailed: code = "readback"; message = "The edited metadata could not be read back as requested. No new output is available."
+        case ProbeError.integrityMismatch: code = "integrity"; message = "The edited copy failed media preservation checks. No new output is available."
+        default:
+            let native = error as NSError
+            if native.domain == NSCocoaErrorDomain {
+                code = "storage"; message = "The local file could not be read or written. Check available storage and try again."
+            } else if native.domain == "PHPhotosErrorDomain" {
+                code = "storage"; message = "The selected Photos original could not be retrieved. Check Photos access and its iCloud download."
+            } else {
+                code = "processing"; message = "Native media processing failed. Retry with the original file. No new output is available."
+            }
         }
-        return FlutterError(code: code, message: message, details: nil)
+        // Error descriptions and userInfo may embed filenames, filesystem URLs
+        // and metadata. Expose only fixed stage tokens and known numeric codes.
+        var diagnostics: [String: Any] = ["stage": code]
+        if case ProbeError.integrityMismatch(let names) = error {
+            let failedChecks = Self.safeIntegrityCheckIDs(names)
+            if !failedChecks.isEmpty { diagnostics["failedChecks"] = failedChecks }
+        }
+        if !(error is NativeMediaError), !(error is ProbeError) {
+            let native = error as NSError
+            let domains = [NSCocoaErrorDomain, NSOSStatusErrorDomain, "AVFoundationErrorDomain", "PHPhotosErrorDomain"]
+            diagnostics["nativeDomain"] = domains.contains(native.domain) ? native.domain : "other"
+            diagnostics["nativeCode"] = native.code
+        }
+        return FlutterError(code: code, message: message, details: diagnostics)
+    }
+
+    /// Only closed, code-owned identifiers cross the channel. Never return the
+    /// check detail: it can contain file URLs, resource names or metadata values.
+    static func safeIntegrityCheckIDs(_ names: String) -> [String] {
+        guard names.utf8.count <= 8_192 else { return [] }
+        var known: [String: String] = [
+            "container": "container",
+            "requested camera metadata": "requested_camera_metadata",
+            "requested metadata": "requested_metadata",
+            "retained embedded metadata": "retained_metadata",
+            "exposed embedded location": "retained_location",
+            "exact complete file bytes": "complete_file_bytes",
+            "image presentation": "image_presentation",
+            "ImageIO exposed non-target properties": "image_properties",
+            "ImageIO non-target properties": "image_properties",
+            "JPEG compressed scans and coding segments": "jpeg_compressed_data",
+            "JPEG non-target application/color blocks": "jpeg_retained_blocks",
+            "PNG compressed pixels and non-target chunks": "png_compressed_data",
+            "HEIC non-Exif item bytes": "heic_compressed_items",
+            "HEIC item graph and properties": "heic_item_graph",
+            "HEIC item graph": "heic_item_graph",
+            "video track count": "video_track_count",
+            "video exposed track inventory": "video_track_inventory",
+            "video exposed duration": "video_duration",
+            "video compressed samples": "video_compressed_samples",
+            "Processing report status mismatch": "report_status",
+            "Processing returned an inconsistent integrity report": "report_consistency"
+        ]
+        for index in 1...64 {
+            known["track \(index) compressed data / timing / format"] = "video_samples_track_\(index)"
+        }
+        for field in MetadataPatch.supportedKeys(for: .mov) {
+            known["AVFoundation target " + field] = "video_target_" + field
+        }
+        for field in MetadataPatch.supportedKeys(for: .png) {
+            known["ImageIO target " + field] = "image_target_" + field
+        }
+        for field in MetadataPatch.allKeys {
+            known["retained metadata field " + field] = "retained_metadata_field_" + field
+        }
+        known["retained metadata numeric key"] = "retained_metadata_numeric_key"
+        known["retained metadata unnamed key"] = "retained_metadata_unnamed_key"
+        known["retained metadata unrecognized key"] = "retained_metadata_unrecognized_key"
+        known["retained metadata location tuple"] = "retained_metadata_location_tuple"
+        let tokens = names.split(separator: ",", omittingEmptySubsequences: true)
+        guard tokens.count <= 128 else { return [] }
+        var seen = Set<String>(), result = [String]()
+        for token in tokens {
+            let name = String(token).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let id = known[name], seen.insert(id).inserted else { continue }
+            result.append(id)
+            if result.count == 32 { break }
+        }
+        return result
+    }
+
+    private static func safeUnsupportedMessage(_ detail: String) -> String {
+        // Match known causes without returning interpolated file content.
+        if detail.contains("incomplete integrity") { return "Review and acknowledge the incomplete integrity checks before export." }
+        if detail.contains("Live Photos") { return "Choose a still image with Live turned off; Live Photos are unsupported." }
+        if detail.contains("time zone") { return "Video dates require an explicit time zone. Check the date and time settings." }
+        if detail.contains("ISO location is opaque") || detail.contains("Legacy movie location is opaque") {
+            return "This video's location cannot be changed safely with only a map pin. In Manual editing, set Altitude along with the map location, or select Remove for latitude, longitude, and altitude together."
+        }
+        if detail.contains("Altitude-only removal") {
+            return "This video has ISO location data. To remove its location, select Remove for latitude, longitude, and altitude together."
+        }
+        if detail.contains("timed metadata tracks") {
+            return "This video has a timed metadata track, so its location cannot be changed safely. Leave Location unchanged or choose another video."
+        }
+        if detail.contains("fragmented") || detail.contains("movie brand") || detail.contains("movie atoms") {
+            return "This video's container layout is not supported for lossless metadata editing. Try another original MP4 or MOV."
+        }
+        if detail.contains("removal") || detail.contains("Removal") || detail.contains("Scrubbing") || detail.contains("location editing") {
+            return "This file contains additional metadata that prevents safe removal of the selected fields. Change the edit selection and retry."
+        }
+        if detail.contains("lens editing") || detail.contains("metadata representation") { return "One or more selected fields are unsupported for this media format." }
+        if detail.contains("budget") || detail.contains("exceeds") { return "This file's metadata exceeds the supported processing limits." }
+        return "The selected file or operation is unsupported. Try another original JPEG, HEIC, PNG, MP4 or MOV."
     }
 }
 
@@ -621,6 +776,8 @@ final class LocationPickerViewController: UIViewController, MKMapViewDelegate {
     private let onSelect: (CLLocationCoordinate2D?) -> Void
     private var mapView: MKMapView!
     private var annotation: MKPointAnnotation?
+    private let instructionView = UIView()
+    private let instructionLabel = UILabel()
 
     init(initialLat: Double?, initialLng: Double?, onSelect: @escaping (CLLocationCoordinate2D?) -> Void) {
         self.initialLat = initialLat
@@ -633,11 +790,12 @@ final class LocationPickerViewController: UIViewController, MKMapViewDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Select Location"
-        view.backgroundColor = UIColor(red: 0x12/255.0, green: 0x12/255.0, blue: 0x14/255.0, alpha: 1.0)
+        view.backgroundColor = .systemBackground
 
         mapView = MKMapView(frame: view.bounds)
         mapView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         mapView.delegate = self
+        mapView.accessibilityHint = "Tap the map to place a location pin."
         view.addSubview(mapView)
 
         let gesture = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
@@ -648,6 +806,33 @@ final class LocationPickerViewController: UIViewController, MKMapViewDelegate {
 
         navigationItem.leftBarButtonItem = UIBarButtonItem(title: "Cancel", style: .plain, target: self, action: #selector(cancelTapped))
         navigationItem.rightBarButtonItem = UIBarButtonItem(title: "Apply", style: .done, target: self, action: #selector(applyTapped))
+        navigationItem.rightBarButtonItem?.isEnabled = false
+
+        instructionView.backgroundColor = .secondarySystemBackground
+        instructionView.layer.cornerRadius = 12
+        instructionView.translatesAutoresizingMaskIntoConstraints = false
+        instructionView.isAccessibilityElement = true
+        instructionView.accessibilityLabel = "Tap the map to place a location pin."
+        instructionLabel.text = "Tap the map to place a pin"
+        instructionLabel.textColor = .label
+        instructionLabel.font = .preferredFont(forTextStyle: .subheadline)
+        instructionLabel.adjustsFontForContentSizeCategory = true
+        instructionLabel.textAlignment = .center
+        instructionLabel.numberOfLines = 0
+        instructionLabel.isAccessibilityElement = false
+        instructionLabel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(instructionView)
+        instructionView.addSubview(instructionLabel)
+        NSLayoutConstraint.activate([
+            instructionView.centerXAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerXAnchor),
+            instructionView.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
+            instructionView.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            instructionView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+            instructionLabel.leadingAnchor.constraint(equalTo: instructionView.leadingAnchor, constant: 14),
+            instructionLabel.trailingAnchor.constraint(equalTo: instructionView.trailingAnchor, constant: -14),
+            instructionLabel.topAnchor.constraint(equalTo: instructionView.topAnchor, constant: 10),
+            instructionLabel.bottomAnchor.constraint(equalTo: instructionView.bottomAnchor, constant: -10)
+        ])
 
         if let lat = initialLat, let lng = initialLng, abs(lat) <= 90, abs(lng) <= 180 {
             let coord = CLLocationCoordinate2D(latitude: lat, longitude: lng)
@@ -661,7 +846,7 @@ final class LocationPickerViewController: UIViewController, MKMapViewDelegate {
     }
 
     @objc private func applyTapped() {
-        let coord = annotation?.coordinate ?? mapView.centerCoordinate
+        guard let coord = annotation?.coordinate, CLLocationCoordinate2DIsValid(coord) else { return }
         dismiss(animated: true) { self.onSelect(coord) }
     }
 
@@ -683,7 +868,8 @@ final class LocationPickerViewController: UIViewController, MKMapViewDelegate {
         }
     }
 
-    private func setPin(at coord: CLLocationCoordinate2D) {
+    func setPin(at coord: CLLocationCoordinate2D) {
+        guard CLLocationCoordinate2DIsValid(coord) else { return }
         if let existing = annotation {
             existing.coordinate = coord
         } else {
@@ -693,5 +879,7 @@ final class LocationPickerViewController: UIViewController, MKMapViewDelegate {
             mapView.addAnnotation(pin)
             annotation = pin
         }
+        navigationItem.rightBarButtonItem?.isEnabled = true
+        instructionView.isHidden = true
     }
 }

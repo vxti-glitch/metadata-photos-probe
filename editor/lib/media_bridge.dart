@@ -7,6 +7,7 @@ import 'metadata_patch.dart';
 abstract interface class MediaBridge {
   Future<MediaCapabilities> capabilities();
   Future<List<MediaSession>> listSessions();
+  Future<Map<String, String>> reserveOutputNames(List<String> sessionIds);
   Future<MediaSession?> importMedia({required bool photos});
   Future<MediaSession> process(String sessionId, CameraPatch patch);
   Future<bool> exportFiles(
@@ -19,6 +20,7 @@ abstract interface class MediaBridge {
   Future<void> clearSessions();
   Future<void> openICloud();
   Future<void> openUrl(String url);
+  Future<void> openSupportEmail();
   Future<Map<String, Object?>> loadEditorState();
   Future<void> saveEditorState(Map<String, Object?> state);
   Future<BatchImport> importBatch({required bool photos});
@@ -39,6 +41,7 @@ abstract interface class MediaBridge {
   Future<Map<String, double>?> openLocationPicker({
     double? latitude,
     double? longitude,
+    String appearance = 'system',
   });
   Future<Map<String, String>?> getHostDevice();
 }
@@ -47,6 +50,39 @@ class NativeMediaBridge implements MediaBridge {
   NativeMediaBridge({MethodChannel? channel})
     : _channel = channel ?? const MethodChannel(AppBrand.bridgeChannel);
   final MethodChannel _channel;
+
+  @override
+  Future<Map<String, String>> reserveOutputNames(
+    List<String> sessionIds,
+  ) async {
+    if (sessionIds.isEmpty ||
+        sessionIds.length > 50 ||
+        sessionIds.toSet().length != sessionIds.length) {
+      throw const FormatException('Invalid output name selection.');
+    }
+    final raw = objectMap(
+      await _channel.invokeMethod<Object?>('reserveOutputNames', {
+        'sessionIds': sessionIds,
+      }),
+    );
+    if (raw.length != sessionIds.length || !sessionIds.every(raw.containsKey)) {
+      throw const FormatException('Invalid output name reservation.');
+    }
+    final names = <String, String>{};
+    for (final id in sessionIds) {
+      final name = raw[id];
+      if (name is! String ||
+          !RegExp(r'^IMG_[0-9]{4}\.(JPG|JPEG|HEIC|HEIF|PNG|MP4|MOV)$')
+              .hasMatch(name)) {
+        throw const FormatException('Invalid output name reservation.');
+      }
+      names[id] = name;
+    }
+    if (names.values.toSet().length != names.length) {
+      throw const FormatException('Invalid output name reservation.');
+    }
+    return names;
+  }
 
   @override
   Future<MediaCapabilities> capabilities() async => MediaCapabilities.decode(
@@ -144,13 +180,18 @@ class NativeMediaBridge implements MediaBridge {
     }),
   );
   @override
-  Future<bool> exportBatch(List<Map<String, Object?>> items) async =>
-      objectMap(
-        await _channel.invokeMethod<Object?>('exportFilesBatch', {
-          'items': items,
-        }),
-      )['completed'] ==
-      true;
+  Future<bool> exportBatch(List<Map<String, Object?>> items) async {
+    final result = objectMap(
+      await _channel.invokeMethod<Object?>('exportFilesBatch', {
+        'items': items,
+      }),
+    );
+    if (result['completed'] is! bool) {
+      throw const FormatException('Invalid export response.');
+    }
+    return result['completed'] as bool;
+  }
+
   @override
   Future<bool> shareFiles(
     String sessionId,
@@ -164,17 +205,23 @@ class NativeMediaBridge implements MediaBridge {
         'acknowledgeIncomplete': acknowledgeIncomplete,
       }),
     );
-    return result['completed'] == true;
+    if (result['completed'] is! bool) {
+      throw const FormatException('Invalid share response.');
+    }
+    return result['completed'] as bool;
   }
 
   @override
-  Future<bool> shareBatch(List<Map<String, Object?>> items) async =>
-      objectMap(
-        await _channel.invokeMethod<Object?>('shareFilesBatch', {
-          'items': items,
-        }),
-      )['completed'] ==
-      true;
+  Future<bool> shareBatch(List<Map<String, Object?>> items) async {
+    final result = objectMap(
+      await _channel.invokeMethod<Object?>('shareFilesBatch', {'items': items}),
+    );
+    if (result['completed'] is! bool) {
+      throw const FormatException('Invalid share response.');
+    }
+    return result['completed'] as bool;
+  }
+
   @override
   Future<Map<String, Object?>?> importPreset() async {
     final value = await _channel.invokeMethod<Object?>('importPreset');
@@ -195,13 +242,24 @@ class NativeMediaBridge implements MediaBridge {
   Future<void> openUrl(String url) =>
       _channel.invokeMethod<void>('openUrl', {'url': url});
   @override
+  Future<void> openSupportEmail() =>
+      _channel.invokeMethod<void>('openSupportEmail');
+  @override
   Future<Map<String, double>?> openLocationPicker({
     double? latitude,
     double? longitude,
+    String appearance = 'system',
   }) async {
+    if (!const {'system', 'light', 'dark'}.contains(appearance)) {
+      throw const FormatException('Invalid appearance preference.');
+    }
     final result = await _channel.invokeMethod<Object?>(
       'openLocationPicker',
-      <String, Object?>{'latitude': latitude, 'longitude': longitude},
+      <String, Object?>{
+        'latitude': latitude,
+        'longitude': longitude,
+        'appearance': appearance,
+      },
     );
     if (result is! Map) return null;
     final lat = result['latitude'];
@@ -235,6 +293,12 @@ String readableError(Object error) {
         return error.message ?? 'Allow access in Settings, then try again.';
       case 'busy':
         return 'Another operation is still finishing. Please wait.';
+      case 'integrity':
+        final message =
+            error.message ??
+            'The edited copy failed preservation checks. No output is available.';
+        final checks = _integrityCheckSummary(error.details);
+        return checks.isEmpty ? message : '$message Checks: $checks.';
       default:
         return error.message ??
             'The media engine could not complete this operation.';
@@ -257,6 +321,76 @@ String readableError(Object error) {
   return 'This operation could not complete. Your original is unchanged. Please retry.';
 }
 
+String _integrityCheckSummary(Object? details) {
+  if (details is! Map || details['failedChecks'] is! List) return '';
+  final raw = details['failedChecks'] as List;
+  if (raw.length > 32) return '';
+  final known = _knownIntegrityCheckLabels();
+  final selected = <String>{};
+  for (final id in raw) {
+    if (id is String && known.containsKey(id)) selected.add(known[id]!);
+  }
+  return selected.take(8).join(', ');
+}
+
+/// Restores only closed diagnostic labels, never an arbitrary error message.
+/// Error history can contain old or externally supplied strings, so a malformed
+/// summary is ignored rather than displayed in the reference guide.
+List<String> safeIntegrityCheckLabels(String? message) {
+  if (message == null || message.length > 4096 || !message.endsWith('.')) {
+    return const [];
+  }
+  const marker = ' Checks: ';
+  final start = message.lastIndexOf(marker);
+  if (start < 0) return const [];
+  final summary = message.substring(start + marker.length, message.length - 1);
+  if (summary.isEmpty || summary.length > 1024) return const [];
+  final labels = summary.split(', ');
+  final known = _knownIntegrityCheckLabels().values.toSet();
+  if (labels.length > 8 || labels.any((label) => !known.contains(label))) {
+    return const [];
+  }
+  return List.unmodifiable(labels.toSet());
+}
+
+Map<String, String> _knownIntegrityCheckLabels() {
+  const labels = {
+    'container': 'File format',
+    'requested_camera_metadata': 'Camera metadata',
+    'requested_metadata': 'Requested metadata',
+    'retained_metadata': 'Other file details',
+    'retained_metadata_numeric_key': 'Unmapped numbered metadata',
+    'retained_metadata_unnamed_key': 'Unnamed metadata',
+    'retained_metadata_unrecognized_key': 'Unrecognized metadata field',
+    'retained_metadata_location_tuple': 'Unchanged location metadata',
+    'retained_location': 'Unchanged location',
+    'complete_file_bytes': 'Complete file bytes',
+    'image_presentation': 'Image appearance',
+    'image_properties': 'Unchanged image properties',
+    'jpeg_compressed_data': 'JPEG image data',
+    'jpeg_retained_blocks': 'Unchanged JPEG blocks',
+    'png_compressed_data': 'PNG image data',
+    'heic_compressed_items': 'HEIC image data',
+    'heic_item_graph': 'HEIC structure',
+    'video_track_count': 'Video track count',
+    'video_track_inventory': 'Video track inventory',
+    'video_duration': 'Video duration',
+    'video_compressed_samples': 'Encoded video samples',
+    'report_status': 'Processing report status',
+    'report_consistency': 'Processing report consistency',
+  };
+  final known = <String, String>{...labels};
+  for (var index = 1; index <= 64; index++) {
+    known['video_samples_track_$index'] = 'Track $index encoded media';
+  }
+  for (final field in metadataFields) {
+    known['video_target_${field.key}'] = 'Video ${field.label}';
+    known['image_target_${field.key}'] = 'Image ${field.label}';
+    known['retained_metadata_field_${field.key}'] = 'Unchanged ${field.label}';
+  }
+  return known;
+}
+
 /// Simplifies raw engine or validation errors into plain-English, actionable
 /// guidance that tells users what went wrong and how to fix it immediately.
 String simplifyUserError(String message) {
@@ -274,7 +408,7 @@ String simplifyUserError(String message) {
 
   // Altitude
   if (trimmed.toLowerCase().contains('altitude')) {
-    return 'Altitude value is out of range. Check that altitude is between -10,000m and 100,000m, or leave it blank.';
+    return 'Altitude value is out of range. Enter a value between -100,000m and 100,000m, or leave it blank.';
   }
 
   // Date format & explicit timezone
@@ -284,6 +418,10 @@ String simplifyUserError(String message) {
       trimmed.contains('ISO 8601') ||
       trimmed.contains('explicit time zone')) {
     return 'Invalid date format. Use YYYY:MM:DD HH:mm:ss for photos or ISO 8601 with time zone (±HH:MM) for videos, or tap the calendar icon to set dates automatically.';
+  }
+
+  if (trimmed.toLowerCase().contains('read back')) {
+    return 'The requested metadata could not be confirmed in the processed copy. No output is available. Keep the original and try a supported field or a different source file.';
   }
 
   // Time zone offset
@@ -345,6 +483,11 @@ String simplifyUserError(String message) {
   }
 
   // Retained / competing metadata integrity conflict
+  if (trimmed.toLowerCase().contains('incomplete') &&
+      trimmed.toLowerCase().contains('integrity')) {
+    return 'Some preservation checks are incomplete, but the processed copy remains available. Review the stated limitations and acknowledge them if you want to export it.';
+  }
+
   if (trimmed.contains('integrity verification failed') ||
       trimmed.contains('retained embedded metadata') ||
       trimmed.contains('Integrity check failed') ||
@@ -352,7 +495,12 @@ String simplifyUserError(String message) {
       trimmed.contains('integrity verification mismatch') ||
       trimmed.contains('unqualified media structure') ||
       trimmed.contains('integrity')) {
-    return 'Video metadata check failed. The file\'s internal track headers or metadata tags conflicted with the requested changes. How to fix: tap "View Solution & Steps" below or select a clean Camera Profile before processing.';
+    return 'The editor could not confirm that the media and unrelated metadata were preserved. No output is available after a failed check. Keep the original, review Details, and retry only if the file and requested fields are supported.';
+  }
+
+  if (trimmed.toLowerCase().contains('processing failed') ||
+      trimmed.toLowerCase().contains('could not finish creating')) {
+    return 'The media engine could not finish this operation. The original is unchanged. Retry with the original file, or review the error code and Details report.';
   }
 
   // Storage / quota
@@ -366,7 +514,7 @@ String simplifyUserError(String message) {
   if (trimmed.contains('Allow Photos access') ||
       trimmed.contains('Photos permission') ||
       trimmed.contains('permission')) {
-    return 'Photos access required. Open iOS Settings > Privacy & Security > Photos and grant Full Access to Metadata Editor.';
+    return 'Allow Metadata Editor to access the selected photos or videos in iOS Settings > Privacy & Security > Photos. Full Library Access is optional.';
   }
 
   // Busy

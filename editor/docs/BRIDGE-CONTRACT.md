@@ -1,5 +1,9 @@
 # Flutter / Swift media contract, version 1 with full-field additions
 
+Integrity errors may add `details.failedChecks`: up to 32 exact, code-owned identifiers. Native accepts only bounded known check names and never returns raw check detail, metadata values, filenames or paths. Dart maps only known identifiers to labels and displays at most eight in the optional error guide. Unknown or malformed lists are ignored.
+
+Build 19 adds the owner-approved policy documented in repository-root `docs/METADATA-WARNING-POLICY-2026-10-14.md`. Integrity status accepts `warning`, and individual checks accept `warning` only for the exact retained-metadata allowlist. Warnings are never fully verified. Reports with unchecked evidence or limitations stay incomplete and retain acknowledgment gating. Requested-edit, media and other independent preservation failures remain blocking. Native and Dart validate report consistency and reject unknown warning check names; recovered outputs are requalified from immutable file bytes before export.
+
 Channel: `com.vxtiglitch.metadataeditor/media_v1`, StandardMethodCodec. Swift owns media and opaque session identifiers; Dart never sends paths or media bytes. Return JSON-compatible maps/lists/primitives. Only thumbnail paths created inside the app's cache may cross for display. Native output remains immutable for a frozen processing identifier. No automatic media upload or Photos write is included.
 
 - `capabilities`: `{protocolVersion:1, formats:[jpeg,heic,png,mp4,mov], editableFields:[...], editableFieldsByFormat:{format:[keys]}, videoStatus:device-validation-required}`. Closed native registries determine format-specific writable/removable fields; capabilities do not imply universal media-structure compatibility or Photos UI verification.
@@ -9,7 +13,7 @@ Channel: `com.vxtiglitch.metadataeditor/media_v1`, StandardMethodCodec. Swift ow
 - `processMetadata`: `{sessionId,patch:{values:{key:string|number},removals:[key]}}` -> updated Session. Values/removals must be disjoint; validate field types/ranges and reject unknown keys. Recovered outputs require fresh readback and comparisons.
 - `importFilesBatch`, `importPhotosBatch`: up to 50 items, return `{sessions:[Session],errors:[{name,message}],canceled:bool}`. Commit successful imports separately; cancellation preserves committed sources. Session limit 100. Original Photos/Live Photo restrictions match single import.
 - `exportFilesBatch`: `{items:[{sessionId,processingId,acknowledgeIncomplete}]}` -> `{completed:bool}`. All frozen outputs qualify before the OS multi-file copy exporter opens. Native consumer names are IMG_#### with the original extension. Reject duplicate IDs.
-- `loadEditorState` -> map; `saveEditorState:{state:map}` -> null. Atomic local settings/preset/queue journal; maximum 256 KiB, depth 12 and bounded lists/maps. Reconcile recovered queue status against actual sessions. Stored paths never become media authority.
+- `loadEditorState` -> map; `saveEditorState:{state:map}` -> null. Atomic local settings/preset/queue journal; maximum 256 KiB, depth 12 and bounded lists/maps. Optional `appearance` is `system`, `light` or `dark`; absent/invalid values fall back to system appearance. UI changes take effect immediately, and writes made during a native operation are deferred until it finishes. Appearance is restored before media startup; incomplete state recovery must preserve stored presets/projects during preference saves. Reconcile recovered queue status against actual sessions. Stored paths never become media authority.
 - `importPreset` -> validated schema-1 preset map or null; `exportPreset:{preset:map}` -> `{completed:bool}`. Files JSON, maximum 32 KiB; valid UUID/name/typed patch required. Optional profile recipes remain bounded data.
 - `verifyOriginal:{sessionId,processingId}` -> `{exactMatch,expectedSHA256,actualSHA256,expectedBytes,actualBytes}` or null. User selects a downloaded iCloud Unmodified Original. Exact match proves that selected file matches frozen output bytes; it does not prove an arbitrary selected file came from iCloud.
 - `exportFiles`: `{sessionId, processingId, acknowledgeIncomplete:bool}` -> `{completed:bool}`. Swift verifies the frozen output ID, existence, no mismatch and explicit incomplete acknowledgment before presenting a copy exporter. Completion means Files only; it cannot confirm Safari upload or Photos attribution.
@@ -17,9 +21,44 @@ Channel: `com.vxtiglitch.metadataeditor/media_v1`, StandardMethodCodec. Swift ow
 - `deleteSession`: `{sessionId}` -> null. Delete only app-owned paths when no operation is active; never change provider originals or Photos assets.
 - `clearSessions`: null -> null, same constraints.
 - `openICloud`: null -> null, opens fixed public `https://www.icloud.com/photos/` in the system browser. No credential capture or undocumented upload endpoint.
+- `openUrl`: `{url:string}` -> null. Only HTTPS URLs are accepted; this method does not accept mailto or arbitrary app schemes.
+- `openSupportEmail`: null -> null. Opens the fixed `mailto:vxti.dev@gmail.com?subject=Metadata%20Editor%20Support` through public `UIApplication.open`, allowing iOS to use the user's default email app. No attachments or body are added, and the app does not send email. This action is available without media-engine readiness, but is disabled while another operation is busy. A failed handoff returns `email_unavailable` with the address, subject and instructions to install/configure an email app. Handoff success does not prove the user sent a message; compose cancellation happens in the email app and does not change editor drafts or outputs.
 
 Session map: `{id, displayName, origin, createdAt, inspection, details?, notes:[string], previewPath?:string, processing?:Processing}`. Inspection is the canonical MediaInspection JSON (`kind,byteCount,metadata,structure,location?,notes`). `details` contains known readable metadata fields only, no opaque/binary values. Camera metadata comes from native inspection, not guessed filenames or library provenance.
 
-Processing map: `{id, createdAt, patch, outputInspection, integrity}`. Integrity is canonical JSON (`status:verified|incomplete|mismatch, checks:[{name,status,detail}], limitations:[string]`). Return UUID identifiers and ISO-8601 timestamps. Absolute source/output paths remain native-only. Errors use FlutterError codes `busy`, `canceled`, `permission`, `unsupported`, `invalid_argument`, `not_found`, `storage`, `processing`, with helpful messages and no actual media/path logging.
+Processing map: `{id, createdAt, patch, outputInspection, integrity, outputDisplayName?:string, autoExportFolder?:string}`. Integrity is canonical JSON (`status:verified|warning|incomplete|mismatch, checks:[{name,status,detail}], limitations:[string]`). `autoExportFolder` is a fixed consumer folder label, present only after a fully verified output is committed and an independent Files copy is successfully saved. Incomplete outputs require explicit acknowledged export; a consumer name alone does not prove saving. Files copies never share a writable hard link with the native frozen output, and collisions never overwrite user files. Return UUID identifiers and ISO-8601 timestamps. Absolute source/output paths remain native-only. Errors use FlutterError codes `busy`, `canceled`, `permission`, `unsupported`, `malformed`, `invalid_argument`, `not_found`, `storage`, `processing`, `readback`, `integrity`, with fixed helpful messages. Error details contain only `stage` and, for OS errors, a whitelisted `nativeDomain` (or `other`) and numeric `nativeCode`; associated descriptions and userInfo never cross the channel.
 
 UI state clears acknowledgments on output/session changes. Native independently validates the processing token and gate; Dart test doubles cannot replace these safeguards. Background media operations must not block Flutter's main thread. Session recovery and cleanup are bounded and sandbox-confined. User media/GPS stay local and excluded from CI.
+
+## Reviewed output name reservations
+
+`reserveOutputNames`: `{sessionIds:[UUID string]}` -> `{sessionId:"IMG_####.EXT"}`. Accepts one to 50 existing, unique source IDs and no other arguments. Native alone generates collision-free names using the source's original supported extension. The response has exactly one name per requested ID. Flutter displays these names in review; it never submits a desired name or path.
+
+Reservations are stored atomically as optional `reservedOutputDisplayName` fields in the native session journal, preserving schema-1 compatibility with older journals. Loading validates the name, extension, uniqueness and separation from existing output names. Repeated review and relaunch return the same reservation. Processing uses that exact name and consumes it only with successful output journal commit. Failed, canceled or interrupted processing retains the reservation. Deleting its project or clearing local projects removes it.
+
+Allocation excludes active/history output names, other reservations, private export names and visible public export names, case-insensitively. An external collision after review fails preparation or processing instead of renaming the reviewed file or overwriting a consumer copy. Integrity checks, incomplete acknowledgments and frozen processing export tokens remain independently enforced.
+
+Flutter treats preparation as a serialized, noncancelable `preparingCopies` operation. Failure keeps review closed and presents native error guidance; unrelated operations wait for completion.
+# Zlarp license channel
+
+Production `main.dart` wraps the entire navigator in the license gate. The editor
+is mounted only after activation; later locks preserve local editing state.
+The separate `com.vxtiglitch.metadataeditor/license_v1` channel exposes `status`,
+`refresh` (optional bounded string `key`) and `clear`. Status contains `allowed`,
+`reason`, optional Unix-seconds `expiresAt`, and optional `retryAfterSeconds`.
+It never returns the license key, signed token, device identity or media data.
+
+Swift validates the pinned Ed25519 signature, algorithm, issuer, product audience,
+device, fresh nonce, entitlement and expiry. The Keychain stores the key, signed
+receipt and stable random app-specific device identity. Online verification runs
+at launch and every six hours while in use; foreground checks and an expiry timer
+prevent continued access to an expired receipt. Only a still-valid signed cached
+receipt permits temporary offline access. Explicit refusals and invalid responses
+lock access. A license change invalidates the old account and in-flight response.
+
+The native media bridge independently requires authorization. Session processing
+checks it before and after engine work and before automatic Files saving, outside
+the nonfatal automatic-save catch. Export qualification and Files/share presentation
+check authorization again. Integrity and acknowledgment rules remain in force.
+Diagnostic tests use explicit injected authorizers; production has no bypass flag.
+License verification never signs the IPA or proves physical-device installation.

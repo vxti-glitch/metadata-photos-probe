@@ -13,12 +13,14 @@ MediaSession fixture({
   String id = sourceId,
   IntegrityStatus? status,
   String processingId = outputId,
+  String? outputDisplayName,
   CameraPatch patch = const CameraPatch(
     make: 'Test Make',
     model: 'Test Camera',
   ),
   bool failedCheck = false,
   Map<String, String> additionalMetadata = const {},
+  Map<String, String> additionalStructure = const {},
 }) {
   final metadata = {
     'make': 'Original Make',
@@ -30,7 +32,7 @@ MediaSession fixture({
     kind: kind,
     byteCount: 4096,
     metadata: camera,
-    structure: const {'width': '120', 'height': '160'},
+    structure: {'width': '120', 'height': '160', ...additionalStructure},
     notes: const [],
   );
   return MediaSession(
@@ -47,8 +49,10 @@ MediaSession fixture({
             id: processingId,
             createdAt: DateTime.utc(2026, 10, 8),
             patch: patch,
-            outputDisplayName: 'IMG_4827.${kind.name}',
-            autoExportFolder: 'Processed Media',
+            outputDisplayName: outputDisplayName ?? 'IMG_4827.${kind.name}',
+            autoExportFolder: status == IntegrityStatus.verified && !failedCheck
+                ? 'On My iPhone/Metadata Editor/Processed Media'
+                : null,
             inspection: inspection({
               'make': patch.make,
               'model': patch.model,
@@ -64,6 +68,12 @@ MediaSession fixture({
                       ? 'Payload differs.'
                       : 'Encoded item hashes match.',
                 ),
+                if (status == IntegrityStatus.warning)
+                  const IntegrityCheck(
+                    'retained embedded metadata',
+                    'warning',
+                    'Additional details changed.',
+                  ),
               ],
               status == IntegrityStatus.incomplete
                   ? ['Opaque metadata semantics are not qualified.']
@@ -91,6 +101,38 @@ Map<String, Object?> sessionMap() => {
 };
 
 class FakeMediaBridge implements MediaBridge {
+  final reservedOutputNames = <String, String>{};
+  Completer<Map<String, String>>? pendingReservation;
+  Object? reservationError;
+  int reservations = 0;
+  int _nextOutputDigits = 4827;
+  @override
+  Future<Map<String, String>> reserveOutputNames(
+    List<String> sessionIds,
+  ) async {
+    reservations++;
+    if (reservationError != null) throw reservationError!;
+    if (pendingReservation != null) return pendingReservation!.future;
+    return {
+      for (final id in sessionIds)
+        id: reservedOutputNames.putIfAbsent(id, () {
+          final kind = sessions.firstWhere((s) => s.id == id).inspection.kind;
+          final ext = kind == MediaKind.jpeg ? 'JPG' : kind.name.toUpperCase();
+          final used = {
+            ...reservedOutputNames.values.map((name) => name.toUpperCase()),
+            ...sessions
+                .map((s) => s.processing?.outputDisplayName?.toUpperCase())
+                .whereType<String>(),
+          };
+          String name;
+          do {
+            name = 'IMG_${_nextOutputDigits++}.$ext';
+          } while (used.contains(name));
+          return name;
+        }),
+    };
+  }
+
   List<MediaSession> sessions = [];
   MediaSession? importResult = fixture();
   Completer<MediaSession?>? pendingImport;
@@ -161,6 +203,7 @@ class FakeMediaBridge implements MediaBridge {
             kind: source.inspection.kind,
             status: nextStatus,
             processingId: nextProcessingId,
+            outputDisplayName: reservedOutputNames[sessionId],
             patch: patch,
           )
         : await pendingProcess!.future;
@@ -168,6 +211,7 @@ class FakeMediaBridge implements MediaBridge {
       result,
       ...sessions.where((session) => session.id != sessionId),
     ];
+    reservedOutputNames.remove(sessionId);
     return result;
   }
 
@@ -192,6 +236,7 @@ class FakeMediaBridge implements MediaBridge {
 
   @override
   Future<void> deleteSession(String sessionId) async {
+    reservedOutputNames.remove(sessionId);
     deletedIds.add(sessionId);
     sessions = sessions.where((session) => session.id != sessionId).toList();
     if (deleteAfterCommitError != null) throw deleteAfterCommitError!;
@@ -200,6 +245,7 @@ class FakeMediaBridge implements MediaBridge {
   int clears = 0;
   @override
   Future<void> clearSessions() async {
+    reservedOutputNames.clear();
     clears++;
     sessions = [];
     if (clearAfterCommitError != null) throw clearAfterCommitError!;
@@ -256,8 +302,12 @@ class FakeMediaBridge implements MediaBridge {
         createdAt: DateTime.utc(2026),
         patch: const CameraPatch(make: '', model: ''),
         metadataPatch: patch,
-        outputDisplayName: 'IMG_4827.${source.inspection.kind.name}',
-        autoExportFolder: 'Processed Media',
+        outputDisplayName:
+            reservedOutputNames[sessionId] ??
+            'IMG_4827.${source.inspection.kind.name}',
+        autoExportFolder: nextStatus == IntegrityStatus.verified
+            ? 'On My iPhone/Metadata Editor/Processed Media'
+            : null,
         inspection: MediaInspection(
           kind: source.inspection.kind,
           byteCount: source.inspection.byteCount,
@@ -267,7 +317,15 @@ class FakeMediaBridge implements MediaBridge {
         ),
         integrity: IntegrityReport(
           nextStatus,
-          [const IntegrityCheck('Payload', 'passed', 'Matches')],
+          [
+            const IntegrityCheck('Payload', 'passed', 'Matches'),
+            if (nextStatus == IntegrityStatus.warning)
+              const IntegrityCheck(
+                'retained embedded metadata',
+                'warning',
+                'Additional details changed.',
+              ),
+          ],
           nextStatus == IntegrityStatus.incomplete
               ? ['Opaque metadata not qualified.']
               : [],
@@ -275,6 +333,7 @@ class FakeMediaBridge implements MediaBridge {
       ),
     );
     sessions = [result, ...sessions.where((s) => s.id != sessionId)];
+    reservedOutputNames.remove(sessionId);
     return result;
   }
 
@@ -309,9 +368,22 @@ class FakeMediaBridge implements MediaBridge {
   }
 
   @override
-  Future<Map<String, Object?>?> importPreset() async => null;
+  Future<Map<String, Object?>?> importPreset() async {
+    presetImports++;
+    return nextImportedPreset;
+  }
+
+  int presetImports = 0;
+  Map<String, Object?>? nextImportedPreset;
+  int presetExports = 0;
+  Map<String, Object?>? exportedPreset;
   @override
-  Future<bool> exportPreset(Map<String, Object?> preset) async => true;
+  Future<bool> exportPreset(Map<String, Object?> preset) async {
+    presetExports++;
+    exportedPreset = preset;
+    return true;
+  }
+
   @override
   Future<Map<String, Object?>> verifyOriginal(
     String sessionId,
@@ -328,16 +400,30 @@ class FakeMediaBridge implements MediaBridge {
     openedUrls.add(url);
   }
 
+  int supportEmailOpens = 0;
+  Object? supportEmailFailure;
+  Completer<void>? supportEmailCompletion;
+  @override
+  Future<void> openSupportEmail() async {
+    supportEmailOpens++;
+    if (supportEmailCompletion != null) await supportEmailCompletion!.future;
+    if (supportEmailFailure != null) throw supportEmailFailure!;
+  }
+
   Map<String, double>? nextLocationPickerResult;
+  String? lastLocationPickerAppearance;
   @override
   Future<Map<String, double>?> openLocationPicker({
     double? latitude,
     double? longitude,
-  }) async =>
-      nextLocationPickerResult ??
-      (latitude != null && longitude != null
-          ? {'latitude': latitude, 'longitude': longitude}
-          : null);
+    String appearance = 'system',
+  }) async {
+    lastLocationPickerAppearance = appearance;
+    return nextLocationPickerResult ??
+        (latitude != null && longitude != null
+            ? {'latitude': latitude, 'longitude': longitude}
+            : null);
+  }
 
   Map<String, String>? nextHostDevice;
   @override

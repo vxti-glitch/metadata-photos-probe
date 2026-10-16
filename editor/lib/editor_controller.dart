@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
 import 'app_brand.dart';
 import 'camera_profiles.dart';
@@ -13,10 +14,13 @@ import 'media_models.dart';
 enum EditorOperation {
   loading,
   importing,
+  preparingCopies,
   processing,
   exporting,
   deleting,
   openingBrowser,
+  openingWebsite,
+  openingEmail,
 }
 
 class EditorController extends ChangeNotifier {
@@ -31,29 +35,62 @@ class EditorController extends ChangeNotifier {
   String? lastErrorCode;
   String? lastErrorMessage;
   DateTime? lastErrorTime;
+  String? statePersistenceError;
+  String appearance = 'system';
+  int _appearanceRevision = 0;
+  bool _deferredAppearancePersistence = false;
+  bool _stateRestored = false;
   Map<String, Object?> _editorState = {};
   int queueCompleted = 0;
+  Future<void> _persistenceTail = Future<void>.value();
+  int _persistenceRevision = 0;
+  int _pendingPersistenceWrites = 0;
+  bool _deferredErrorHistoryPersistence = false;
+
+  static const _errorHistoryKeys = [
+    'lastErrorCode',
+    'lastErrorMessage',
+    'lastErrorTime',
+  ];
+
+  void _restorePersistedErrorHistory(Map<String, Object?> state) {
+    for (final key in _errorHistoryKeys) {
+      if (_editorState.containsKey(key)) {
+        state[key] = _editorState[key];
+      } else {
+        state.remove(key);
+      }
+    }
+  }
+
   Future<void> _persist() async {
     final state = <String, Object?>{
       ..._editorState,
       'schemaVersion': 1,
-      'presets': presets.map((p) => p.toMap()).toList(),
-      'queue': queue.map((q) => q.toMap()).toList(),
-      'selection': batchSelection.toList(),
+      'presets': _stateRestored
+          ? presets.map((p) => p.toMap()).toList()
+          : _editorState['presets'] ?? [],
+      'queue': _stateRestored
+          ? queue.map((q) => q.toMap()).toList()
+          : _editorState['queue'] ?? [],
+      'selection': _stateRestored
+          ? batchSelection.toList()
+          : _editorState['selection'] ?? [],
+      'appearance': appearance,
     };
-    if (selectedBrand != null) {
+    if (_stateRestored && selectedBrand != null) {
       state['selectedBrand'] = selectedBrand;
-    } else {
+    } else if (_stateRestored) {
       state.remove('selectedBrand');
     }
-    if (selectedProfileId != null) {
+    if (_stateRestored && selectedProfileId != null) {
       state['selectedProfileId'] = selectedProfileId;
-    } else {
+    } else if (_stateRestored) {
       state.remove('selectedProfileId');
     }
-    if (selectedCameraId != null) {
+    if (_stateRestored && selectedCameraId != null) {
       state['selectedCameraId'] = selectedCameraId;
-    } else {
+    } else if (_stateRestored) {
       state.remove('selectedCameraId');
     }
     if (lastErrorCode != null) {
@@ -71,8 +108,41 @@ class EditorController extends ChangeNotifier {
     } else {
       state.remove('lastErrorTime');
     }
-    await bridge.saveEditorState(state);
-    _editorState = state;
+    // NativeMediaBridge serializes state saves with media operations. History
+    // changes made while busy are deferred until the operation releases that
+    // gate. Internal queue checkpoints can still persist, but must not sneak
+    // the deferred history update into the native channel.
+    if (busy && _deferredErrorHistoryPersistence) {
+      _restorePersistedErrorHistory(state);
+    }
+    if (busy && _deferredAppearancePersistence) {
+      state['appearance'] = _editorState['appearance'] ?? 'system';
+    }
+    final revision = ++_persistenceRevision;
+    _pendingPersistenceWrites++;
+    final write = _persistenceTail.then((_) async {
+      try {
+        await bridge.saveEditorState(state);
+        _editorState = state;
+        if (revision == _persistenceRevision && statePersistenceError != null) {
+          statePersistenceError = null;
+          if (!_disposed) _emit();
+        }
+      } finally {
+        _pendingPersistenceWrites--;
+      }
+    });
+    // Keep later writes runnable after a failed save, while returning the
+    // original failure to callers that await this persistence operation.
+    _persistenceTail = write.then<void>((_) {}, onError: (Object _) {});
+    try {
+      await write;
+    } catch (failure) {
+      if (revision == _persistenceRevision) {
+        statePersistenceError = readableError(failure);
+      }
+      rethrow;
+    }
   }
 
   List<MediaSession> _sessions = const [];
@@ -107,11 +177,14 @@ class EditorController extends ChangeNotifier {
     return switch (operation) {
       EditorOperation.loading => 'Recovering your local projects…',
       EditorOperation.importing => 'Importing and inspecting the original…',
+      EditorOperation.preparingCopies => 'Preparing names for your copies…',
       EditorOperation.processing =>
-        'Writing camera metadata and checking media integrity…',
+        'Writing metadata and checking media integrity…',
       EditorOperation.exporting => 'Choose where to save the processed copy…',
       EditorOperation.deleting => 'Removing app-owned copies…',
       EditorOperation.openingBrowser => 'Opening iCloud Photos…',
+      EditorOperation.openingWebsite => 'Opening the Zlarp website…',
+      EditorOperation.openingEmail => 'Opening your email app…',
       null => '',
     };
   }
@@ -185,14 +258,32 @@ class EditorController extends ChangeNotifier {
         text.contains('err_unsupported_media')) {
       return 'ERR_UNSUPPORTED_MEDIA';
     }
-    return 'ERR_MEDIA_INTEGRITY';
+    return 'ERR_PROCESSING';
+  }
+
+  static String classifyFailureCode(Object failure, String message) {
+    if (failure is PlatformException) {
+      return switch (failure.code) {
+        'permission' => 'ERR_PHOTOS_ACCESS',
+        'storage' => 'ERR_STORAGE_FULL',
+        'unsupported' || 'malformed' => 'ERR_UNSUPPORTED_MEDIA',
+        'readback' || 'integrity' => 'ERR_MEDIA_INTEGRITY',
+        'not_found' ||
+        'processing' ||
+        'invalid_argument' ||
+        'busy' ||
+        'canceled' => 'ERR_PROCESSING',
+        _ => classifyErrorCode(message),
+      };
+    }
+    return classifyErrorCode(message);
   }
 
   void recordError(String message, {String? code}) {
     lastErrorCode = code ?? classifyErrorCode(message);
     lastErrorMessage = message;
     lastErrorTime = DateTime.now();
-    unawaited(_persist().catchError((_) {}));
+    _scheduleErrorHistoryPersistence();
     _emit();
   }
 
@@ -200,11 +291,78 @@ class EditorController extends ChangeNotifier {
     lastErrorCode = null;
     lastErrorMessage = null;
     lastErrorTime = null;
-    unawaited(_persist().catchError((_) {}));
+    _scheduleErrorHistoryPersistence();
     _emit();
   }
 
+  void _scheduleErrorHistoryPersistence() {
+    if (busy) {
+      _deferredErrorHistoryPersistence = true;
+      return;
+    }
+    unawaited(
+      _persist().catchError((_) {
+        if (!_disposed) _emit();
+      }),
+    );
+  }
+
+  void _flushDeferredErrorHistoryPersistence() {
+    if (!_deferredErrorHistoryPersistence || busy || _disposed) return;
+    _deferredErrorHistoryPersistence = false;
+    unawaited(
+      _persist().catchError((_) {
+        if (!_disposed) _emit();
+      }),
+    );
+  }
+
+  Future<void> setAppearance(String value) async {
+    if (_disposed || !const ['system', 'light', 'dark'].contains(value)) return;
+    appearance = value;
+    _appearanceRevision++;
+    _emit();
+    if (busy) {
+      _deferredAppearancePersistence = true;
+      return;
+    }
+    try {
+      await _persist();
+    } catch (_) {
+      // Keep the chosen appearance usable and expose the existing storage
+      // warning when the preference cannot be remembered.
+      if (!_disposed) _emit();
+    }
+  }
+
+  void _flushDeferredAppearancePersistence() {
+    if (!_deferredAppearancePersistence || busy || _disposed) return;
+    _deferredAppearancePersistence = false;
+    unawaited(
+      _persist().catchError((_) {
+        if (!_disposed) _emit();
+      }),
+    );
+  }
+
   bool isBatchMode = false;
+  int batchEditorRevision = 0;
+
+  /// Explicit recovery opens the queue's results instead of reusing a draft.
+  void resumeStoredBatch() {
+    if (busy || !ready) return;
+    final validIds = sessions.map((session) => session.id).toSet();
+    final queuedIds = queue
+        .map((item) => item.sessionId)
+        .where(validIds.contains)
+        .toSet();
+    if (queuedIds.isEmpty) return;
+    batchSelection
+      ..clear()
+      ..addAll(queuedIds);
+    batchEditorRevision++;
+    startBatchEditing();
+  }
 
   void select(MediaSession? session) {
     if (busy || !ready) return;
@@ -216,17 +374,41 @@ class EditorController extends ChangeNotifier {
     _emit();
   }
 
+  void _normalizeBatchState() {
+    final validIds = sessions.map((session) => session.id).toSet();
+    batchSelection.removeWhere((id) => !validIds.contains(id));
+    queue.removeWhere((item) => !validIds.contains(item.sessionId));
+
+    if (selected != null && !validIds.contains(selected!.id)) {
+      selected = null;
+    }
+    if (batchSelection.isEmpty) {
+      isBatchMode = false;
+      _reconcileCompletedQueueRows();
+      return;
+    }
+    if (isBatchMode &&
+        (selected == null || !batchSelection.contains(selected!.id))) {
+      selected = sessions
+          .where((session) => batchSelection.contains(session.id))
+          .firstOrNull;
+      if (selected == null) isBatchMode = false;
+    }
+    _reconcileCompletedQueueRows();
+  }
+
   void startBatchEditing() {
-    if (busy || !ready || batchSelection.isEmpty) return;
+    if (busy || !ready) return;
+    _normalizeBatchState();
+    if (batchSelection.isEmpty) return;
     isBatchMode = true;
-    final targetId = batchSelection.first;
-    selected = sessions.firstWhere(
-      (s) => s.id == targetId,
-      orElse: () => sessions.firstWhere(
-        (s) => batchSelection.contains(s.id),
-        orElse: () => sessions.first,
-      ),
-    );
+    selected = sessions
+        .where((session) => batchSelection.contains(session.id))
+        .firstOrNull;
+    if (selected == null) {
+      isBatchMode = false;
+      return;
+    }
     acknowledgedProcessingId = null;
     error = null;
     notice = null;
@@ -250,6 +432,27 @@ class EditorController extends ChangeNotifier {
   void _upsert(MediaSession session) {
     _sessions = [session, ..._sessions.where((item) => item.id != session.id)];
     selected = session;
+    _normalizeBatchState();
+  }
+
+  bool _reconcileCompletedQueueRows() {
+    var changed = false;
+    for (final item in queue.where((row) => row.status == 'completed')) {
+      final session = sessions
+          .where((candidate) => candidate.id == item.sessionId)
+          .firstOrNull;
+      final output = session?.processing;
+      if (output == null ||
+          output.metadataPatch == null ||
+          !output.metadataPatch!.equivalent(item.patch) ||
+          output.integrity.hasMismatch) {
+        item.status = 'interrupted';
+        item.message =
+            'The saved output no longer matches this batch plan. Retry.';
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   Future<void> _run(
@@ -267,11 +470,15 @@ class EditorController extends ChangeNotifier {
     cancellationRequested = false;
     _emit();
     try {
+      // Complete idle state writes before entering the native bridge. Its
+      // state-save and media-operation methods share a serialized channel.
+      if (_pendingPersistenceWrites > 0) await _persistenceTail;
+      if (!_current(generation)) return;
       await action(generation);
     } catch (failure) {
       if (!_disposed && generation == _generation) {
         error = readableError(failure);
-        recordError(error!);
+        recordError(error!, code: classifyFailureCode(failure, error!));
         if (reconcileOnFailure) {
           acknowledgedProcessingId = null;
           try {
@@ -280,6 +487,7 @@ class EditorController extends ChangeNotifier {
               _sessions = recovered;
               final matches = recovered.where((item) => item.id == selectedId);
               selected = matches.isEmpty ? null : matches.first;
+              _normalizeBatchState();
             }
           } catch (_) {
             if (_current(generation)) {
@@ -300,90 +508,161 @@ class EditorController extends ChangeNotifier {
               final selectedId = selected?.id;
               final matches = recovered.where((item) => item.id == selectedId);
               selected = matches.isEmpty ? null : matches.first;
+              _normalizeBatchState();
               acknowledgedProcessingId = null;
               notice = 'Operation finished after cancellation was requested. Review any recovered copy before exporting.';
             }
           } catch (failure) {
-            if (!_disposed) error = readableError(failure);
+            if (!_disposed) {
+              // Native work may have committed after cancellation. Without a
+              // fresh history snapshot, the cached session can point at an
+              // output token that no longer matches native state. Disable all
+              // editing/export actions until startup reconciles the journal.
+              capabilities = null;
+              error = readableError(failure);
+              recordError(error!, code: classifyFailureCode(failure, error!));
+              notice = 'Local history could not be refreshed after cancellation. Retry startup before editing or exporting.';
+            }
           }
         }
         operation = null;
         cancellationRequested = false;
         _emit();
+        _flushDeferredErrorHistoryPersistence();
+        _flushDeferredAppearancePersistence();
       }
     }
   }
 
   bool _current(int generation) => !_disposed && generation == _generation;
 
-  Future<void> initialize() =>
-      _run(EditorOperation.loading, (generation) async {
-        final engine = await bridge.capabilities();
-        final sessions = await bridge.listSessions();
-        if (!_current(generation)) return;
-        final state = await bridge.loadEditorState();
-        if (!_current(generation)) return;
-        if (state.isNotEmpty && state['schemaVersion'] != 1) {
-          throw const FormatException('Incompatible editor state.');
+  Future<Map<String, String>> reserveOutputNames(
+    List<String> sessionIds,
+  ) async {
+    var names = <String, String>{};
+    await _run(EditorOperation.preparingCopies, (generation) async {
+      if (sessionIds.isEmpty ||
+          sessionIds.length > 50 ||
+          sessionIds.toSet().length != sessionIds.length ||
+          sessionIds.any((id) => !_sessions.any((s) => s.id == id))) {
+        throw const FormatException(
+          'Select existing files to prepare their copies.',
+        );
+      }
+      final reserved = await bridge.reserveOutputNames(List.of(sessionIds));
+      if (reserved.length != sessionIds.length ||
+          reserved.values.toSet().length != reserved.length) {
+        throw const FormatException('Invalid output name reservation.');
+      }
+      for (final id in sessionIds) {
+        final kind = _sessions.firstWhere((s) => s.id == id).inspection.kind;
+        final extensions = switch (kind) {
+          MediaKind.jpeg => ['JPG', 'JPEG'],
+          MediaKind.heic => ['HEIC', 'HEIF'],
+          _ => [kind.name.toUpperCase()],
+        };
+        final name = reserved[id];
+        if (name == null ||
+            !RegExp(r'^IMG_[0-9]{4}\.(JPG|JPEG|HEIC|HEIF|PNG|MP4|MOV)$')
+                .hasMatch(name) ||
+            !extensions.any((ext) => name.endsWith('.$ext'))) {
+          throw const FormatException('Invalid output name reservation.');
         }
-        _editorState = state;
-        final storedBrand = state['selectedBrand'];
-        if (storedBrand is String) selectedBrand = storedBrand;
-        final storedProfileId = state['selectedProfileId'];
-        if (storedProfileId is String) selectedProfileId = storedProfileId;
-        final storedCameraId = state['selectedCameraId'];
-        if (storedCameraId is String) selectedCameraId = storedCameraId;
-        final storedErrorCode = state['lastErrorCode'];
-        if (storedErrorCode is String) lastErrorCode = storedErrorCode;
-        final storedErrorMessage = state['lastErrorMessage'];
-        if (storedErrorMessage is String) lastErrorMessage = storedErrorMessage;
-        final storedErrorTime = state['lastErrorTime'];
-        if (storedErrorTime is String) {
-          lastErrorTime = DateTime.tryParse(storedErrorTime);
-        }
-        final storedPresets = state['presets'];
-        presets = storedPresets is List
-            ? storedPresets.map(SavedPreset.decode).toList()
-            : [];
-        final storedQueue = state['queue'];
-        queue = storedQueue is List
-            ? storedQueue
-                  .map(QueueItem.decode)
-                  .where((item) => sessions.any((s) => s.id == item.sessionId))
-                  .toList()
-            : [];
-        for (final item in queue) {
-          if (item.status == 'running') {
-            item.status = 'interrupted';
-            item.message = 'Interrupted. Retry to finish.';
-          }
-        }
-        for (final item in queue.where((q) => q.status == 'completed')) {
-          final output = sessions
-              .firstWhere((s) => s.id == item.sessionId)
-              .processing;
-          if (output == null ||
-              output.metadataPatch == null ||
-              !output.metadataPatch!.equivalent(item.patch) ||
-              output.integrity.hasMismatch) {
-            item.status = 'interrupted';
-            item.message =
-                'The saved output no longer matches this batch plan. Retry.';
-          }
-        }
-        batchSelection.clear();
-        final storedSelection = state['selection'];
-        if (storedSelection is List) {
-          batchSelection.addAll(
-            storedSelection.whereType<String>().where(
-              (id) => sessions.any((s) => s.id == id),
-            ),
-          );
-        }
-        capabilities = engine;
-        _sessions = sessions;
-        selected = null;
-      }, needsReady: false);
+      }
+      if (_current(generation)) names = reserved;
+    });
+    return names;
+  }
+
+  Future<void> initialize() => _run(EditorOperation.loading, (
+    generation,
+  ) async {
+    final appearanceRevision = _appearanceRevision;
+    var state = await bridge.loadEditorState();
+    if (!_current(generation)) return;
+    if (state.isNotEmpty && state['schemaVersion'] != 1) {
+      throw const FormatException('Incompatible editor state.');
+    }
+    _editorState = state;
+    if (appearanceRevision == _appearanceRevision) {
+      final storedAppearance = state['appearance'];
+      appearance = const ['system', 'light', 'dark'].contains(storedAppearance)
+          ? storedAppearance as String
+          : 'system';
+      _emit();
+    }
+    final engine = await bridge.capabilities();
+    final sessions = await bridge.listSessions();
+    if (!_current(generation)) return;
+    // Read the complete journal after startup as before. An idle history write
+    // may have finished while the engine was recovering; the early read is
+    // only needed to make the stored appearance available during that wait.
+    state = await bridge.loadEditorState();
+    if (!_current(generation)) return;
+    if (state.isNotEmpty && state['schemaVersion'] != 1) {
+      throw const FormatException('Incompatible editor state.');
+    }
+    _editorState = state;
+    final storedBrand = state['selectedBrand'];
+    if (storedBrand is String) selectedBrand = storedBrand;
+    final storedProfileId = state['selectedProfileId'];
+    if (storedProfileId is String) selectedProfileId = storedProfileId;
+    final storedCameraId = state['selectedCameraId'];
+    if (storedCameraId is String) selectedCameraId = storedCameraId;
+    final storedErrorCode = state['lastErrorCode'];
+    if (storedErrorCode is String) lastErrorCode = storedErrorCode;
+    final storedErrorMessage = state['lastErrorMessage'];
+    if (storedErrorMessage is String) lastErrorMessage = storedErrorMessage;
+    final storedErrorTime = state['lastErrorTime'];
+    if (storedErrorTime is String) {
+      lastErrorTime = DateTime.tryParse(storedErrorTime);
+    }
+    final storedPresets = state['presets'];
+    presets = storedPresets is List
+        ? storedPresets.map(SavedPreset.decode).toList()
+        : [];
+    final storedQueue = state['queue'];
+    queue = storedQueue is List
+        ? storedQueue
+              .map(QueueItem.decode)
+              .where((item) => sessions.any((s) => s.id == item.sessionId))
+              .toList()
+        : [];
+    for (final item in queue) {
+      if (item.status == 'running') {
+        item.status = 'interrupted';
+        item.message = 'Interrupted. Retry to finish.';
+      }
+    }
+    for (final item in queue.where((q) => q.status == 'completed')) {
+      final output = sessions
+          .firstWhere((s) => s.id == item.sessionId)
+          .processing;
+      if (output == null ||
+          output.metadataPatch == null ||
+          !output.metadataPatch!.equivalent(item.patch) ||
+          output.integrity.hasMismatch) {
+        item.status = 'interrupted';
+        item.message =
+            'The saved output no longer matches this batch plan. Retry.';
+      }
+    }
+    batchSelection.clear();
+    final storedSelection = state['selection'];
+    if (storedSelection is List) {
+      batchSelection.addAll(
+        storedSelection.whereType<String>().where(
+          (id) => sessions.any((s) => s.id == id),
+        ),
+      );
+    }
+    capabilities = engine;
+    _sessions = sessions;
+    selected = null;
+    isBatchMode = false;
+    _normalizeBatchState();
+    _stateRestored = true;
+  }, needsReady: false);
 
   Future<void> importMedia({required bool photos}) =>
       _run(EditorOperation.importing, (generation) async {
@@ -424,7 +703,11 @@ class EditorController extends ChangeNotifier {
         } else if (result.sessions.length == 1) {
           isBatchMode = false;
           selected = result.sessions.first;
+        } else {
+          isBatchMode = false;
+          selected = null;
         }
+        _normalizeBatchState();
         if (result.errors.isNotEmpty) {
           notice =
               '${result.sessions.length} imported. ${result.errors.join('\n')}';
@@ -554,6 +837,8 @@ class EditorController extends ChangeNotifier {
     bool retry = false,
   }) async {
     if (busy || !ready || patches.isEmpty) return;
+    final wasBatchMode = isBatchMode;
+    final priorSelectionId = selected?.id;
     for (final entry in patches.entries) {
       final matches = sessions.where((s) => s.id == entry.key);
       final invalid = entry.value.validate();
@@ -580,7 +865,11 @@ class EditorController extends ChangeNotifier {
       }
       await _persist();
       queueCompleted = 0;
-      for (final item in queue) {
+      // Per-item reconciliation may prune rows whose sessions were removed
+      // natively. Iterate a snapshot and skip any rows no longer in the live
+      // queue so reconciliation cannot mutate this active iteration.
+      for (final item in List<QueueItem>.of(queue)) {
+        if (!queue.contains(item)) continue;
         if (!_current(generation)) break;
         if (item.status == 'completed') {
           queueCompleted++;
@@ -591,7 +880,17 @@ class EditorController extends ChangeNotifier {
         await _persist();
         _emit();
         try {
-          final source = sessions.firstWhere((s) => s.id == item.sessionId);
+          final source = sessions
+              .where((s) => s.id == item.sessionId)
+              .firstOrNull;
+          if (source == null) {
+            item.status = 'failed';
+            item.message = 'Source media session was not found.';
+            queueCompleted++;
+            await _persist();
+            _emit();
+            continue;
+          }
           _upsert(source.withoutOutput());
           final result = await bridge.processMetadata(
             item.sessionId,
@@ -606,6 +905,10 @@ class EditorController extends ChangeNotifier {
           item.status = result.processing!.integrity.hasMismatch
               ? 'failed'
               : 'completed';
+          if (result.processing!.integrity.hasAdditionalDetailsWarning &&
+              item.status == 'completed') {
+            item.message = 'Some other file details may have changed.';
+          }
           if (item.status == 'failed') {
             item.message = 'Preservation check failed. Export blocked.';
           }
@@ -618,6 +921,7 @@ class EditorController extends ChangeNotifier {
               if (_current(generation)) {
                 _sessions = recovered;
                 selected = null;
+                _normalizeBatchState();
                 acknowledgedProcessingId = null;
               }
             } catch (_) {
@@ -642,8 +946,12 @@ class EditorController extends ChangeNotifier {
       }
       await _persist();
       if (_current(generation)) {
-        selected = null;
-        isBatchMode = false;
+        final previousSelection = sessions.where(
+          (session) => session.id == priorSelectionId,
+        );
+        selected = previousSelection.isEmpty ? null : previousSelection.first;
+        isBatchMode = wasBatchMode;
+        _normalizeBatchState();
         notice =
             'Batch finished: ${queue.where((q) => q.status == "completed").length}/${queue.length} ready.';
       }
@@ -658,14 +966,20 @@ class EditorController extends ChangeNotifier {
       .length;
   int get queueRunningCount => queue.where((q) => q.status == 'running').length;
 
-  Future<void> retryBatch() => processBatch({
-    for (final item in queue)
-      if (item.status != 'completed') item.sessionId: item.patch,
-  }, retry: true);
+  Future<void> retryBatch() {
+    final validIds = sessions.map((s) => s.id).toSet();
+    return processBatch({
+      for (final item in queue)
+        if (item.status != 'completed' && validIds.contains(item.sessionId))
+          item.sessionId: item.patch,
+    }, retry: true);
+  }
+
   Future<void> exportSelectedBatch({
     bool acknowledgeIncomplete = false,
     bool onlyReady = false,
   }) => _run(EditorOperation.exporting, (_) async {
+    if (_reconcileCompletedQueueRows()) await _persist();
     final completedIds = queue
         .where((q) => q.status == 'completed')
         .map((q) => q.sessionId)
@@ -713,6 +1027,7 @@ class EditorController extends ChangeNotifier {
     bool acknowledgeIncomplete = false,
     bool onlyReady = false,
   }) => _run(EditorOperation.exporting, (_) async {
+    if (_reconcileCompletedQueueRows()) await _persist();
     final completedIds = queue
         .where((q) => q.status == 'completed')
         .map((q) => q.sessionId)
@@ -829,8 +1144,11 @@ class EditorController extends ChangeNotifier {
     if (!busy ||
         cancellationRequested ||
         operation == EditorOperation.loading ||
+        operation == EditorOperation.preparingCopies ||
         operation == EditorOperation.deleting ||
-        operation == EditorOperation.openingBrowser) {
+        operation == EditorOperation.openingBrowser ||
+        operation == EditorOperation.openingWebsite ||
+        operation == EditorOperation.openingEmail) {
       return;
     }
     cancellationRequested = true;
@@ -855,6 +1173,7 @@ class EditorController extends ChangeNotifier {
         if (selected?.id == session.id) selected = null;
         batchSelection.remove(session.id);
         queue.removeWhere((q) => q.sessionId == session.id);
+        _normalizeBatchState();
         await _persist();
         acknowledgedProcessingId = null;
         notice = 'App-owned copies removed. Photos and provider originals are unchanged.';
@@ -866,16 +1185,32 @@ class EditorController extends ChangeNotifier {
     selected = null;
     queue = [];
     batchSelection.clear();
+    isBatchMode = false;
+    _normalizeBatchState();
     await _persist();
     acknowledgedProcessingId = null;
     notice =
         'Local projects cleared. Photos and provider originals are unchanged.';
   }, reconcileOnFailure: true);
-  Future<void> openICloud() =>
-      _run(EditorOperation.openingBrowser, (_) => bridge.openICloud());
+  Future<void> openICloud() => _run(
+    EditorOperation.openingBrowser,
+    (_) => bridge.openICloud(),
+    needsReady: false,
+  );
   Future<void> openUrl(String url) =>
       _run(EditorOperation.openingBrowser, (_) => bridge.openUrl(url));
-  Future<void> openWebsite() => openUrl(AppBrand.websiteUrl);
+  Future<void> openWebsite() => _run(
+    EditorOperation.openingWebsite,
+    (_) => bridge.openUrl(AppBrand.websiteUrl),
+    needsReady: false,
+  );
+  Future<void> openSupportEmail() =>
+      _run(EditorOperation.openingEmail, (generation) async {
+        await bridge.openSupportEmail();
+        if (_current(generation)) {
+          notice = 'Continue in your email app to send your message.';
+        }
+      }, needsReady: false);
   Future<Map<String, double>?> pickLocation({
     double? latitude,
     double? longitude,
@@ -885,6 +1220,7 @@ class EditorController extends ChangeNotifier {
       return await bridge.openLocationPicker(
         latitude: latitude,
         longitude: longitude,
+        appearance: appearance,
       );
     } catch (failure) {
       if (!_disposed) {
@@ -906,7 +1242,14 @@ class EditorController extends ChangeNotifier {
     selectedProfileId = profileId;
     selectedCameraId = cameraId;
     notifyListeners();
-    await _persist();
+    try {
+      await _persist();
+    } catch (failure) {
+      // Profile selection is also invoked from UI callbacks that intentionally
+      // do not await persistence. Surface storage failures here so they cannot
+      // become unhandled async errors or silently look like a saved preference.
+      recordError(readableError(failure));
+    }
   }
 
   Future<Map<String, String>?> getHostDevice() => bridge.getHostDevice();
@@ -925,7 +1268,7 @@ class EditorController extends ChangeNotifier {
     } catch (_) {}
   }
 
-  Future<void> resetPresets() async {
+  Future<void> resetPresets() => _run(EditorOperation.deleting, (_) async {
     final before = List<SavedPreset>.of(presets);
     final beforeBrand = selectedBrand;
     final beforeProfileId = selectedProfileId;
@@ -937,7 +1280,6 @@ class EditorController extends ChangeNotifier {
     try {
       await _persist();
       notice = 'Saved camera presets reset.';
-      notifyListeners();
     } catch (error) {
       presets = before;
       selectedBrand = beforeBrand;
@@ -945,7 +1287,7 @@ class EditorController extends ChangeNotifier {
       selectedCameraId = beforeCameraId;
       rethrow;
     }
-  }
+  });
 
   @override
   void dispose() {

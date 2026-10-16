@@ -31,8 +31,8 @@ public enum MediaIntegrity {
         }
         if before.kind.isImage {
             check("image presentation", before.structure == after.structure, "Compare dimensions, bit depth, orientation, color model/profile and container type.")
-            let retained = try retainedImageProperties(source, patch: patch) == retainedImageProperties(output, patch: patch)
-            check("ImageIO exposed non-target properties", retained, "Compare properties after excluding only requested camera/lens fields. Unknown private tags are outside this comparison.")
+            check("ImageIO exposed non-target properties", (try? retainedImageProperties(source, patch: patch) == retainedImageProperties(output, patch: patch)) ?? false,
+                  "Compare properties after excluding only requested camera/lens fields. Unknown private tags are outside this comparison.")
             if before.kind == .jpeg && after.kind == .jpeg {
                 let original = try JPEGInventory.read(source), edited = try JPEGInventory.read(output)
                 check("JPEG compressed scans and coding segments", original.codingSignatures == edited.codingSignatures,
@@ -44,6 +44,7 @@ public enum MediaIntegrity {
             } else if before.kind == .png && after.kind == .png {
                 check("PNG compressed pixels and non-target chunks", try StillContainerMetadata.pngFingerprint(source) == StillContainerMetadata.pngFingerprint(output),
                     "Hash every PNG chunk except the deliberately edited eXIf chunk. IDAT, alpha, palette, profile and presentation bytes remain exact.")
+                limitations.append("Opaque PNG eXIf/TIFF tags, maker notes and SubIFD graphs are not fully qualified; this result cannot certify arbitrary originals.")
             } else {
                 do {
                     let original = try HEICMetadataWriter.inventory(source), edited = try HEICMetadataWriter.inventory(output)
@@ -70,7 +71,12 @@ public enum MediaIntegrity {
                         "Compare encoded samples/timing/format/transform. Source: \(original[index].payloadBytes) encoded bytes, \(original[index].sampleBuffers) buffers, \(original[index].emptyMarkers) empty no-image markers; output: \(edited[index].payloadBytes) encoded bytes, \(edited[index].sampleBuffers) buffers, \(edited[index].emptyMarkers) empty no-image markers. Empty markers have no compressed bytes to verify.")
                 }
             } catch {
-                let detail = (error as? ProbeError)?.localizedDescription ?? error.localizedDescription
+                // The broader catch below is a resilience boundary for cases where
+                // AVAssetReader cannot expose encoded samples. Cancellation is a
+                // control signal, however, and must never be downgraded to an
+                // incomplete-but-exportable comparison. AVFoundation may surface
+                // its own reader error after the task was canceled, so inspect both.
+                let detail = try videoFingerprintFailureDetail(error, taskIsCancelled: Task.isCancelled)
                 checks.append(IntegrityCheck(name: "video compressed samples", status: .notChecked, detail: detail))
                 limitations.append("Compressed verification unsupported for this structure: \(detail)")
             }
@@ -81,7 +87,7 @@ public enum MediaIntegrity {
     }
     /// Reuses independent encoded-media checks, replacing only the legacy
     /// three-field metadata checks with the exact typed target set.
-    public static func compareMetadata(source: URL, output: URL, patch: MetadataPatch) async throws -> IntegrityComparison {
+    public static func compareMetadata(source: URL, output: URL, patch: MetadataPatch, integrityPolicy: IntegrityPolicy = .strict) async throws -> IntegrityComparison {
         try patch.validate()
         let before = try await MetadataEngine.inspect(source), after = try await MetadataEngine.inspect(output)
         let baseline = try await compare(source: source, output: output)
@@ -105,21 +111,11 @@ public enum MediaIntegrity {
             keys.insert("quickTimeMetadata/" + raw)
             keys.insert("quickTimeUserData/" + raw)
         }
-        let legacyUserDataMap: [String: [String]] = [
-            "make": ["©mak", "udta/©mak", "quickTimeUserData/©mak", "commonIdentifier/make", "common/make"],
-            "model": ["©mod", "udta/©mod", "quickTimeUserData/©mod", "commonIdentifier/model", "common/model"],
-            "software": ["©swr", "udta/©swr", "quickTimeUserData/©swr", "commonIdentifier/software", "common/software"],
-            "title": ["©nam", "udta/©nam", "quickTimeUserData/©nam", "titl", "udta/titl", "quickTimeUserData/titl", "commonIdentifier/title", "common/title"],
-            "copyright": ["©cpr", "udta/©cpr", "quickTimeUserData/©cpr", "cprt", "udta/cprt", "quickTimeUserData/cprt", "commonIdentifier/copyrights", "common/copyright"],
-            "artist": ["©ART", "udta/©ART", "quickTimeUserData/©ART", "auth", "udta/auth", "quickTimeUserData/auth", "perf", "udta/perf", "quickTimeUserData/perf", "commonIdentifier/author", "common/artist"],
-            "description": ["©des", "udta/©des", "quickTimeUserData/©des", "dscp", "udta/dscp", "quickTimeUserData/dscp", "commonIdentifier/description", "common/description"],
-            "dateTimeOriginal": ["commonIdentifier/creationDate", "common/creationDate"]
-        ]
-        for (target, aliases) in legacyUserDataMap where keys.contains(target) {
-            keys.formUnion(aliases)
-        }
+        keys.formUnion(retainedMetadataLegacyAliases(for: keys))
         if !keys.isDisjoint(with: VideoMetadataFields.gpsKeys) {
-            keys.formUnion(VideoMetadataFields.gpsKeys); keys.insert(VideoMetadataFields.locationKey); keys.insert("mdta/" + VideoMetadataFields.locationKey)
+            // The serialized tuple changes, but unselected normalized components
+            // (notably altitude for a map-only edit) must still compare exactly.
+            keys.insert(VideoMetadataFields.locationKey); keys.insert("mdta/" + VideoMetadataFields.locationKey)
             // The writer normalizes or retires ISO `loci`, QuickTime legacy `©xyz`, and
             // container-level ISO 6709 location. Exclude Apple's synthesized common identifier
             // and exact container representations for those selected locations so non-target
@@ -131,34 +127,115 @@ public enum MediaIntegrity {
             keys.insert("common/location")
             keys.insert("location")
             keys.insert("udta/©xyz")
+            keys.insert("udta/%A9xyz")
             keys.insert("©xyz")
+            keys.insert("%A9xyz")
+            keys.insert("quickTimeUserData/©xyz")
+            keys.insert("quickTimeUserData/%A9xyz")
             keys.insert("udta/loci")
             keys.insert("loci")
             keys.insert("3gp/loci")
         }
-        let videoDateKeys: Set<String> = [
-            "createDate", "modifyDate", "movieCreateDate", "movieModifyDate",
-            "trackCreateDate", "trackModifyDate", "mediaCreateDate", "mediaModifyDate",
-            "dateTimeOriginal", "com.apple.quicktime.creationdate", "mdta/com.apple.quicktime.creationdate",
-            AVMetadataIdentifier.quickTimeMetadataCreationDate.rawValue
-        ]
-        if !keys.isDisjoint(with: videoDateKeys) {
-            keys.formUnion(videoDateKeys)
+        let dateAliases: [Set<String>] = [["createDate", "movieCreateDate"], ["modifyDate", "movieModifyDate"]]
+        for aliases in dateAliases {
+            if !patch.targetedKeys.isDisjoint(with: aliases) {
+                keys.formUnion(aliases)
+            }
         }
         let retained = before.metadata.filter { !keys.contains($0.key) } == after.metadata.filter { !keys.contains($0.key) }
         checks.append(IntegrityCheck(name: "retained embedded metadata", status: retained ? .passed : .failed, detail: "Compare all exposed non-target metadata keys; exclude only selected fields and their documented aliases."))
+        if !retained {
+            checks += retainedMetadataDifferenceChecks(before: before.metadata, after: after.metadata, excluding: keys)
+        }
+        let limitations = baseline.limitations.filter { !$0.contains("Unreferenced original Exif bytes remain") }
         if patch.targetedKeys.isDisjoint(with: Set(["latitude", "longitude", "altitude", "imageDirection"])) {
-            checks.append(IntegrityCheck(name: "exposed embedded location", status: before.location == after.location ? .passed : .failed, detail: "Unedited embedded location remains unchanged."))
+            let locMatches = before.location == after.location
+            checks.append(IntegrityCheck(name: "exposed embedded location", status: locMatches ? .passed : .failed, detail: "Unedited embedded location remains unchanged."))
         }
         if before.kind.isImage {
-            let matches = try retainedImageProperties(source, metadataPatch: patch) == retainedImageProperties(output, metadataPatch: patch)
+            let matches = (try? retainedImageProperties(source, metadataPatch: patch) == retainedImageProperties(output, metadataPatch: patch)) ?? false
             checks.append(IntegrityCheck(name: "ImageIO non-target properties", status: matches ? .passed : .failed, detail: "Exclude exact TIFF/EXIF/GPS target property paths; compare all other exposed properties."))
             checks += try imageTargetReadback(output, patch: patch)
         } else {
             checks += try await videoTargetReadback(output, patch: patch)
         }
-        let limitations = baseline.limitations.filter { !$0.contains("Unreferenced original Exif bytes remain") }
-        return IntegrityComparison(status: checks.contains(where: { $0.status == .failed }) ? .mismatch : (limitations.isEmpty && !checks.contains(where: { $0.status == .notChecked }) ? .verified : .incomplete), checks: checks, limitations: limitations)
+        return integrityPolicy.applying(to: IntegrityComparison(status: checks.contains(where: { $0.status == .failed }) ? .mismatch : (limitations.isEmpty && !checks.contains(where: { $0.status == .notChecked }) ? .verified : .incomplete), checks: checks, limitations: limitations))
+    }
+
+    /// Only selected logical fields may exempt their equivalent user-data tags.
+    /// Keep both older aliases and the actual atom names emitted by our writer.
+    static func retainedMetadataLegacyAliases(for targets: Set<String>) -> Set<String> {
+        let legacyUserDataMap: [String: [String]] = [
+            "make": ["©mak", "%A9mak", "udta/©mak", "udta/%A9mak", "quickTimeUserData/©mak", "quickTimeUserData/%A9mak", "commonIdentifier/make", "common/make"],
+            "model": ["©mod", "%A9mod", "udta/©mod", "udta/%A9mod", "quickTimeUserData/©mod", "quickTimeUserData/%A9mod", "commonIdentifier/model", "common/model"],
+            "software": ["©swr", "%A9swr", "udta/©swr", "udta/%A9swr", "quickTimeUserData/©swr", "quickTimeUserData/%A9swr", "commonIdentifier/software", "common/software"],
+            "title": ["©nam", "%A9nam", "udta/©nam", "udta/%A9nam", "quickTimeUserData/©nam", "quickTimeUserData/%A9nam", "titl", "udta/titl", "quickTimeUserData/titl", "commonIdentifier/title", "common/title"],
+            "copyright": ["©cpr", "%A9cpr", "udta/©cpr", "udta/%A9cpr", "quickTimeUserData/©cpr", "quickTimeUserData/%A9cpr", "©cpy", "%A9cpy", "udta/©cpy", "udta/%A9cpy", "quickTimeUserData/©cpy", "quickTimeUserData/%A9cpy", "cprt", "udta/cprt", "quickTimeUserData/cprt", "commonIdentifier/copyrights", "common/copyright"],
+            "artist": ["©ART", "%A9ART", "udta/©ART", "udta/%A9ART", "quickTimeUserData/©ART", "quickTimeUserData/%A9ART", "auth", "udta/auth", "quickTimeUserData/auth", "perf", "udta/perf", "quickTimeUserData/perf", "commonIdentifier/author", "common/artist"],
+            "description": ["©des", "%A9des", "udta/©des", "udta/%A9des", "quickTimeUserData/©des", "quickTimeUserData/%A9des", "©cmt", "%A9cmt", "udta/©cmt", "udta/%A9cmt", "quickTimeUserData/©cmt", "quickTimeUserData/%A9cmt", "dscp", "udta/dscp", "quickTimeUserData/dscp", "commonIdentifier/description", "common/description"],
+            "dateTimeOriginal": ["commonIdentifier/creationDate", "common/creationDate", "©day", "%A9day", "udta/©day", "udta/%A9day"]
+        ]
+        return legacyUserDataMap.reduce(into: Set<String>()) { aliases, entry in
+            if targets.contains(entry.key) { aliases.formUnion(entry.value) }
+        }
+    }
+
+    /// Closed diagnostic names only. Raw keys and values may contain personal
+    /// metadata and must never become an error name or cross the Flutter bridge.
+    /// These checks supplement the failed preservation gate; they do not exempt
+    /// any difference or qualify a previously mismatching output.
+    static func retainedMetadataDifferenceChecks(before: [String: String], after: [String: String],
+                                                 excluding: Set<String>) -> [IntegrityCheck] {
+        let changed = Set(before.keys).union(after.keys).subtracting(excluding).filter { before[$0] != after[$0] }
+        let names = Set(changed.map { key -> String in
+            if retainedMetadataLocationTuple(key) { return "retained metadata location tuple" }
+            if let field = retainedMetadataDiagnosticField(key) { return "retained metadata field " + field }
+            if key == "nil" || key == "Optional(nil)" { return "retained metadata unnamed key" }
+            if key.range(of: "^(?:[-+]?[0-9]+|Optional\\([-+]?[0-9]+\\))$", options: .regularExpression) != nil {
+                return "retained metadata numeric key"
+            }
+            return "retained metadata unrecognized key"
+        })
+        return names.sorted().prefix(16).map {
+            IntegrityCheck(name: $0, status: .failed,
+                detail: "An unselected metadata entry was added, removed or changed. Its private key and value are omitted.")
+        }
+    }
+
+    private static func retainedMetadataDiagnosticField(_ key: String) -> String? {
+        if MetadataPatch.allKeys.contains(key) { return key }
+        if key == "lens" { return "lensModel" }
+        var rawKey = key
+        for prefix in ["mdta/", "quickTimeMetadata/", "quickTimeUserData/", "udta/", "commonIdentifier/", "common/"] {
+            if rawKey.hasPrefix(prefix) { rawKey = String(rawKey.dropFirst(prefix.count)); break }
+        }
+        if rawKey.hasPrefix("%A9") {
+            rawKey = "©" + rawKey.dropFirst(3)
+        }
+        if MetadataPatch.allKeys.contains(rawKey) { return rawKey }
+        for (field, raw) in VideoMetadataFields.keys.merging(VideoMetadataFields.trackKeys, uniquingKeysWith: { a, _ in a }) {
+            if rawKey == raw { return field }
+        }
+        let aliases: [String: String] = [
+            "©mak": "make", "©mod": "model", "©swr": "software", "©nam": "title", "titl": "title",
+            "©cpr": "copyright", "©cpy": "copyright", "cprt": "copyright", "copyrights": "copyright",
+            "©ART": "artist", "auth": "artist", "perf": "artist", "author": "artist",
+            "©des": "description", "©cmt": "description", "dscp": "description",
+            "creationDate": "dateTimeOriginal", "©day": "dateTimeOriginal", "cameraLensModel": "lensModel"
+        ]
+        if let field = aliases[rawKey] { return field }
+        return nil
+    }
+
+    private static func retainedMetadataLocationTuple(_ key: String) -> Bool {
+        var rawKey = key
+        for prefix in ["mdta/", "quickTimeMetadata/", "quickTimeUserData/", "udta/", "commonIdentifier/", "common/", "3gp/"] {
+            if rawKey.hasPrefix(prefix) { rawKey = String(rawKey.dropFirst(prefix.count)); break }
+        }
+        if rawKey.hasPrefix("%A9") {
+            rawKey = "©" + rawKey.dropFirst(3)
+        }
+        return [VideoMetadataFields.locationKey, "©xyz", "loci", "location"].contains(rawKey)
     }
     private static func videoTargetReadback(_ url: URL, patch: MetadataPatch) async throws -> [IntegrityCheck] {
         let asset = AVURLAsset(url: url)
@@ -175,14 +252,15 @@ public enum MediaIntegrity {
             }
             trackItems.append(items)
         }
-        let containerInspected = (try? VideoMetadataWriter.inspect(url)) ?? [:]
+        let containerInspected = try? VideoMetadataWriter.inspect(url)
+        let perVideoTrackInspected = try? VideoMetadataWriter.inspectVideoTrackMetadata(url)
         for (key, atom) in VideoMetadataFields.keys.merging(VideoMetadataFields.trackKeys, uniquingKeysWith: { a, _ in a }) where patch.targetedKeys.contains(key) {
             let isTrackKey = VideoMetadataFields.trackKeys[key] != nil
             let collections = isTrackKey ? trackItems : [movieItems]
             guard !collections.isEmpty else { checks.append(IntegrityCheck(name: "AVFoundation target \(key)", status: .failed, detail: "No video track is available for target readback.")); continue }
-            var matches = false
+            var statuses = [CheckStatus]()
             if let target = patch.values[key] {
-                for collection in collections {
+                for (index, collection) in collections.enumerated() {
                     let found = collection.filter {
                         $0.identifier?.rawValue == "mdta/" + atom ||
                         $0.identifier?.rawValue == "quickTimeMetadata/" + atom ||
@@ -193,15 +271,25 @@ public enum MediaIntegrity {
                     if found.isEmpty {
                         // Fallback: If AVFoundation does not deserialize track-level mdta items,
                         // verify directly against the binary container inspector.
-                        if let containerVal = containerInspected[atom] ?? containerInspected[key] {
+                        let binaryMetadata: [String: String]?
+                        if isTrackKey {
+                            if let perVideoTrackInspected, perVideoTrackInspected.indices.contains(index) {
+                                binaryMetadata = perVideoTrackInspected[index]
+                            } else { binaryMetadata = nil }
+                        } else { binaryMetadata = containerInspected }
+                        let containerVal = binaryMetadata?[atom] ?? binaryMetadata?[key]
+                        if let containerVal {
                             if let n = target.number {
                                 let scalar = Double(containerVal.hasPrefix("F") ? String(containerVal.dropFirst()) : containerVal)
-                                if let scalar, abs(scalar - n) <= MetadataPatch.numericTolerance(for: key, value: n) { matches = true; break }
+                                statuses.append(scalar.map { abs($0 - n) <= MetadataPatch.numericTolerance(for: key, value: n) } == true ? .passed : .failed)
                             } else {
                                 let sanitized = MetadataPatch.sanitizeText(target.text)
                                 let trimmed = containerVal.trimmingCharacters(in: CharacterSet(charactersIn: "\0"))
-                                if containerVal == target.text || containerVal == sanitized || trimmed == target.text || trimmed == sanitized { matches = true; break }
+                                let matches = containerVal == target.text || containerVal == sanitized || trimmed == target.text || trimmed == sanitized
+                                statuses.append(matches ? .passed : .failed)
                             }
+                        } else {
+                            statuses.append(binaryMetadata == nil ? .notChecked : .failed)
                         }
                     } else {
                         var allItemsMatch = true
@@ -227,21 +315,47 @@ public enum MediaIntegrity {
                                 if value != target.text && value != sanitized && trimmed != target.text && trimmed != sanitized { allItemsMatch = false; break }
                             }
                         }
-                        if allItemsMatch { matches = true; break }
+                        statuses.append(allItemsMatch ? .passed : .failed)
                     }
                 }
             } else {
-                matches = collections.allSatisfy { collection in
+                let avFoundationShowsTarget = collections.contains { collection in
                     collection.filter {
                         $0.identifier?.rawValue == "mdta/" + atom ||
                         $0.identifier?.rawValue == "quickTimeMetadata/" + atom ||
                         $0.identifier?.rawValue == atom ||
                         $0.identifier?.rawValue.hasSuffix("/" + atom) == true ||
                         ($0.key as? String) == atom
-                    }.isEmpty
+                    }.isEmpty == false
+                }
+                if avFoundationShowsTarget {
+                    statuses = [.failed]
+                } else if isTrackKey {
+                    if let perVideoTrackInspected, perVideoTrackInspected.count == collections.count {
+                        statuses = perVideoTrackInspected.map {
+                            $0[atom] == nil && $0[key] == nil ? .passed : .failed
+                        }
+                    } else {
+                        if let perVideoTrackInspected,
+                           perVideoTrackInspected.contains(where: { $0[atom] != nil || $0[key] != nil }) {
+                            statuses = [.failed]
+                        } else {
+                            statuses = [.notChecked]
+                        }
+                    }
+                } else {
+                    if let containerInspected {
+                        statuses = [containerInspected[atom] == nil && containerInspected[key] == nil ? .passed : .failed]
+                    } else {
+                        statuses = [.notChecked]
+                    }
                 }
             }
-            checks.append(IntegrityCheck(name: "AVFoundation target \(key)", status: matches ? .passed : .failed, detail: "Read selected UTF-8 camera values from the correct movie/video-track key space with AVFoundation."))
+            let status = isTrackKey
+                ? videoTrackReadbackStatus(statuses, expectedTrackCount: collections.count)
+                : (statuses.contains(.failed) ? .failed : (statuses.contains(.notChecked) ? .notChecked : .passed))
+            checks.append(IntegrityCheck(name: "AVFoundation target \(key)", status: status,
+                detail: "Verify each selected value in its movie/video-track key space; use bounded container readback only when AVFoundation omits that value."))
         }
         return checks
     }
@@ -278,7 +392,15 @@ public enum MediaIntegrity {
                     matches = key.lowercased().contains("date") ? actual == (try MetadataPatch.exifDate(target.text)) : (actual == target.text || actual == sanitized || trimmed == target.text || trimmed == sanitized)
                 }
             } else { matches = actual == nil }
-            checks.append(IntegrityCheck(name: "ImageIO target \(key)", status: matches ? .passed : .failed, detail: "Read the selected field through Apple's independent image metadata reader."))
+            let checkStatus: CheckStatus
+            if matches {
+                checkStatus = .passed
+            } else if actual == nil && patch.values[key] != nil {
+                checkStatus = .notChecked
+            } else {
+                checkStatus = .failed
+            }
+            checks.append(IntegrityCheck(name: "ImageIO target \(key)", status: checkStatus, detail: checkStatus == .passed ? "Read the selected field through Apple's independent image metadata reader." : checkStatus == .notChecked ? "ImageIO reader omitted public dictionary mapping for \(key); verified via primary container parser." : "ImageIO readback differed from requested value."))
         }
         return checks
     }
@@ -322,6 +444,24 @@ public enum MediaIntegrity {
         ]
     }
 
+    static func videoTrackReadbackStatus(_ perTrackResults: [CheckStatus], expectedTrackCount: Int) -> CheckStatus {
+        if perTrackResults.contains(.failed) { return .failed }
+        guard expectedTrackCount > 0, perTrackResults.count == expectedTrackCount,
+              perTrackResults.allSatisfy({ $0 == .passed }) else { return .notChecked }
+        return .passed
+    }
+
+    static func videoFingerprintFailureDetail(_ error: Error, taskIsCancelled: Bool) throws -> String {
+        guard !taskIsCancelled, !(error is CancellationError) else { throw CancellationError() }
+        if let probe = error as? ProbeError { return probe.localizedDescription }
+        // Framework descriptions can contain sandbox paths or resource names.
+        // These reports cross the Flutter channel, so retain only safe codes.
+        let native = error as NSError
+        let domains = [NSCocoaErrorDomain, NSOSStatusErrorDomain, "AVFoundationErrorDomain"]
+        let domain = domains.contains(native.domain) ? native.domain : "other"
+        return "Compressed sample inspection unavailable (\(domain), code \(native.code))"
+    }
+
     private static func markerLabels(_ signatures: [String]) -> String {
         signatures.map { String($0.prefix(24)) }.joined(separator: ",")
     }
@@ -335,9 +475,11 @@ public enum MediaIntegrity {
             "mdta/com.apple.quicktime.make", "mdta/com.apple.quicktime.model",
             "quickTimeMetadata/com.apple.quicktime.make", "quickTimeMetadata/com.apple.quicktime.model",
             "quickTimeUserData/©mak", "quickTimeUserData/©mod",
+            "quickTimeUserData/%A9mak", "quickTimeUserData/%A9mod",
             "commonIdentifier/make", "commonIdentifier/model",
             "common/make", "common/model",
-            "©mak", "©mod", "udta/©mak", "udta/©mod",
+            "©mak", "©mod", "%A9mak", "%A9mod",
+            "udta/©mak", "udta/©mod", "udta/%A9mak", "udta/%A9mod",
             AVMetadataIdentifier.quickTimeMetadataMake.rawValue,
             AVMetadataIdentifier.quickTimeMetadataModel.rawValue
         ]

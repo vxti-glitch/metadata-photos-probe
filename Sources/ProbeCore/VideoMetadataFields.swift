@@ -27,6 +27,17 @@ enum VideoMetadataFields {
     static let supported = Set(keys.keys).union(trackKeys.keys).union(dateKeys).union(gpsKeys)
     static let locationKey = "com.apple.quicktime.location.ISO6709"
     static func values(_ patch: MetadataPatch, existing: [String: String], track: Bool) throws -> [String: String?] {
+        let removesLatitude = patch.removals.contains("latitude")
+        let removesLongitude = patch.removals.contains("longitude")
+        guard removesLatitude == removesLongitude else {
+            throw ProbeError.unsupported("Movie location is stored as a latitude/longitude pair; remove both coordinates together")
+        }
+        if removesLatitude, existing["altitude"] != nil, !patch.removals.contains("altitude") {
+            throw ProbeError.unsupported("Removing a movie location also removes its altitude; explicitly remove altitude too")
+        }
+        if removesLatitude, !Set(patch.values.keys).isDisjoint(with: gpsKeys) {
+            throw ProbeError.unsupported("A movie location pair cannot be removed while setting another coordinate")
+        }
         for key in dateKeys.union(["dateTimeOriginal"]) {
             guard let value = patch.values[key] else { continue }
             let iso = ISO8601DateFormatter()
@@ -39,7 +50,13 @@ enum VideoMetadataFields {
             _ = try MetadataPatch.date(value.text)
         }
         var result = [String: String?]()
-        for (key, atom) in (track ? trackKeys : keys) where patch.targetedKeys.contains(key) { result[atom] = .some(patch.values[key]?.text) }
+        for (key, atom) in (track ? trackKeys : keys) where patch.targetedKeys.contains(key) {
+            var text = patch.values[key]?.text
+            // Apple's camera files use the UTF-8 iris convention F1.78.
+            // Keep the public numeric patch API independent of this encoding.
+            if key == "fNumber", let value = text { text = "F" + value }
+            result[atom] = .some(text)
+        }
         if !track, !patch.targetedKeys.isDisjoint(with: gpsKeys) {
             if patch.removals.contains("latitude") || patch.removals.contains("longitude") { result[locationKey] = .some(nil) }
             else {
@@ -59,6 +76,12 @@ enum VideoMetadataFields {
             }
         }
         return result
+    }
+    static func canonicalValue(_ text: String?, for key: String) -> String? {
+        guard key == "fNumber", let text, text.hasPrefix("F") else { return text }
+        let number = String(text.dropFirst())
+        guard let value = Double(number), value.isFinite, value > 0 else { return text }
+        return number
     }
     static func decodeLocation(_ text: String) -> [String: String] {
         let regex = try? NSRegularExpression(pattern: "^([+-][0-9]{2}(?:\\.[0-9]+)?)([+-][0-9]{3}(?:\\.[0-9]+)?)([+-][0-9]+(?:\\.[0-9]+)?)?/$")

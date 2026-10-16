@@ -333,9 +333,8 @@ class SavedPreset {
       throw const FormatException('Unsupported preset version.');
     }
     final name = requiredString(m, 'name');
-    if (name.trim().isEmpty || name.length > 80) {
-      throw const FormatException('Preset name must have 1–80 characters.');
-    }
+    final invalidName = validatePresetName(name);
+    if (invalidName != null) throw FormatException(invalidName);
     return SavedPreset(
       identifier(m, 'id'),
       name,
@@ -343,6 +342,15 @@ class SavedPreset {
       recipe: m['recipe'] == null ? null : ProfileRecipe.decode(m['recipe']),
     );
   }
+}
+
+String? validatePresetName(String name) {
+  final trimmed = name.trim();
+  if (trimmed.isEmpty) return 'Preset name must not be empty.';
+  if (utf8.encode(name).length > 128) {
+    return 'Preset name must be no more than 128 UTF-8 bytes.';
+  }
+  return null;
 }
 
 class ProfileRecipe {

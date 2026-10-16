@@ -4,13 +4,17 @@ Local metadata editing, then **Files → manual Safari/iCloud Photos upload → 
 
 ## Editor 0.4
 
-Import JPEG, HEIC, PNG, MP4 or MOV from Photos or Files, individually or in batches. Choose Brand → Model → Camera from the researched catalog, configure randomization, or manually Keep/Set/Remove supported fields. Save reusable presets, including profile recipes; import/export validated preset JSON. Process frozen plans, recover/retry unfinished batches, and export collision-checked IMG_#### copies. Original/provider media stay immutable.
+Import JPEG, HEIC, PNG, MP4 or MOV through the Home media picker. Selecting multiple files opens the batch editor automatically. The editor prepares randomized supported metadata and matches a recognized host phone to the researched catalog; camera selection stays available. Unknown phones are not assigned invented hardware fields. Open Manual editing for profile overrides, typed Keep/Set/Remove fields, randomization ranges, GPS, privacy removal, saved presets and validated recipe import/export.
+
+Review freezes one shared metadata plan for all selected files, shaped to each format's capabilities, with unique native-reserved IMG_#### filenames. Timestamp spacing is an optional manual override. Create separate copies, then export eligible results to Files or Share. Local projects retains saved copies and unfinished batch recovery. Original/provider media stay immutable.
+
+Settings opens from the gear and retains the editor draft. Appearance supports System, Light and Dark across nested routes. Error Codes & Fixes is inside Settings. Contact support opens the default email handler with `vxti.dev@gmail.com` and subject `Metadata Editor Support`; it does not send mail. The Photos guide explains the manual Files → Safari/iCloud Photos → sync workflow without promising Photos attribution behavior.
 
 Still-image fields cover the supplied script's camera, lens, software, exposure, dates/time zones and GPS operations plus descriptive fields. Movies expose supported QuickTime camera/lens/location/descriptive metadata and movie/track/media dates. Actual resolution, codec, frame rate, duration, HDR and audio are preserved rather than invented. The per-format native registry controls available fields. Camera names that are descriptive rather than captured EXIF literals are identified in optional Details.
 
 PNG stays PNG, preserving transparency and compressed pixels. There is no recompression or automatic format conversion. Known integrity failures block export; disclosed incomplete verification still requires acknowledgment. Selective removal fails safely when competing metadata or unqualified structures prevent proving that a field was removed. Proprietary MakerNotes are not advertised as universally editable or fully anonymized.
 
-The main flow is Import → Preset/edit → Process → Export. Technical reports and exact comparison of a downloaded iCloud Unmodified Original are in optional Details. Preview images are display derivatives and never processing outputs. Photos imports original resources and refuses Live Photos; current Photos adjustments are not silently flattened.
+The main flow is Select media → Prepared changes/manual edits → Review → Create copies → Export. Technical reports and exact comparison of a downloaded iCloud Unmodified Original are in optional Details. Preview images are display derivatives and never processing outputs. Photos imports original resources and refuses Live Photos; current Photos adjustments are not silently flattened.
 
 Files export does not confirm an iCloud upload. The app opens the public iCloud Photos page and captures no Apple credentials. Direct native Photos source-label suppression is not claimed. Photos indexing/display, no-label behavior, signed installation and post-upload preservation require the physical iPhone.
 

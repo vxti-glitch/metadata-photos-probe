@@ -30,13 +30,17 @@ public enum VideoMetadataWriter {
         let trackValues = try VideoMetadataFields.values(patch, existing: existing, track: true)
         guard source.standardizedFileURL.resolvingSymlinksInPath() != output.standardizedFileURL.resolvingSymlinksInPath() else { throw ProbeError.sameFile }
         guard !FileManager.default.fileExists(atPath: output.path) else { throw ProbeError.outputExists }
-        let info = try source.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-        guard source.isFileURL, output.isFileURL, info.isRegularFile == true, let count = info.fileSize, count > 0 else {
+        let info = try source.resourceValues(forKeys: [.isRegularFileKey])
+        guard source.isFileURL, output.isFileURL, info.isRegularFile == true else {
             throw ProbeError.malformed("A nonempty regular movie file is required")
         }
         let input = try FileHandle(forReadingFrom: source)
         defer { try? input.close() }
-        let top = try VideoBMFF.fileAtoms(input, length: UInt64(count))
+        // URL resource values can cache a previous file length. Bound parsing by
+        // the opened file itself, including when an API caller reuses a URL.
+        let count = try input.seekToEnd()
+        guard count > 0 else { throw ProbeError.malformed("A nonempty regular movie file is required") }
+        let top = try VideoBMFF.fileAtoms(input, length: count)
         guard top.allSatisfy({ VideoBMFF.allowedTopAtoms.contains($0.type) }), top.first?.type == VideoBMFF.code("ftyp"),
               top.filter({ $0.type == VideoBMFF.code("ftyp") }).count == 1,
               top.filter({ $0.type == VideoBMFF.code("moov") }).count == 1 else {
@@ -48,7 +52,11 @@ public enum VideoMetadataWriter {
         guard !dataAtoms.isEmpty else { throw ProbeError.malformed("Movie has no mdat") }
         let ftyp = top[0]
         guard ftyp.size >= UInt64(ftyp.header + 8) else { throw ProbeError.malformed("Truncated ftyp") }
+        guard ftyp.size <= VideoBMFF.maxFtypBytes else { throw ProbeError.unsupported("File-type header exceeds 16 MiB parser budget") }
         let brandData = try VideoBMFF.read(input, at: ftyp.offset + UInt64(ftyp.header), count: Int(ftyp.size) - ftyp.header)
+        guard brandData.count >= 8, (brandData.count - 8).isMultiple(of: 4) else {
+            throw ProbeError.malformed("Invalid ftyp compatible-brand list length")
+        }
         let brand = brandData.count >= 4 ? String(decoding: brandData[0..<4], as: UTF8.self) : ""
         var brands = [brand]
         if brandData.count >= 8 {
@@ -73,36 +81,67 @@ public enum VideoMetadataWriter {
         let movieAtom = try VideoBMFF.atoms(originalMovie).first!
         let children = try VideoBMFF.atoms(movieAtom.payload)
         let validation = try VideoBMFF.validateMovie(children, media: dataAtoms)
+        let existingUdta = children.first { $0.type == VideoBMFF.code("udta") }
+        let directMetadata = children.filter {
+            $0.type == VideoBMFF.code("meta") && (try? VideoBMFF.handler($0)) == VideoBMFF.code("mdta")
+        }
+        let topLevelMeta = directMetadata.first
+        let nestedMetadata = try children.filter { $0.type == VideoBMFF.code("udta") }.flatMap {
+            try VideoBMFF.atoms($0.payload)
+        }.filter {
+            $0.type == VideoBMFF.code("meta") && (try? VideoBMFF.handler($0)) == VideoBMFF.code("mdta")
+        }
+        let hasUdtaMdtaMeta = !nestedMetadata.isEmpty
+        // Camera identity edits normalize to the direct, unversioned QuickTime
+        // layout used by native camera movies. Retain the complete contents when moving
+        // it out of user data; rebuilding only camera fields would lose metadata.
+        let normalizeCamera = !patch.targetedKeys.isDisjoint(with: ["make", "model"])
+        let movieMetadata = directMetadata + nestedMetadata
+        guard movieMetadata.count <= 1 else { throw ProbeError.unsupported("Ambiguous multiple movie-level mdta containers") }
+
         var metadataCount = 0
         var rebuilt = Data()
         for child in children {
             if child.type == VideoBMFF.code("meta") {
                 if let h = try? VideoBMFF.handler(child), h == VideoBMFF.code("mdta") {
                     metadataCount += 1
-                    rebuilt.append(try VideoBMFF.editMetadata(child, values: movieValues))
+                    rebuilt.append(try VideoBMFF.editMetadata(child, values: movieValues, unversioned: normalizeCamera))
                 } else {
                     rebuilt.append(child.raw)
                 }
             } else if child.type == VideoBMFF.code("udta") {
-                var userData = Data()
-                for entry in try VideoBMFF.atoms(child.payload) {
-                    if entry.type == VideoBMFF.code("meta"), try VideoBMFF.handler(entry) == VideoBMFF.code("mdta") {
-                        metadataCount += 1
-                        userData.append(try VideoBMFF.editMetadata(entry, values: movieValues))
-                    } else { userData.append(try VideoBMFF.retainUserData(entry, patch: patch)) }
+                let editedUdta = try VideoBMFF.editMovieUserData(child, patch: patch, movieValues: movieValues, metadataCount: &metadataCount, relocateMetadata: normalizeCamera)
+                if !editedUdta.isEmpty {
+                    rebuilt.append(editedUdta)
                 }
-                rebuilt.append(try VideoBMFF.atom("udta", userData))
             } else if child.type == VideoBMFF.code("trak") {
                 rebuilt.append(try VideoBMFF.editTrack(child, patch: patch, values: trackValues,
                     locationValues: movieValues.filter { $0.key == VideoMetadataFields.locationKey }))
             } else if child.type == VideoBMFF.code("mvhd") {
                 rebuilt.append(try VideoBMFF.editDates(child, patch: patch, create: "movieCreateDate", modify: "movieModifyDate"))
+                if normalizeCamera, hasUdtaMdtaMeta, let metadata = movieMetadata.first {
+                    metadataCount += 1
+                    rebuilt.append(try VideoBMFF.editMetadata(metadata, values: movieValues, unversioned: true))
+                }
+                if topLevelMeta == nil && !hasUdtaMdtaMeta && !movieValues.isEmpty {
+                    metadataCount += 1
+                    rebuilt.append(try VideoBMFF.newMetadata(movieValues, fullBox: false))
+                }
             } else { rebuilt.append(child.raw) }
         }
         guard metadataCount <= 1 else { throw ProbeError.unsupported("Ambiguous multiple movie-level mdta containers") }
         // This is Apple's QuickTime mdta atom, not the versioned ISO item-meta box.
         // AVFoundation requires the unversioned mdta layout in our MP4/MOV controls.
-        if metadataCount == 0, !movieValues.isEmpty { rebuilt.append(try VideoBMFF.newMetadata(movieValues, fullBox: false)) }
+        if metadataCount == 0, !movieValues.isEmpty {
+            rebuilt.append(try VideoBMFF.newMetadata(movieValues, fullBox: false))
+            metadataCount += 1
+        }
+        if existingUdta == nil {
+            let newUdta = try VideoBMFF.editMovieUserData(nil, patch: patch, movieValues: movieValues, metadataCount: &metadataCount)
+            if !newUdta.isEmpty {
+                rebuilt.append(newUdta)
+            }
+        }
         let newMovie = try VideoBMFF.atom("moov", rebuilt)
         guard newMovie.count <= Int(VideoBMFF.maxMovieBytes) else { throw ProbeError.unsupported("Edited movie header exceeds 16 MiB budget") }
         try Task.checkCancellation()
@@ -114,9 +153,13 @@ public enum VideoMetadataWriter {
         }
         let destination: FileHandle
         if didClone {
+            // Imported sources are read-only. copyItem preserves those mode
+            // bits, so grant write access only to this new, separate output
+            // before opening it for the metadata rewrite.
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: output.path)
             destination = try FileHandle(forUpdating: output)
         } else {
-            guard FileManager.default.createFile(atPath: output.path, contents: nil) else { throw ProbeError.writeFailed("Cannot create staged movie") }
+            guard FileManager.default.createFile(atPath: output.path, contents: nil, attributes: [.posixPermissions: 0o600]) else { throw ProbeError.writeFailed("Cannot create staged movie") }
             destination = try FileHandle(forWritingTo: output)
             try input.seek(toOffset: 0)
             var copied: UInt64 = 0
@@ -125,7 +168,7 @@ public enum VideoMetadataWriter {
                 try destination.write(contentsOf: bytes)
                 copied += UInt64(bytes.count)
             }
-            guard copied == UInt64(count) else { throw ProbeError.writeFailed("Source changed while being copied") }
+            guard copied == count else { throw ProbeError.writeFailed("Source changed while being copied") }
         }
         defer { try? destination.close() }
         // Retire the old movie atom without moving any media. Zero its retired payload
@@ -161,10 +204,77 @@ public enum VideoMetadataWriter {
         let data = try VideoBMFF.read(input, at: movie.offset, count: Int(movie.size))
         return try VideoBMFF.inspectedMovie(VideoBMFF.atoms(data)[0])
     }
+
+    /// AVFoundation can expose a full-box mdta item's numeric index in
+    /// the iTunes keyspace. Resolve only identities proven by this file's key
+    /// table and scalar bytes; callers must also match the AVFoundation value.
+    static func indexedMovieMetadataAliases(_ url: URL) throws -> [String: (identity: String, value: String)] {
+        let input = try FileHandle(forReadingFrom: url); defer { try? input.close() }
+        let size = try input.seekToEnd(), top = try VideoBMFF.fileAtoms(input, length: size)
+        let movies = top.filter { $0.type == VideoBMFF.code("moov") }
+        guard movies.count == 1, let movie = movies.first, movie.size <= VideoBMFF.maxMovieBytes else {
+            throw ProbeError.unsupported("Bounded unique movie header required")
+        }
+        let data = try VideoBMFF.read(input, at: movie.offset, count: Int(movie.size))
+        return try VideoBMFF.indexedMetadataAliases(VideoBMFF.atoms(data)[0])
+    }
+
+    /// Returns mdta values independently for each video track. The aggregate
+    /// inspector is useful for ordinary readback, but cannot prove that every
+    /// video track carries a requested track-scoped value.
+    static func inspectVideoTrackMetadata(_ url: URL) throws -> [[String: String]] {
+        let input = try FileHandle(forReadingFrom: url); defer { try? input.close() }
+        let size = try input.seekToEnd(), top = try VideoBMFF.fileAtoms(input, length: size)
+        let movies = top.filter { $0.type == VideoBMFF.code("moov") }
+        guard movies.count == 1, let movie = movies.first, movie.size <= VideoBMFF.maxMovieBytes else {
+            throw ProbeError.unsupported("Bounded unique movie header required")
+        }
+        let data = try VideoBMFF.read(input, at: movie.offset, count: Int(movie.size))
+        let movieAtom = try VideoBMFF.atoms(data).first(where: { $0.type == VideoBMFF.code("moov") })
+        guard let movieAtom else { throw ProbeError.malformed("Missing movie atom during track metadata inspection") }
+        let movieChildren = movieAtom.payload
+        var result = [[String: String]]()
+        for track in try VideoBMFF.atoms(movieChildren) where track.type == VideoBMFF.code("trak") {
+            let trackChildren = try VideoBMFF.atoms(track.payload)
+            let mediaChildren = try VideoBMFF.atoms(VideoBMFF.unique(trackChildren, "mdia").payload)
+            let handler = try VideoBMFF.u32(VideoBMFF.unique(mediaChildren, "hdlr").payload, 8)
+            guard handler == VideoBMFF.code("vide") else { continue }
+
+            var values = [String: String]()
+            func collect(_ metadata: VideoBMFF.Atom) throws {
+                guard try VideoBMFF.handler(metadata) == VideoBMFF.code("mdta") else { return }
+                for (key, value) in try VideoBMFF.metadataValues(metadata) {
+                    if let prior = values[key], prior != value {
+                        throw ProbeError.unsupported("Conflicting video-track metadata values for key \(key)")
+                    }
+                    values[key] = value
+                }
+            }
+            for child in trackChildren {
+                if child.type == VideoBMFF.code("meta") { try collect(child) }
+                else if child.type == VideoBMFF.code("udta") {
+                    for entry in try VideoBMFF.atoms(child.payload) where entry.type == VideoBMFF.code("meta") {
+                        try collect(entry)
+                    }
+                }
+            }
+            for (key, atom) in VideoMetadataFields.trackKeys where values[key] == nil {
+                values[key] = values[atom]
+            }
+            for (key, atom) in VideoMetadataFields.trackKeys {
+                if let canonical = values[key], let raw = values[atom], canonical != raw {
+                    throw ProbeError.unsupported("Conflicting video-track metadata aliases for key \(key)")
+                }
+            }
+            result.append(values)
+        }
+        return result
+    }
 }
 
 private enum VideoBMFF {
     static let maxMovieBytes: UInt64 = 16 * 1024 * 1024
+    static let maxFtypBytes: UInt64 = 16 * 1024 * 1024
     static let maxEntries = 1_000_000
     static let allowedTopAtoms = Set(["ftyp", "moov", "mdat", "free", "skip", "wide"].map(code))
     struct FileAtom { let type: UInt32; let offset: UInt64; let size: UInt64; let header: Int }
@@ -374,6 +484,160 @@ private enum VideoBMFF {
         }
         return (Data(body.prefix(prefixLength)), children)
     }
+
+    static func indexedMetadataAliases(_ movie: Atom) throws -> [String: (identity: String, value: String)] {
+        var containers: [(atom: Atom, nested: Bool)] = []
+        for child in try atoms(movie.payload) {
+            if child.type == code("meta") { containers.append((child, false)) }
+            if child.type == code("udta") {
+                for entry in try atoms(child.payload) where entry.type == code("meta") { containers.append((entry, true)) }
+            }
+        }
+        let candidates = containers.indices.filter { (try? handler(containers[$0].atom)) == code("mdta") }
+        guard candidates.count == 1, let candidate = candidates.first else { return [:] }
+        let parts = try metadataChildren(containers[candidate].atom)
+        guard parts.prefix == number(0) else { return [:] }
+        // Even unknown namespaces can expose iTunes indexes. Never assign one
+        // of their values to the mdta key table merely because an index matches.
+        var competingIndexes = Set<UInt32>()
+        for index in containers.indices where index != candidate {
+            let other = try metadataChildren(containers[index].atom)
+            for list in other.children where list.type == code("ilst") {
+                competingIndexes.formUnion(try atoms(list.payload).map(\.type))
+            }
+        }
+        let keys = try unique(parts.children, "keys").payload
+        guard try u32(keys, 0) == 0 else { return [:] }
+        let count = Int(try u32(keys, 4))
+        guard count <= 4096 else { return [:] }
+        var definitions: [(namespace: UInt32, key: Data)] = [], cursor = 8
+        for _ in 0..<count {
+            let length = Int(try u32(keys, cursor)), namespace = try u32(keys, cursor + 4)
+            guard length >= 8, length <= keys.count - cursor else { throw ProbeError.malformed("Metadata key size invalid") }
+            definitions.append((namespace, keys.subdata(in: cursor + 8..<cursor + length)))
+            cursor += length
+        }
+        guard cursor == keys.count else { throw ProbeError.malformed("Metadata keys have trailing data") }
+        let items = try atoms(unique(parts.children, "ilst").payload)
+        let itemCounts = items.reduce(into: [UInt32: Int]()) { $0[$1.type, default: 0] += 1 }
+        let definitionCounts = definitions.reduce(into: [Data: Int]()) { $0[number($1.namespace) + $1.key, default: 0] += 1 }
+        var result: [String: (identity: String, value: String)] = [:]
+        let safeKeyCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+        for item in items {
+            guard item.type > 0, item.type <= UInt32(count), !competingIndexes.contains(item.type),
+                  itemCounts[item.type] == 1 else { continue }
+            let definition = definitions[Int(item.type) - 1]
+            guard definition.namespace == code("mdta"),
+                  definitionCounts[number(definition.namespace) + definition.key] == 1,
+                  let key = String(data: definition.key, encoding: .utf8), !key.isEmpty,
+                  key.unicodeScalars.allSatisfy({ $0.isASCII && safeKeyCharacters.contains($0) }) else { continue }
+            let values = try atoms(item.payload).filter { $0.type == code("data") }
+            guard values.count == 1, let value = values.first, let scalar = try indexedScalar(value.payload) else { continue }
+            let alias = "itsk/" + number(item.type).map { String(format: "%%%02X", $0) }.joined()
+            result[alias] = ("mdta/" + key, scalar)
+        }
+        return result
+    }
+
+    private static func indexedScalar(_ payload: Data) throws -> String? {
+        guard payload.count >= 8 else { return nil }
+        let type = try u32(payload, 0)
+        let bytes = payload.dropFirst(8)
+        if type == 1 {
+            guard let value = String(data: bytes, encoding: .utf8), !value.contains("\0") else { return nil }
+            return value
+        }
+        if type == 21, (1...8).contains(bytes.count) {
+            var bits = bytes.reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
+            if bytes.count < 8, let first = bytes.first, first & 0x80 != 0 { bits |= UInt64.max << (bytes.count * 8) }
+            return String(Int64(bitPattern: bits))
+        }
+        return nil
+    }
+    static func userDataTextAtom(_ typeCode: UInt32, text: String) throws -> Data {
+        let utf8 = Data(text.utf8)
+        guard utf8.count <= 65535 else { throw ProbeError.unsupported("User-data text exceeds 64 KiB budget") }
+        let payload = Data([UInt8((utf8.count >> 8) & 0xff), UInt8(utf8.count & 0xff), 0x00, 0x00]) + utf8
+        return try atom(typeCode, payload)
+    }
+    static func decodeUserDataText(_ payload: Data) -> String? {
+        guard payload.count >= 4 else { return nil }
+        let length = (Int(payload[0]) << 8) | Int(payload[1])
+        guard length >= 0, payload.count >= 4 + length else { return nil }
+        return String(data: payload.subdata(in: 4..<4+length), encoding: .utf8)
+    }
+    static func editMovieUserData(_ existing: Atom?, patch: MetadataPatch, movieValues: [String: String?], metadataCount: inout Int, relocateMetadata: Bool = false) throws -> Data {
+        var existingEntries = [Atom]()
+        if let existing {
+            existingEntries = try atoms(existing.payload)
+        }
+        var writtenTypes = Set<UInt32>()
+        var body = Data()
+
+        func writeField(_ typeCode: UInt32, text: String?) throws {
+            guard !writtenTypes.contains(typeCode) else { return }
+            if let text, !text.isEmpty {
+                body.append(try userDataTextAtom(typeCode, text: text))
+            }
+            writtenTypes.insert(typeCode)
+        }
+
+        for entry in existingEntries {
+            if entry.type == code("meta"), (try? handler(entry)) == code("mdta") {
+                if relocateMetadata { continue }
+                metadataCount += 1
+                body.append(try editMetadata(entry, values: movieValues))
+            } else if entry.type == 0xa96d616b /* ©mak */, patch.targetedKeys.contains("make") {
+                try writeField(entry.type, text: patch.values["make"]?.text)
+            } else if entry.type == 0xa96d6f64 /* ©mod */, patch.targetedKeys.contains("model") {
+                try writeField(entry.type, text: patch.values["model"]?.text)
+            } else if entry.type == 0xa9737772 /* ©swr */, patch.targetedKeys.contains("software") {
+                try writeField(entry.type, text: patch.values["software"]?.text)
+            } else if entry.type == 0xa96e616d /* ©nam */, patch.targetedKeys.contains("title") {
+                try writeField(entry.type, text: patch.values["title"]?.text)
+            } else if entry.type == 0xa9637079 /* ©cpy */, patch.targetedKeys.contains("copyright") {
+                try writeField(entry.type, text: patch.values["copyright"]?.text)
+            } else if entry.type == 0xa9415254 /* ©ART */, patch.targetedKeys.contains("artist") {
+                try writeField(entry.type, text: patch.values["artist"]?.text)
+            } else if entry.type == 0xa9636d74 /* ©cmt */, patch.targetedKeys.contains("description") {
+                try writeField(entry.type, text: patch.values["description"]?.text)
+            } else if entry.type == 0xa978797a /* ©xyz */, !patch.targetedKeys.isDisjoint(with: VideoMetadataFields.gpsKeys) {
+                let loc = movieValues[VideoMetadataFields.locationKey] ?? nil
+                try writeField(entry.type, text: loc)
+            } else {
+                body.append(try retainUserData(entry, patch: patch))
+            }
+        }
+
+        if patch.targetedKeys.contains("make") {
+            try writeField(0xa96d616b, text: patch.values["make"]?.text)
+        }
+        if patch.targetedKeys.contains("model") {
+            try writeField(0xa96d6f64, text: patch.values["model"]?.text)
+        }
+        if patch.targetedKeys.contains("software") {
+            try writeField(0xa9737772, text: patch.values["software"]?.text)
+        }
+        if patch.targetedKeys.contains("title") {
+            try writeField(0xa96e616d, text: patch.values["title"]?.text)
+        }
+        if patch.targetedKeys.contains("copyright") {
+            try writeField(0xa9637079, text: patch.values["copyright"]?.text)
+        }
+        if patch.targetedKeys.contains("artist") {
+            try writeField(0xa9415254, text: patch.values["artist"]?.text)
+        }
+        if patch.targetedKeys.contains("description") {
+            try writeField(0xa9636d74, text: patch.values["description"]?.text)
+        }
+        if !patch.targetedKeys.isDisjoint(with: VideoMetadataFields.gpsKeys) {
+            let loc = movieValues[VideoMetadataFields.locationKey] ?? nil
+            try writeField(0xa978797a, text: loc)
+        }
+
+        guard !body.isEmpty else { return Data() }
+        return try atom("udta", body)
+    }
     static func retainUserData(_ item: Atom, patch: MetadataPatch) throws -> Data {
         let changesLocation = !patch.targetedKeys.isDisjoint(with: VideoMetadataFields.gpsKeys)
         if item.type == code("XMP_"), !patch.removals.isEmpty || changesLocation {
@@ -382,8 +646,12 @@ private enum VideoBMFF {
         if item.type == code("loci") {
             // ISO location is a second representation of the coordinate tuple.
             // Whole-coordinate removal must retire it alongside mdta/legacy GPS;
-            // unrelated edits retain its original bytes. Its altitude cannot be
-            // edited independently without a qualified ISO location parser.
+            // unrelated edits retain its original bytes. Because this bounded
+            // writer cannot decode its altitude component, require an explicit
+            // action for all three GPS fields before retiring or replacing it.
+            if changesLocation, !patch.targetedKeys.isSuperset(of: VideoMetadataFields.gpsKeys) {
+                throw ProbeError.unsupported("ISO location is opaque; explicitly set or remove latitude, longitude, and altitude together")
+            }
             if patch.removals.contains("latitude") || patch.removals.contains("longitude") { return Data() }
             if patch.removals.contains("altitude") {
                 throw ProbeError.unsupported("Altitude-only removal is refused for a movie containing ISO location metadata")
@@ -398,7 +666,12 @@ private enum VideoBMFF {
             code("cprt"): ["copyright"], code("auth"): ["artist"], code("titl"): ["title"], code("dscp"): ["description"],
             code("perf"): ["artist"], code("gnre"): ["genre"]
         ]
-        if let fields = legacy[item.type], !fields.isDisjoint(with: patch.targetedKeys) { return Data() }
+        if let fields = legacy[item.type], !fields.isDisjoint(with: patch.targetedKeys) {
+            if item.type == 0xa978797a, !patch.targetedKeys.isSuperset(of: VideoMetadataFields.gpsKeys) {
+                throw ProbeError.unsupported("Legacy movie location is opaque; explicitly set or remove latitude, longitude, and altitude together")
+            }
+            return Data()
+        }
         return item.raw
     }
     static func editDates(_ item: Atom, patch: MetadataPatch, create: String, modify: String) throws -> Data {
@@ -450,13 +723,21 @@ private enum VideoBMFF {
                     } else { data.append(entry.raw) }
                 }
                 body.append(try atom("mdia", data))
-            } else if child.type == code("meta"), !scopedValues.isEmpty {
-                count += 1; body.append(try editMetadata(child, values: scopedValues))
+            } else if child.type == code("meta"), !scopedValues.isEmpty,
+                      (try? handler(child)) == code("mdta") {
+                count += 1
+                body.append(count == 1 ? try editMetadata(child, values: scopedValues) : child.raw)
+            } else if child.type == code("meta") {
+                // Preserve a separate non-mdta namespace while adding the
+                // qualified QuickTime mdta representation.
+                body.append(child.raw)
             } else if child.type == code("udta") {
                 var data = Data()
                 for entry in try atoms(child.payload) {
-                    if entry.type == code("meta"), !scopedValues.isEmpty, count == 0, try handler(entry) == code("mdta") {
-                        count += 1; data.append(try editMetadata(entry, values: scopedValues))
+                    if entry.type == code("meta"), !scopedValues.isEmpty,
+                       (try? handler(entry)) == code("mdta") {
+                        count += 1
+                        data.append(count == 1 ? try editMetadata(entry, values: scopedValues) : entry.raw)
                     } else if entry.type == code("meta") {
                         data.append(entry.raw)
                     } else { data.append(try retainUserData(entry, patch: patch)) }
@@ -465,7 +746,7 @@ private enum VideoBMFF {
             } else { body.append(child.raw) }
         }
         guard count <= 1 else { throw ProbeError.unsupported("Ambiguous video-track camera metadata containers") }
-        if video, count == 0, !values.isEmpty { body.append(try newMetadata(values, fullBox: false)) }
+        if video, count == 0, !scopedValues.isEmpty { body.append(try newMetadata(scopedValues, fullBox: false)) }
         return try atom("trak", body)
     }
     static func metadataValues(_ meta: Atom) throws -> [String: String] {
@@ -489,9 +770,8 @@ private enum VideoBMFF {
             let values = try atoms(item.payload).filter { $0.type == code("data") }
             guard values.count <= 1 else { throw ProbeError.unsupported("Multiple metadata values cannot be represented as a scalar") }
             if let value = values.first, value.payload.count >= 8, try u32(value.payload, 0) == 1 {
-                if result[key] == nil {
-                    result[key] = String(data: value.payload.dropFirst(8), encoding: .utf8)?.trimmingCharacters(in: CharacterSet(charactersIn: "\0"))
-                }
+                guard result[key] == nil else { throw ProbeError.unsupported("Duplicate mdta values for key \(key)") }
+                result[key] = String(data: value.payload.dropFirst(8), encoding: .utf8)?.trimmingCharacters(in: CharacterSet(charactersIn: "\0"))
             }
         }
         return result
@@ -511,15 +791,27 @@ private enum VideoBMFF {
         }
         func collect(_ meta: Atom) throws {
             for (key, value) in try metadataValues(meta) {
-                if result[key] == nil {
-                    result[key] = value
-                }
+                if let prior = result[key], prior != value { throw ProbeError.unsupported("Conflicting metadata values for key \(key)") }
+                result[key] = value
             }
         }
         for child in try atoms(movie.payload) {
             if child.type == code("mvhd") { try collectDates(child, create: "movieCreateDate", modify: "movieModifyDate") }
             if child.type == code("meta") { try collect(child) }
-            if child.type == code("udta") { for m in try atoms(child.payload) where m.type == code("meta") { try collect(m) } }
+            if child.type == code("udta") {
+                for m in try atoms(child.payload) {
+                    if m.type == code("meta") { try collect(m) }
+                    else if m.type == 0xa96d616b, result[VideoMetadataFields.keys["make"]!] == nil {
+                        if let str = decodeUserDataText(m.payload) { result[VideoMetadataFields.keys["make"]!] = str }
+                    } else if m.type == 0xa96d6f64, result[VideoMetadataFields.keys["model"]!] == nil {
+                        if let str = decodeUserDataText(m.payload) { result[VideoMetadataFields.keys["model"]!] = str }
+                    } else if m.type == 0xa9737772, result[VideoMetadataFields.keys["software"]!] == nil {
+                        if let str = decodeUserDataText(m.payload) { result[VideoMetadataFields.keys["software"]!] = str }
+                    } else if m.type == 0xa978797a, result[VideoMetadataFields.locationKey] == nil {
+                        if let str = decodeUserDataText(m.payload) { result[VideoMetadataFields.locationKey] = str }
+                    }
+                }
+            }
             if child.type == code("trak") {
                 for entry in try atoms(child.payload) {
                     if entry.type == code("tkhd") { try collectDates(entry, create: "trackCreateDate", modify: "trackModifyDate") }
@@ -533,7 +825,7 @@ private enum VideoBMFF {
         }
         for (key, values) in dateValues { result[key] = values.sorted().joined(separator: ";") }
         result["createDate"] = result["movieCreateDate"]; result["modifyDate"] = result["movieModifyDate"]
-        for (key, atom) in VideoMetadataFields.keys.merging(VideoMetadataFields.trackKeys, uniquingKeysWith: { a, _ in a }) { result[key] = result[atom] }
+        for (key, atom) in VideoMetadataFields.keys.merging(VideoMetadataFields.trackKeys, uniquingKeysWith: { a, _ in a }) { result[key] = VideoMetadataFields.canonicalValue(result[atom], for: key) }
         if let location = result[VideoMetadataFields.locationKey] { for (key, value) in VideoMetadataFields.decodeLocation(location) { result[key] = value } }
         return result
     }
@@ -548,7 +840,7 @@ private enum VideoBMFF {
         let meta = try atom("meta", (fullBox ? number(0) : Data()) + hdlr + keys + items)
         return try editMetadata(atoms(meta)[0], values: values)
     }
-    static func editMetadata(_ meta: Atom, values: [String: String?]) throws -> Data {
+    static func editMetadata(_ meta: Atom, values: [String: String?], unversioned: Bool = false) throws -> Data {
         let parts = try metadataChildren(meta)
         guard try handler(meta) == code("mdta") else { throw ProbeError.unsupported("Metadata handler is not mdta") }
         let keys = try unique(parts.children, "keys").payload
@@ -567,6 +859,7 @@ private enum VideoBMFF {
         for key in values.keys.sorted() {
             let value = values[key]!
             let matches = definitions.indices.filter { definitions[$0].namespace == code("mdta") && definitions[$0].value == Data(key.utf8) }
+            guard matches.count <= 1 else { throw ProbeError.unsupported("Duplicate mdta definitions for target key \(key)") }
             let keyIndex: UInt32
             if let existing = matches.first { keyIndex = UInt32(existing + 1) }
             else { definitions.append((code("mdta"), Data(key.utf8))); keyIndex = UInt32(definitions.count) }
@@ -590,7 +883,7 @@ private enum VideoBMFF {
         }
         var keyBody = number(0) + number(UInt32(definitions.count))
         for definition in definitions { keyBody.append(number(UInt32(definition.value.count + 8)) + number(definition.namespace) + definition.value) }
-        var body = parts.prefix
+        var body = unversioned ? Data() : parts.prefix
         for child in parts.children {
             if child.type == code("keys") { body.append(try atom("keys", keyBody)) }
             else if child.type == code("ilst") { body.append(try atom("ilst", items.reduce(into: Data()) { $0.append($1.raw) })) }

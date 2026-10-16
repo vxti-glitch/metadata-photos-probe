@@ -1,16 +1,21 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:metadata_editor/app_brand.dart';
+import 'package:metadata_editor/app_theme.dart';
 import 'package:metadata_editor/editor_app.dart';
 import 'package:metadata_editor/editor_controller.dart';
+import 'package:metadata_editor/legal_documents.dart';
 import 'package:metadata_editor/metadata_patch.dart';
+import 'package:metadata_editor/settings_destinations.dart';
 import 'package:metadata_editor/settings_screen.dart';
 
 import 'fake_media_bridge.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-
   late FakeMediaBridge bridge;
   late EditorController controller;
 
@@ -19,499 +24,493 @@ void main() {
     controller = EditorController(bridge);
     await controller.initialize();
   });
+  tearDown(() => controller.dispose());
 
-  tearDown(() {
-    controller.dispose();
-  });
-
-  Future<void> pumpSettings(WidgetTester tester) async {
-    tester.view.physicalSize = const Size(800, 1600);
-    tester.view.devicePixelRatio = 1.0;
+  Future<void> pumpSettings(
+    WidgetTester tester, {
+    Brightness brightness = Brightness.dark,
+    double scale = 1,
+    VoidCallback? onOpenEditor,
+  }) async {
+    tester.view.physicalSize = const Size(430, 1000);
+    tester.view.devicePixelRatio = 1;
     addTearDown(() {
       tester.view.resetPhysicalSize();
       tester.view.resetDevicePixelRatio();
     });
     await tester.pumpWidget(
-      MaterialApp(home: SettingsScreen(controller: controller)),
+      MaterialApp(
+        theme: brightness == Brightness.light
+            ? AppTheme.lightTheme()
+            : AppTheme.darkTheme(),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context)
+              .copyWith(textScaler: TextScaler.linear(scale)),
+          child: child!,
+        ),
+        home: SettingsScreen(
+          controller: controller,
+          onOpenEditor: onOpenEditor,
+        ),
+      ),
     );
     await tester.pumpAndSettle();
   }
 
-  testWidgets(
-    'AppBar contains settings button that navigates to SettingsScreen',
-    (tester) async {
-      tester.view.physicalSize = const Size(800, 1600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(() {
-        tester.view.resetPhysicalSize();
-        tester.view.resetDevicePixelRatio();
-      });
-
-      await tester.pumpWidget(
-        MaterialApp(home: MetadataEditorApp(controller: controller)),
+  Future<void> tapKey(WidgetTester tester, String key) async {
+    final target = find.byKey(Key(key));
+    if (target.evaluate().isEmpty) {
+      await tester.scrollUntilVisible(
+        target,
+        180,
+        scrollable: find.byType(Scrollable).first,
       );
+    }
+    await tester.ensureVisible(target);
+    await tester.pumpAndSettle();
+    await tester.tap(target);
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+    'Settings displays current logo, name, developer and version without a flame',
+    (tester) async {
+      await pumpSettings(tester);
+      expect(find.text(AppBrand.name), findsOneWidget);
+      expect(find.text('by vxti'), findsOneWidget);
+      expect(find.text('Version ${AppBrand.version}'), findsOneWidget);
+      expect(find.byType(MetadataMark), findsOneWidget);
+      expect(find.byIcon(Icons.local_fire_department), findsNothing);
+      expect(find.byKey(const Key('appearanceRow')), findsOneWidget);
+      expect(find.byKey(const Key('localProjectsRow')), findsOneWidget);
+      expect(find.byKey(const Key('savedPresetsRow')), findsOneWidget);
+    },
+  );
+
+  testWidgets('Contact support is a normal row and opens email directly', (
+    tester,
+  ) async {
+    await pumpSettings(tester);
+    final row = find.byKey(const Key('contactSupportRow'));
+    await tester.ensureVisible(row);
+    expect(find.text('Contact support'), findsOneWidget);
+    expect(find.text(AppBrand.supportEmail), findsNothing);
+    expect(tester.getSize(row).height, lessThan(80));
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+    expect(bridge.supportEmailOpens, 1);
+    expect(bridge.openedUrls, isEmpty);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(
+      controller.notice,
+      'Continue in your email app to send your message.',
+    );
+  });
+
+  testWidgets('Support works without engine readiness', (tester) async {
+    controller.capabilities = null;
+    await pumpSettings(tester);
+    await tapKey(tester, 'contactSupportRow');
+    expect(bridge.supportEmailOpens, 1);
+    expect(controller.ready, isFalse);
+  });
+
+  testWidgets(
+    'Support blocks repeat launches and cancellation during handoff',
+    (tester) async {
+      bridge.supportEmailCompletion = Completer<void>();
+      await pumpSettings(tester);
+      final row = find.byKey(const Key('contactSupportRow'));
+      await tester.ensureVisible(row);
+      await tester.tap(row);
+      await tester.pump();
+      expect(controller.operation, EditorOperation.openingEmail);
+      expect(tester.widget<SettingsItem>(row).onTap, isNull);
+      await controller.openSupportEmail();
+      await controller.cancel();
+      expect(bridge.supportEmailOpens, 1);
+      expect(controller.cancellationRequested, isFalse);
+      bridge.supportEmailCompletion!.complete();
       await tester.pumpAndSettle();
+      expect(controller.busy, isFalse);
+    },
+  );
 
-      final settingsButton = find.byKey(const Key('openSettings'));
-      expect(settingsButton, findsOneWidget);
+  testWidgets(
+    'Failed email handoff is actionable and preserves selected drafts',
+    (tester) async {
+      const message =
+          'No email app could open. Install or configure an email app, then try again, or email vxti.dev@gmail.com with the subject Metadata Editor Support.';
+      bridge.supportEmailFailure = PlatformException(
+        code: 'email_unavailable',
+        message: message,
+      );
+      final source = fixture();
+      controller.selected = source;
+      controller.batchSelection.add(source.id);
+      await pumpSettings(tester);
+      await tapKey(tester, 'contactSupportRow');
+      expect(controller.error, message);
+      expect(find.text(message), findsOneWidget);
+      expect(controller.busy, isFalse);
+      expect(controller.selected, same(source));
+      expect(controller.batchSelection, contains(source.id));
+    },
+  );
 
-      await tester.tap(settingsButton);
-      await tester.pumpAndSettle();
+  testWidgets('Website row opens external URL without displaying raw address', (
+    tester,
+  ) async {
+    await pumpSettings(tester);
+    await tapKey(tester, 'visitWebsiteRow');
+    expect(bridge.openedUrls, [AppBrand.websiteUrl]);
+    expect(find.text(AppBrand.websiteUrl), findsNothing);
+  });
 
-      expect(find.byType(SettingsScreen), findsOneWidget);
+  for (final entry in [
+    ('privacyPolicyRow', 'Privacy Policy', LegalDocuments.privacyPolicy),
+    ('termsOfUseRow', 'Terms of Use', LegalDocuments.termsOfUse),
+  ]) {
+    testWidgets('${entry.$2} opens unchanged readable legal text', (
+      tester,
+    ) async {
+      await pumpSettings(tester);
+      await tapKey(tester, entry.$1);
+      expect(find.text(entry.$3), findsOneWidget);
+      expect(find.text(entry.$2), findsWidgets);
+      await tapKey(tester, 'closeLegalSheetButton');
+      expect(find.text(entry.$3), findsNothing);
+    });
+  }
+
+  testWidgets('Appearance is a separate System Light Dark selector', (
+    tester,
+  ) async {
+    await pumpSettings(tester);
+    await tapKey(tester, 'appearanceRow');
+    expect(find.text('Appearance'), findsOneWidget);
+    for (final choice in ['system', 'light', 'dark']) {
+      expect(find.byKey(Key('appearance_$choice')), findsOneWidget);
+    }
+    await tapKey(tester, 'appearance_light');
+    expect(controller.appearance, 'light');
+    expect(bridge.editorState['appearance'], 'light');
+    await tapKey(tester, 'settingsDestinationBack');
+    expect(find.text('Settings'), findsOneWidget);
+    expect(find.text('Light'), findsOneWidget);
+  });
+
+  testWidgets(
+    'Local projects selects an existing file and returns to the preserved editor',
+    (tester) async {
+      bridge.sessions = [fixture()];
+      await controller.initialize();
+      var opened = false;
+      await pumpSettings(tester, onOpenEditor: () => opened = true);
+      await tapKey(tester, 'localProjectsRow');
+      await tapKey(tester, 'localProject_$sourceId');
+      expect(controller.selected?.id, sourceId);
+      expect(opened, isTrue);
       expect(find.text('Settings'), findsOneWidget);
     },
   );
 
-  testWidgets('App Identity section displays correct branding and version', (
-    tester,
-  ) async {
-    await pumpSettings(tester);
-
-    expect(find.text(AppBrand.name), findsOneWidget);
-    expect(find.text('by vxti'), findsOneWidget);
-    expect(find.text('Version ${AppBrand.version}'), findsOneWidget);
-    expect(find.byType(MetadataMark), findsOneWidget);
-  });
-
   testWidgets(
-    'Visit Website row triggers openUrl without displaying URL in row',
+    'Local project deletion asks confirmation before deleting only the chosen project',
     (tester) async {
+      bridge.sessions = [fixture(), fixture(id: nextOutputId)];
+      await controller.initialize();
       await pumpSettings(tester);
-
-      expect(find.text('Visit Website'), findsOneWidget);
-      // Explicitly verify the row does not display raw URL string text
-      expect(find.text('https://zlarp.com'), findsNothing);
-      expect(find.text('zlarp.com'), findsNothing);
-
-      await tester.tap(find.byKey(const Key('visitWebsiteRow')));
+      await tapKey(tester, 'localProjectsRow');
+      await tapKey(tester, 'deleteLocalProject_$sourceId');
+      expect(find.text('Delete Local Project?'), findsOneWidget);
+      expect(bridge.deletedIds, isEmpty);
+      await tester.tap(find.text('Delete project'));
       await tester.pumpAndSettle();
-
-      expect(bridge.openedUrls, contains('https://zlarp.com'));
+      expect(bridge.deletedIds, [sourceId]);
+      expect(controller.sessions.single.id, nextOutputId);
     },
   );
 
-  testWidgets('Privacy Policy row opens legal sheet with readable policy', (
-    tester,
-  ) async {
+  testWidgets(
+    'Clear local projects has its own confirmation and preserves export explanation',
+    (tester) async {
+      bridge.sessions = [fixture()];
+      await controller.initialize();
+      await pumpSettings(tester);
+      await tapKey(tester, 'localProjectsRow');
+      await tapKey(tester, 'clearCacheButton');
+      expect(find.text('Clear Local Projects?'), findsOneWidget);
+      expect(
+        find.textContaining('already exported copies remain unchanged'),
+        findsOneWidget,
+      );
+      expect(bridge.clears, 0);
+      await tapKey(tester, 'confirmClearCacheButton');
+      expect(bridge.clears, 1);
+      expect(find.text('No local projects'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Presets page supports import and existing preset export and delete',
+    (tester) async {
+      await tester.runAsync(
+        () => controller.savePreset(
+          'Camera recipe',
+          MetadataPatch(values: {'make': 'Apple', 'model': 'iPhone 15 Pro'}),
+        ),
+      );
+      final preset = controller.presets.single;
+      await pumpSettings(tester);
+      await tapKey(tester, 'savedPresetsRow');
+      await tapKey(tester, 'importPresetFromSettings');
+      expect(bridge.presetImports, 1);
+      await tapKey(tester, 'settingsPresetMenu_${preset.id}');
+      await tester.tap(find.text('Export to Files'));
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      await tester.pumpAndSettle();
+      expect(bridge.presetExports, 1);
+      expect(bridge.exportedPreset, preset.toMap());
+      await tapKey(tester, 'settingsPresetMenu_${preset.id}');
+      await tester.tap(find.text('Delete preset'));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete Preset?'), findsOneWidget);
+      expect(controller.presets, hasLength(1));
+      await tester.tap(find.text('Delete preset').last);
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      await tester.pumpAndSettle();
+      expect(controller.presets, isEmpty);
+      expect(find.text('No saved presets'), findsOneWidget);
+    },
+  );
+
+  testWidgets('Reset saved presets requires confirmation', (tester) async {
+    await tester.runAsync(
+      () => controller.savePreset(
+        'Saved',
+        MetadataPatch(values: {'make': 'Apple'}),
+      ),
+    );
     await pumpSettings(tester);
-
-    await tester.tap(find.byKey(const Key('privacyPolicyRow')));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Privacy Policy'), findsAtLeastNWidgets(1));
-    expect(
-      find.textContaining('Privacy Policy — Metadata Editor'),
-      findsAtLeastNWidgets(1),
-    );
-    expect(
-      find.textContaining('Zero Cloud Processing'),
-      findsAtLeastNWidgets(1),
-    );
-    expect(find.textContaining('ProbeCore'), findsAtLeastNWidgets(1));
-
-    // Close the sheet
-    await tester.tap(find.byKey(const Key('closeLegalSheetButton')));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('Zero Cloud Processing'), findsNothing);
-  });
-
-  testWidgets('Terms of Use row opens legal sheet with readable terms', (
-    tester,
-  ) async {
-    await pumpSettings(tester);
-
-    await tester.tap(find.byKey(const Key('termsOfUseRow')));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Terms of Use'), findsAtLeastNWidgets(1));
-    expect(
-      find.textContaining('Terms of Use — Metadata Editor'),
-      findsAtLeastNWidgets(1),
-    );
-    expect(find.textContaining('Acceptance of Terms'), findsAtLeastNWidgets(1));
-    expect(find.textContaining('Zlarp'), findsAtLeastNWidgets(1));
-
-    // Close the sheet
-    await tester.tap(find.byKey(const Key('closeLegalSheetButton')));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('Acceptance of Terms'), findsNothing);
-  });
-
-  testWidgets('The Photos Workflow and Preserve Originals show explanations', (
-    tester,
-  ) async {
-    await pumpSettings(tester);
-
-    // The Photos Workflow
-    await tester.tap(find.byKey(const Key('photosWorkflowRow')));
-    await tester.pumpAndSettle();
-    expect(
-      find.textContaining('To guarantee immutable camera originals'),
-      findsOneWidget,
-    );
-    await tester.tap(find.text('Got it'));
-    await tester.pumpAndSettle();
-
-    // Preserve Source Originals
-    await tester.tap(find.byKey(const Key('preserveOriginalsRow')));
-    await tester.pumpAndSettle();
-    expect(
-      find.textContaining('source media bit-for-bit identical'),
-      findsOneWidget,
-    );
-    await tester.tap(find.text('Got it'));
-    await tester.pumpAndSettle();
-  });
-
-  testWidgets('Temporary Media Cache confirmation clears cache', (
-    tester,
-  ) async {
-    await pumpSettings(tester);
-
-    await tester.tap(find.byKey(const Key('clearCacheButton')));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Clear Media Cache?'), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('confirmClearCacheButton')));
-    await tester.pumpAndSettle();
-
-    expect(bridge.clears, 1);
-  });
-
-  testWidgets('Saved Camera Presets confirmation resets presets', (
-    tester,
-  ) async {
-    // Add a preset first
-    await controller.savePreset(
-      'Test Preset',
-      MetadataPatch(values: {'make': 'Apple', 'model': 'iPhone 15 Pro'}),
-    );
-    expect(controller.presets.length, 1);
-
-    await pumpSettings(tester);
-
-    expect(find.text('1 custom preset(s) stored locally'), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('resetPresetsButton')));
-    await tester.pumpAndSettle();
-
+    await tapKey(tester, 'savedPresetsRow');
+    await tapKey(tester, 'resetPresetsButton');
     expect(find.text('Reset Saved Presets?'), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('confirmResetPresetsButton')));
-    await tester.pumpAndSettle();
-
-    expect(controller.presets.isEmpty, isTrue);
-    expect(find.text('0 custom preset(s) stored locally'), findsOneWidget);
+    expect(controller.presets, hasLength(1));
+    await tapKey(tester, 'confirmResetPresetsButton');
+    expect(controller.presets, isEmpty);
   });
 
-  testWidgets('Diagnostics and Footer display accurate metadata', (
+  testWidgets(
+    'Photos guide explains the complete manual workflow and attribution limits',
+    (tester) async {
+      await pumpSettings(tester);
+      await tapKey(tester, 'photosAttributionRow');
+      for (final title in [
+        '1. Create an edited copy',
+        '2. Export to Files',
+        '3. Upload through Safari',
+        '4. Wait for Photos to sync',
+      ]) {
+        expect(find.text(title), findsOneWidget);
+      }
+      expect(
+        find.textContaining(
+          'Embedded metadata and Photos app-origin labels are separate',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Apple controls the resulting Photos presentation'),
+        findsOneWidget,
+      );
+      await tapKey(tester, 'openICloudFromSettings');
+      expect(bridge.opens, 1);
+    },
+  );
+
+  testWidgets(
+    'Media export page describes actual capabilities, immutable originals and incomplete verification',
+    (tester) async {
+      await pumpSettings(tester);
+      await tapKey(tester, 'mediaExportDetails');
+      expect(
+        find.textContaining('JPEG · HEIC · PNG · MP4 · MOV'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Source media remains bit-for-bit identical'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining(
+          'Changes to other file details show a warning and allow export',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining(
+          'Failed media or requested-edit checks block export',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Limited checks still require your acknowledgment'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Live Photos are outside'), findsOneWidget);
+    },
+  );
+
+  testWidgets('Media formats are not claimed while the engine is unready', (
     tester,
   ) async {
+    controller.capabilities = null;
     await pumpSettings(tester);
-
-    expect(find.text('Swift Media Engine'), findsOneWidget);
+    await tapKey(tester, 'mediaExportDetails');
     expect(
-      find.text('ProbeCore v0.4 · Sandboxed local engine'),
+      find.text('Format support is available after startup.'),
       findsOneWidget,
     );
+    expect(find.textContaining('JPEG · HEIC · PNG · MP4 · MOV'), findsNothing);
+  });
+
+  testWidgets('Diagnostics shows accurate status and can retry startup', (
+    tester,
+  ) async {
+    controller.capabilities = null;
+    await pumpSettings(tester);
+    await tapKey(tester, 'engineDetails');
+    expect(find.text('ON IMPORT'), findsOneWidget);
+    expect(find.text('FILE-BACKED'), findsOneWidget);
+    expect(find.textContaining('· Not ready ·'), findsOneWidget);
+    expect(find.byIcon(Icons.hourglass_empty), findsOneWidget);
+    await tapKey(tester, 'retryStartupFromSettings');
+    expect(controller.ready, isTrue);
+    expect(find.textContaining('· Ready ·'), findsOneWidget);
     expect(find.text('Privacy Guarantee'), findsOneWidget);
     expect(
-      find.text('100% on-device · Zero analytics · No cloud pings'),
-      findsOneWidget,
-    );
-    expect(
-      find.text(
-        '${AppBrand.name} ${AppBrand.version} (Build ${AppBrand.buildNumber}) · © 2026 ${AppBrand.developer}',
-      ),
+      find.textContaining('On-device processing · No analytics'),
       findsOneWidget,
     );
   });
 
-  testWidgets(
-    'Help & Troubleshooting section displays Error Codes & Fixes and Photos Attribution Guide',
-    (tester) async {
-      await pumpSettings(tester);
-
-      expect(find.text('HELP & TROUBLESHOOTING'), findsOneWidget);
-      expect(find.text('Error Codes & Fixes'), findsOneWidget);
-      expect(find.text('8 CODES'), findsOneWidget);
-      expect(find.text('Photos Attribution Guide'), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'Photos Attribution Guide row opens explanation dialog with attribution details',
-    (tester) async {
-      await pumpSettings(tester);
-
-      await tester.tap(find.byKey(const Key('photosAttributionRow')));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Photos Attribution Guide'), findsAtLeastNWidgets(1));
-      expect(
-        find.textContaining(
-          'Why does Photos show "Saved from Metadata Editor"?',
-        ),
-        findsOneWidget,
-      );
-      expect(
-        find.textContaining('How to prevent attribution stamps:'),
-        findsOneWidget,
-      );
-
-      await tester.tap(find.text('Got it'));
-      await tester.pumpAndSettle();
-
-      expect(
-        find.textContaining('How to prevent attribution stamps:'),
-        findsNothing,
-      );
-    },
-  );
+  testWidgets('App information exposes exact current build identity', (
+    tester,
+  ) async {
+    await pumpSettings(tester);
+    await tapKey(tester, 'appInformationRow');
+    expect(find.text(AppBrand.name), findsOneWidget);
+    expect(find.text('by ${AppBrand.developer}'), findsOneWidget);
+    expect(
+      find.text('${AppBrand.version} · Build ${AppBrand.buildNumber}'),
+      findsOneWidget,
+    );
+    expect(find.text(AppBrand.engineCore), findsOneWidget);
+  });
 
   testWidgets(
-    'Error Codes & Fixes row opens Error Reference Guide modal sheet with search and filtering',
+    'Settings Error Reference remains a separate page with all codes search and category filters',
     (tester) async {
       await pumpSettings(tester);
-
-      await tester.tap(find.byKey(const Key('errorGuideRow')));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Error Reference Guide'), findsOneWidget);
-      expect(find.text('8 error codes with diagnostic fixes'), findsOneWidget);
-      expect(find.text('ERR_DATE_FMT'), findsOneWidget);
-      expect(find.text('ERR_GPS_BOUNDS'), findsOneWidget);
-
-      // Search filtering for 'GPS'
+      await tapKey(tester, 'errorGuideRow');
+      expect(find.byKey(const Key('errorGuideBackButton')), findsOneWidget);
+      expect(find.byType(BottomSheet), findsNothing);
+      expect(find.byKey(const Key('errorTile_ERR_DATE_FMT')), findsOneWidget);
       await tester.enterText(find.byKey(const Key('errorSearchInput')), 'GPS');
       await tester.pumpAndSettle();
-
-      expect(find.text('ERR_GPS_BOUNDS'), findsOneWidget);
-      expect(find.text('ERR_DATE_FMT'), findsNothing);
-
-      // Clear search
-      await tester.tap(find.byKey(const Key('clearSearchButton')));
-      await tester.pumpAndSettle();
-      expect(find.text('ERR_DATE_FMT'), findsOneWidget);
-
-      // Category filter for 'Integrity'
+      expect(find.byKey(const Key('errorTile_ERR_GPS_BOUNDS')), findsOneWidget);
+      expect(find.byKey(const Key('errorTile_ERR_DATE_FMT')), findsNothing);
+      await tapKey(tester, 'clearSearchButton');
+      await tapKey(tester, 'errorCategoryFilter');
       await tester.tap(find.byKey(const Key('categoryPill_Integrity')));
       await tester.pumpAndSettle();
-
-      expect(find.text('ERR_MEDIA_INTEGRITY'), findsOneWidget);
-      expect(find.text('ERR_GPS_BOUNDS'), findsNothing);
-
-      // Reset category filter to 'All'
-      await tester.tap(find.byKey(const Key('categoryPill_All')));
-      await tester.pumpAndSettle();
-
-      // Expand ERR_GPS_BOUNDS
-      await tester.tap(find.byKey(const Key('errorTile_ERR_GPS_BOUNDS')));
-      await tester.pumpAndSettle();
-
       expect(
-        find.textContaining(
-          'Geographic coordinates must fall within standard physical boundaries',
-        ),
+        find.byKey(const Key('errorTile_ERR_MEDIA_INTEGRITY')),
         findsOneWidget,
       );
-      expect(find.text('WHY THIS HAPPENS'), findsAtLeastNWidgets(1));
-      // Zero-match search query test
-      await tester.enterText(
-        find.byKey(const Key('errorSearchInput')),
-        'XYZ_NO_MATCH_CODE',
-      );
-      await tester.pumpAndSettle();
-
-      expect(find.text('No matching error codes found'), findsOneWidget);
-      expect(find.byKey(const Key('resetFiltersButton')), findsOneWidget);
-
-      // Tap Reset Filters
-      await tester.tap(find.byKey(const Key('resetFiltersButton')));
-      await tester.pumpAndSettle();
-
-      expect(find.text('No matching error codes found'), findsNothing);
-      expect(find.text('ERR_DATE_FMT'), findsOneWidget);
-
-      // Close sheet
-      await tester.tap(find.byKey(const Key('closeErrorGuideButton')));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Error Reference Guide'), findsNothing);
+      expect(find.byKey(const Key('errorTile_ERR_GPS_BOUNDS')), findsNothing);
+      await tapKey(tester, 'errorGuideBackButton');
+      expect(find.text('Settings'), findsOneWidget);
     },
   );
 
   testWidgets(
-    'Recent Error Detected banner displays when lastErrorCode is set, and dismiss button clears it',
+    'Recent issue opens promoted guidance and explicit history clearing preserves live error',
     (tester) async {
-      controller.recordError(
-        'Native metadata processing or independent integrity verification failed',
-      );
-      await pumpSettings(tester);
-
-      expect(find.text('RECENT ERROR DETECTED'), findsOneWidget);
-      expect(find.byKey(const Key('recentErrorBanner')), findsOneWidget);
-      expect(find.byKey(const Key('recentErrorCodeBadge')), findsOneWidget);
-      expect(find.text('ERR_MEDIA_INTEGRITY'), findsOneWidget);
-      expect(find.text('ACTIVE FIX AVAILABLE'), findsOneWidget);
-      expect(find.text('ACTIVE FIX'), findsOneWidget);
-      expect(find.byKey(const Key('dismissRecentErrorButton')), findsOneWidget);
-
-      // Tap dismiss button
-      await tester.tap(find.byKey(const Key('dismissRecentErrorButton')));
-      await tester.pumpAndSettle();
-
-      expect(find.text('RECENT ERROR DETECTED'), findsNothing);
-      expect(find.byKey(const Key('recentErrorBanner')), findsNothing);
-      expect(find.text('8 CODES'), findsOneWidget);
-      expect(controller.lastErrorCode, isNull);
-    },
-  );
-
-  testWidgets(
-    'View Recent Error Fix button opens Error Guide with promoted and auto-expanded card',
-    (tester) async {
-      controller.recordError('Latitude must be between -90 and 90');
-      await pumpSettings(tester);
-
-      expect(find.text('ERR_GPS_BOUNDS'), findsOneWidget);
-
-      await tester.tap(find.byKey(const Key('viewRecentErrorFixButton')));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Error Reference Guide'), findsOneWidget);
-      expect(
-        find.byKey(const Key('justEncounteredBadge_ERR_GPS_BOUNDS')),
-        findsOneWidget,
-      );
-      expect(find.text('JUST ENCOUNTERED'), findsOneWidget);
-      expect(
-        find.textContaining(
-          'Geographic coordinates must fall within standard physical boundaries',
-        ),
-        findsOneWidget,
-      );
-
-      // Close sheet
-      await tester.tap(find.byKey(const Key('closeErrorGuideButton')));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Error Reference Guide'), findsNothing);
-    },
-  );
-
-  testWidgets(
-    'System Health card displays Photos Access, Swift Media Engine, and Storage Sandbox live status',
-    (tester) async {
-      await pumpSettings(tester);
-
-      expect(find.text('SYSTEM HEALTH & DIAGNOSTICS'), findsOneWidget);
-      expect(find.text('Photos Access'), findsOneWidget);
-      expect(find.text('GRANTED'), findsOneWidget);
-      expect(find.text('Swift Media Engine'), findsOneWidget);
-      expect(find.text('Storage Sandbox'), findsOneWidget);
-      expect(find.text('FILE-BACKED'), findsOneWidget);
-      expect(find.text('Privacy Guarantee'), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'Main navigation bar switches between Editor, Error Codes, and Settings tabs',
-    (tester) async {
-      tester.view.physicalSize = const Size(800, 1600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(() {
-        tester.view.resetPhysicalSize();
-        tester.view.resetDevicePixelRatio();
-      });
-
-      await tester.pumpWidget(
-        MaterialApp(home: MetadataEditorApp(controller: controller)),
-      );
-      await tester.pumpAndSettle();
-
-      expect(find.byKey(const Key('mainNavigationBar')), findsOneWidget);
-      expect(find.byKey(const Key('tabEditor')), findsOneWidget);
-      expect(find.byKey(const Key('tabErrorCodes')), findsOneWidget);
-      expect(find.byKey(const Key('tabSettings')), findsOneWidget);
-
-      // Tap Error Codes tab
-      await tester.tap(find.byKey(const Key('tabErrorCodes')));
-      await tester.pumpAndSettle();
-
-      expect(find.text('ERROR CODES & FIXES'), findsOneWidget);
-      expect(find.text('Error Reference Guide'), findsOneWidget);
-      expect(find.text('8 error codes with diagnostic fixes'), findsOneWidget);
-
-      // Tap Settings tab
-      await tester.tap(find.byKey(const Key('tabSettings')));
-      await tester.pumpAndSettle();
-
-      expect(find.text('SYSTEM HEALTH & DIAGNOSTICS'), findsOneWidget);
-
-      // Tap Editor tab
-      await tester.tap(find.byKey(const Key('tabEditor')));
-      await tester.pumpAndSettle();
-
-      expect(find.text('LOCAL PROJECTS'), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'DiagnosticErrorBanner displays simplified text, error code pill, and View Solution switches to Error Codes tab',
-    (tester) async {
-      tester.view.physicalSize = const Size(800, 1600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(() {
-        tester.view.resetPhysicalSize();
-        tester.view.resetDevicePixelRatio();
-      });
-
-      await tester.pumpWidget(
-        MaterialApp(home: MetadataEditorApp(controller: controller)),
-      );
-      await tester.pumpAndSettle();
-
-      // Trigger an integrity error
-      controller.error =
-          'Integrity verification mismatch: retained embedded metadata';
+      controller.error = 'Latitude must be between -90 and 90';
       controller.recordError(controller.error!);
-      await tester.pumpAndSettle();
-
-      expect(find.byKey(const Key('diagnosticErrorBanner')), findsOneWidget);
-      expect(find.text('ERR_MEDIA_INTEGRITY'), findsOneWidget);
-      expect(find.text('Attention Needed'), findsOneWidget);
+      await pumpSettings(tester);
+      expect(find.byKey(const Key('recentErrorBanner')), findsOneWidget);
+      await tapKey(tester, 'viewRecentErrorFixButton');
+      expect(find.byKey(const Key('latestIssueCard')), findsOneWidget);
+      expect(find.byKey(const Key('errorTile_ERR_GPS_BOUNDS')), findsNothing);
+      await tapKey(tester, 'viewLatestSteps');
       expect(
-        find.textContaining('Video metadata check failed'),
+        find.textContaining('Geographic coordinates must fall'),
         findsOneWidget,
       );
-
-      // Tap View Solution & Steps
-      await tester.tap(find.byKey(const Key('viewSolutionButton')));
-      await tester.pumpAndSettle();
-
-      // Should have switched to Error Codes tab
-      expect(find.text('ERROR CODES & FIXES'), findsOneWidget);
-      expect(find.text('ERR_MEDIA_INTEGRITY'), findsWidgets);
-      expect(
-        find.byKey(const Key('justEncounteredBadge_ERR_MEDIA_INTEGRITY')),
-        findsOneWidget,
-      );
-      expect(find.text('JUST ENCOUNTERED'), findsOneWidget);
-
-      // Switch back to Editor and dismiss banner
-      await tester.tap(find.byKey(const Key('tabEditor')));
-      await tester.pumpAndSettle();
-
-      expect(find.byKey(const Key('diagnosticErrorBanner')), findsOneWidget);
-      await tester.tap(find.byKey(const Key('dismissErrorBannerButton')));
-      await tester.pumpAndSettle();
-
-      expect(find.byKey(const Key('diagnosticErrorBanner')), findsNothing);
+      await tapKey(tester, 'errorGuideBackButton');
+      await tapKey(tester, 'dismissRecentErrorButton');
+      expect(controller.lastErrorCode, isNull);
+      expect(controller.error, 'Latitude must be between -90 and 90');
     },
   );
+
+  for (final brightness in Brightness.values) {
+    testWidgets(
+      '${brightness.name} theme reaches Settings, nested routes, error guide and legal reader at enlarged text',
+      (tester) async {
+        await pumpSettings(tester, brightness: brightness, scale: 1.5);
+        final expected = brightness == Brightness.dark
+            ? AppTheme.dark
+            : AppTheme.light;
+        expect(
+          Theme.of(tester.element(find.byType(SettingsScreen))).brightness,
+          brightness,
+        );
+        expect(
+          AppTheme.of(tester.element(find.byType(SettingsScreen))).background,
+          expected.background,
+        );
+        for (final route in [
+          'appearanceRow',
+          'localProjectsRow',
+          'savedPresetsRow',
+          'photosAttributionRow',
+          'mediaExportDetails',
+          'engineDetails',
+          'appInformationRow',
+        ]) {
+          await tapKey(tester, route);
+          expect(
+            Theme.of(tester.element(find.byType(SettingsDestination)))
+                .brightness,
+            brightness,
+          );
+          expect(tester.takeException(), isNull, reason: route);
+          await tapKey(tester, 'settingsDestinationBack');
+        }
+        await tapKey(tester, 'errorGuideRow');
+        final field = tester.widget<TextField>(
+          find.byKey(const Key('errorSearchInput')),
+        );
+        expect(field.style?.color, expected.text);
+        expect(tester.takeException(), isNull);
+        await tapKey(tester, 'errorGuideBackButton');
+        await tapKey(tester, 'privacyPolicyRow');
+        final legal = tester.widget<SelectableText>(
+          find.byType(SelectableText),
+        );
+        expect(legal.style?.color, expected.text);
+        final sheet = tester.widget<Container>(
+          find.byKey(const Key('legalDocumentSheet')),
+        );
+        expect((sheet.decoration as BoxDecoration).color, expected.surface);
+        expect(tester.takeException(), isNull);
+        await tapKey(tester, 'closeLegalSheetButton');
+      },
+    );
+  }
 }

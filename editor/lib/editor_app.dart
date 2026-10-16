@@ -1,87 +1,58 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'app_brand.dart';
+import 'app_theme.dart';
 import 'editor_controller.dart';
 import 'media_bridge.dart';
 
 import 'metadata_form.dart';
 import 'settings_screen.dart';
 
-const _background = Color(0xFF000000);
-const _surface = Color(0xFF1C1C1E);
-const _accent = Color(0xFF0A84FF);
-const _muted = Color(0xFF8E8E93);
-const _border = Color(0xFF2C2C2E);
-
-class MetadataEditorApp extends StatelessWidget {
-  const MetadataEditorApp({super.key, this.controller});
+class MetadataEditorApp extends StatefulWidget {
+  const MetadataEditorApp({
+    super.key,
+    this.controller,
+    this.applicationBuilder,
+  });
   final EditorController? controller;
+  final TransitionBuilder? applicationBuilder;
+
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    title: AppBrand.name,
-    debugShowCheckedModeBanner: false,
-    theme: ThemeData(
-      brightness: Brightness.dark,
-      useMaterial3: true,
-      platform: TargetPlatform.iOS,
-      scaffoldBackgroundColor: _background,
-      colorScheme: const ColorScheme.dark(
-        primary: _accent,
-        surface: _surface,
-        onPrimary: Color(0xFFFFFFFF),
-        onSurface: Color(0xFFFFFFFF),
-        secondary: Color(0xFF0A84FF),
-        secondaryContainer: Color(0xFF2C2C2E),
-        onSecondaryContainer: Color(0xFFFFFFFF),
-      ),
-      appBarTheme: const AppBarTheme(
-        backgroundColor: _background,
-        centerTitle: false,
-      ),
-      cardTheme: const CardThemeData(
-        color: _surface,
-        elevation: 0,
-        margin: EdgeInsets.zero,
-      ),
-      inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: _surface,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide.none,
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: _border),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: _accent),
-        ),
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 16,
-        ),
-      ),
-      filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(
-          minimumSize: const Size(48, 50),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-      ),
-      outlinedButtonTheme: OutlinedButtonThemeData(
-        style: OutlinedButton.styleFrom(
-          minimumSize: const Size(48, 48),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-      ),
-      dividerColor: _border,
+  State<MetadataEditorApp> createState() => _MetadataEditorAppState();
+}
+
+class _MetadataEditorAppState extends State<MetadataEditorApp> {
+  late final EditorController controller;
+
+  @override
+  void initState() {
+    super.initState();
+    controller = widget.controller ?? EditorController(NativeMediaBridge());
+  }
+
+  @override
+  void dispose() {
+    if (widget.controller == null) controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: controller,
+    builder: (context, _) => MaterialApp(
+      title: AppBrand.name,
+      debugShowCheckedModeBanner: false,
+      builder: widget.applicationBuilder,
+      theme: AppTheme.lightTheme(),
+      darkTheme: AppTheme.darkTheme(),
+      themeMode: switch (controller.appearance) {
+        'light' => ThemeMode.light,
+        'dark' => ThemeMode.dark,
+        _ => ThemeMode.system,
+      },
+      home: EditorHome(controller: controller),
     ),
-    home: EditorHome(controller: controller),
   );
 }
 
@@ -100,7 +71,9 @@ class _EditorHomeState extends State<EditorHome> {
     super.initState();
     controller = widget.controller ?? EditorController(NativeMediaBridge());
     controller.addListener(_update);
-    controller.initialize();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) controller.initialize();
+    });
   }
 
   void _update() {
@@ -114,248 +87,235 @@ class _EditorHomeState extends State<EditorHome> {
     super.dispose();
   }
 
+  void _returnHome() {
+    if (controller.busy || !controller.ready) return;
+    for (final item in controller.sessions) {
+      if (controller.batchSelection.contains(item.id)) {
+        controller.toggleBatch(item, false);
+      }
+    }
+    controller.select(null);
+  }
+
+  void _openErrorCodes() {
+    setState(() => _selectedTabIndex = 1);
+    openErrorGuidePage(
+      context,
+      controller: controller,
+      onOpenEditor: () => setState(() => _selectedTabIndex = 0),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final session = controller.selected;
-    final isBatch =
-        controller.isBatchMode && controller.batchSelection.isNotEmpty;
+    final batchSources = controller.sessions
+        .where((item) => controller.batchSelection.contains(item.id))
+        .toList();
+    final isBatch = controller.isBatchMode && batchSources.isNotEmpty;
 
-    PreferredSizeWidget? appBar;
-    if (_selectedTabIndex == 0) {
-      appBar = AppBar(
-        leading: (session == null && !isBatch)
-            ? null
-            : IconButton(
-                tooltip: 'Back to projects',
-                onPressed: controller.busy
-                    ? null
-                    : isBatch
-                    ? controller.exitBatchEditing
-                    : () => controller.select(null),
-                icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
-              ),
-        title: Row(
-          children: [
-            const _MetadataMark(),
-            const SizedBox(width: 12),
-            Expanded(
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      isBatch
-                          ? 'BATCH EDITING (${controller.batchSelection.length})'
-                          : AppBrand.header,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 2,
-                      ),
+    final isEditing = session != null || isBatch;
+    final appBar = _selectedTabIndex == 0 && isEditing
+        ? AppBar(
+            leading: !isEditing
+                ? null
+                : IconButton(
+                    key: const Key('backToHome'),
+                    tooltip: 'Back to Home',
+                    onPressed: controller.busy || !controller.ready
+                        ? null
+                        : _returnHome,
+                    icon: const Icon(
+                      Icons.arrow_back_ios_new_rounded,
+                      size: 20,
                     ),
-                    Text(
-                      isBatch
-                          ? 'Shared profile across selected files'
-                          : AppBrand.headerSubtitle,
-                      style: const TextStyle(
-                        fontSize: 9,
-                        color: _muted,
-                        letterSpacing: 1.1,
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+            title: isEditing
+                ? Text(
+                    isBatch
+                        ? '${batchSources.length} selected'
+                        : 'Edit metadata',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  )
+                : null,
+            actions: [
+              IconButton(
+                key: const Key('openSettings'),
+                tooltip: 'Settings',
+                icon: const Icon(Icons.tune_rounded),
+                onPressed: () => setState(() => _selectedTabIndex = 1),
               ),
-            ),
-          ],
-        ),
-        actions: [
-          IconButton(
-            key: const Key('openErrorGuideFromBar'),
-            tooltip: 'Error Codes & Fixes',
-            icon: Badge(
-              isLabelVisible: controller.lastErrorCode != null,
-              backgroundColor: const Color(0xFFFF453A),
-              child: const Icon(Icons.help_outline_rounded),
-            ),
-            onPressed: () => setState(() => _selectedTabIndex = 1),
-          ),
-          IconButton(
-            key: const Key('openSettings'),
-            tooltip: 'Settings',
-            icon: const Icon(Icons.settings_outlined),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => SettingsScreen(controller: controller),
-              ),
-            ),
-          ),
-        ],
-      );
-    } else if (_selectedTabIndex == 1) {
-      appBar = AppBar(
-        title: const Row(
-          children: [
-            Icon(Icons.menu_book_rounded, color: _accent, size: 20),
-            SizedBox(width: 10),
-            Text(
-              'ERROR CODES & FIXES',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 1.5,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          if (controller.lastErrorCode != null)
-            TextButton.icon(
-              key: const Key('clearLastErrorBarButton'),
-              icon: const Icon(
-                Icons.check_circle_outline_rounded,
-                size: 16,
-                color: Color(0xFF30D158),
-              ),
-              label: const Text(
-                'Clear Active',
-                style: TextStyle(color: Color(0xFF30D158), fontSize: 13),
-              ),
-              onPressed: controller.clearLastError,
-            ),
-          IconButton(
-            key: const Key('openSettings'),
-            tooltip: 'Settings',
-            icon: const Icon(Icons.settings_outlined),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => SettingsScreen(controller: controller),
-              ),
-            ),
-          ),
-        ],
-      );
-    }
+              const SizedBox(width: 8),
+            ],
+          )
+        : null;
 
-    Widget body;
-    if (_selectedTabIndex == 1) {
-      body = ErrorGuideSheet(
-        highlightedCode: controller.lastErrorCode,
-        isModal: false,
-        controller: controller,
-      );
-    } else if (_selectedTabIndex == 2) {
-      body = SettingsScreen(controller: controller, isTab: true);
-    } else {
-      body = SafeArea(
-        top: false,
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 760),
-            child: Column(
+    final editorBody = SafeArea(
+      top: !isEditing,
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: LayoutBuilder(
+            builder: (context, constraints) => Column(
               children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Column(
-                    children: [
-                      if (controller.error != null)
-                        _DiagnosticErrorBanner(
-                          rawError: controller.error!,
-                          errorCode: controller.lastErrorCode,
-                          onViewFix: () =>
-                              setState(() => _selectedTabIndex = 1),
-                          onDismiss: controller.dismissMessage,
-                        ),
-                      if (controller.notice != null)
-                        _Message(
-                          text: controller.notice!,
-                          dismiss: controller.dismissMessage,
-                        ),
-                      if (controller.busy) _Progress(controller: controller),
-                    ],
+                if (!isEditing)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 6),
+                    child: _HomeHeader(
+                      onSettings: () => setState(() => _selectedTabIndex = 1),
+                    ),
+                  ),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: constraints.maxHeight * 0.42,
+                  ),
+                  child: SingleChildScrollView(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (controller.error != null)
+                            _DiagnosticErrorBanner(
+                              rawError: controller.error!,
+                              errorCode: controller.lastErrorCode,
+                              onViewFix: _openErrorCodes,
+                              onDismiss: controller.dismissMessage,
+                            ),
+                          if (controller.notice != null)
+                            _Message(
+                              text: controller.notice!,
+                              dismiss: controller.dismissMessage,
+                            ),
+                          if (controller.statePersistenceError != null)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: Semantics(
+                                liveRegion: true,
+                                child: Text(
+                                  'Local history could not be saved. Your latest settings or diagnostics may not survive a restart.',
+                                  style: TextStyle(
+                                    color: AppTheme.of(context).error,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          if (controller.busy)
+                            _Progress(controller: controller),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
                 Expanded(
-                  child: ListView(
-                    key: ValueKey(
-                      isBatch ? 'batch' : (session?.id ?? 'projects'),
-                    ),
-                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
-                    children: [
-                      if (!controller.ready && !controller.busy) ...[
-                        const _Panel(
-                          child: Text(
-                            'The media engine must be ready before editing. Your files have not been changed.',
+                  child: !controller.ready
+                      ? ListView(
+                          padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+                          children: [
+                            const _Panel(
+                              child: Text(
+                                'The media engine must be ready before editing. Your files have not been changed.',
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            FilledButton(
+                              onPressed: controller.busy
+                                  ? null
+                                  : controller.initialize,
+                              child: const Text('Retry startup'),
+                            ),
+                          ],
+                        )
+                      : isBatch
+                      ? MetadataForm(
+                          key: ValueKey(
+                            'batch_editor-${controller.batchEditorRevision}-'
+                            '${(controller.batchSelection.toList()..sort()).join(',')}',
                           ),
-                        ),
-                        const SizedBox(height: 12),
-                        FilledButton(
-                          onPressed: controller.initialize,
-                          child: const Text('Retry startup'),
-                        ),
-                      ] else if (isBatch)
-                        MetadataForm(
-                          key: const ValueKey('batch_editor'),
                           controller: controller,
-                          session: controller.sessions.firstWhere(
-                            (s) => controller.batchSelection.contains(s.id),
-                            orElse: () => controller.sessions.first,
+                          session: batchSources.firstWhere(
+                            (source) => source.id == session?.id,
+                            orElse: () => batchSources.first,
                           ),
                           batch: true,
+                          fillAvailableSpace: true,
                         )
-                      else if (session == null)
-                        _Projects(controller: controller)
-                      else
-                        MetadataForm(
+                      : session == null
+                      ? ListView(
+                          key: const ValueKey('projects'),
+                          padding: const EdgeInsets.fromLTRB(20, 4, 20, 32),
+                          children: [_ImportHome(controller: controller)],
+                        )
+                      : MetadataForm(
                           key: ValueKey(session.id),
                           controller: controller,
                           session: session,
+                          fillAvailableSpace: true,
                         ),
-                    ],
-                  ),
                 ),
               ],
             ),
           ),
         ),
-      );
-    }
+      ),
+    );
 
-    return Scaffold(
-      appBar: appBar,
-      body: body,
-      bottomNavigationBar: NavigationBar(
-        key: const Key('mainNavigationBar'),
-        selectedIndex: _selectedTabIndex,
-        onDestinationSelected: (index) =>
-            setState(() => _selectedTabIndex = index),
-        backgroundColor: const Color(0xFF121214),
-        indicatorColor: _accent.withValues(alpha: 0.25),
-        destinations: [
-          const NavigationDestination(
-            key: Key('tabEditor'),
-            icon: Icon(Icons.tune_rounded),
-            label: 'Editor',
-          ),
-          NavigationDestination(
-            key: const Key('tabErrorCodes'),
-            icon: Badge(
-              isLabelVisible: controller.lastErrorCode != null,
-              backgroundColor: const Color(0xFFFF453A),
-              child: const Icon(Icons.menu_book_rounded),
+    return PopScope(
+      canPop: _selectedTabIndex == 0 && !isEditing,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (_selectedTabIndex == 1) {
+          setState(() => _selectedTabIndex = 0);
+        } else if (!controller.busy && controller.ready) {
+          _returnHome();
+        }
+      },
+      child: Scaffold(
+        appBar: appBar,
+        body: IndexedStack(
+          index: _selectedTabIndex,
+          children: [
+            !isEditing
+                ? AnnotatedRegion<SystemUiOverlayStyle>(
+                    value: Theme.of(context).brightness == Brightness.dark
+                        ? SystemUiOverlayStyle.light
+                        : SystemUiOverlayStyle.dark,
+                    child: DecoratedBox(
+                      key: const Key('homeGlow'),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomCenter,
+                          stops: const [0, 0.24, 0.55],
+                          colors:
+                              Theme.of(context).brightness == Brightness.dark
+                              ? const [
+                                  Color(0xFF10243C),
+                                  Color(0xFF0F1120),
+                                  Color(0xFF000000),
+                                ]
+                              : const [
+                                  Color(0xFFE0EDFF),
+                                  Color(0xFFEBEBF8),
+                                  Color(0xFFF2F2F7),
+                                ],
+                        ),
+                      ),
+                      child: editorBody,
+                    ),
+                  )
+                : editorBody,
+            SettingsScreen(
+              controller: controller,
+              isTab: true,
+              onBack: () => setState(() => _selectedTabIndex = 0),
+              onOpenEditor: () => setState(() => _selectedTabIndex = 0),
             ),
-            label: 'Error Codes',
-          ),
-          const NavigationDestination(
-            key: Key('tabSettings'),
-            icon: Icon(Icons.settings_outlined),
-            label: 'Settings',
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -374,10 +334,7 @@ class MetadataMark extends StatelessWidget {
   );
 }
 
-typedef _MetadataMark = MetadataMark;
-
-/// Concept B Precision Viewfinder HUD:
-/// Hairline reticle corners, precision crosshair ticks, and three telemetry tracks with an Apple System Blue focal dot.
+/// Mirrors branding/mark.svg: a clear viewfinder and three metadata rows.
 class MetadataMarkPainter extends CustomPainter {
   const MetadataMarkPainter();
   @override
@@ -393,64 +350,65 @@ class MetadataMarkPainter extends CustomPainter {
     );
     final stroke = Paint()
       ..color = const Color(0xFFF5F5F7)
-      ..strokeWidth = 1.3
-      ..strokeCap = StrokeCap.square
+      ..strokeWidth = 1.8
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
       ..style = PaintingStyle.stroke;
 
-    // Hairline reticle corners
+    // Stronger corners remain legible in compact app and Settings marks.
     final corners = Path()
-      ..moveTo(8, 4)
-      ..lineTo(4, 4)
-      ..lineTo(4, 8)
-      ..moveTo(24, 4)
-      ..lineTo(28, 4)
-      ..lineTo(28, 8)
-      ..moveTo(4, 24)
-      ..lineTo(4, 28)
-      ..lineTo(8, 28)
-      ..moveTo(24, 28)
-      ..lineTo(28, 28)
-      ..lineTo(28, 24);
+      ..moveTo(10, 6)
+      ..lineTo(6, 6)
+      ..lineTo(6, 10)
+      ..moveTo(22, 6)
+      ..lineTo(26, 6)
+      ..lineTo(26, 10)
+      ..moveTo(6, 22)
+      ..lineTo(6, 26)
+      ..lineTo(10, 26)
+      ..moveTo(22, 26)
+      ..lineTo(26, 26)
+      ..lineTo(26, 22);
     canvas.drawPath(corners, stroke);
 
     // Crosshairs
     final crossPaint = Paint()
-      ..color = const Color(0xFF636366)
-      ..strokeWidth = 1.0
+      ..color = const Color(0xFF48484A)
+      ..strokeWidth = 0.8
       ..strokeCap = StrokeCap.round;
-    canvas.drawLine(const Offset(16, 2), const Offset(16, 4.5), crossPaint);
-    canvas.drawLine(const Offset(16, 27.5), const Offset(16, 30), crossPaint);
-    canvas.drawLine(const Offset(2, 16), const Offset(4.5, 16), crossPaint);
-    canvas.drawLine(const Offset(27.5, 16), const Offset(30, 16), crossPaint);
+    canvas.drawLine(const Offset(16, 3), const Offset(16, 4.5), crossPaint);
+    canvas.drawLine(const Offset(16, 27.5), const Offset(16, 29), crossPaint);
+    canvas.drawLine(const Offset(3, 16), const Offset(4.5, 16), crossPaint);
+    canvas.drawLine(const Offset(27.5, 16), const Offset(29, 16), crossPaint);
 
     // Telemetry lines
     final linePaint = Paint()
       ..color = const Color(0xFFFFFFFF)
-      ..strokeWidth = 1.5
+      ..strokeWidth = 1.65
       ..strokeCap = StrokeCap.round;
 
-    // Line 1 with glowing blue focal dot
+    // One strong blue dot anchors evenly spaced rows.
     final dotPaint = Paint()..color = const Color(0xFF0A84FF);
-    canvas.drawCircle(const Offset(10, 11), 1.3, dotPaint);
-    canvas.drawLine(const Offset(13, 11), const Offset(23, 11), linePaint);
+    canvas.drawCircle(const Offset(10, 10), 1.35, dotPaint);
+    canvas.drawLine(const Offset(13, 10), const Offset(23, 10), linePaint);
 
     // Line 2
     final line2Paint = Paint()
       ..color = const Color(0xFFD1D1D6)
-      ..strokeWidth = 1.5
+      ..strokeWidth = 1.65
       ..strokeCap = StrokeCap.round;
-    final dot2Paint = Paint()..color = const Color(0x660A84FF);
-    canvas.drawCircle(const Offset(10, 16), 1.1, dot2Paint);
+    final dot2Paint = Paint()..color = const Color(0xFF636366);
+    canvas.drawCircle(const Offset(10, 16), 0.8, dot2Paint);
     canvas.drawLine(const Offset(13, 16), const Offset(20, 16), line2Paint);
 
     // Line 3
     final line3Paint = Paint()
       ..color = const Color(0xFF8E8E93)
-      ..strokeWidth = 1.5
+      ..strokeWidth = 1.65
       ..strokeCap = StrokeCap.round;
-    final dot3Paint = Paint()..color = const Color(0x330A84FF);
-    canvas.drawCircle(const Offset(10, 21), 0.9, dot3Paint);
-    canvas.drawLine(const Offset(13, 21), const Offset(17, 21), line3Paint);
+    final dot3Paint = Paint()..color = const Color(0xFF48484A);
+    canvas.drawCircle(const Offset(10, 22), 0.8, dot3Paint);
+    canvas.drawLine(const Offset(13, 22), const Offset(17, 22), line3Paint);
 
     canvas.restore();
   }
@@ -459,471 +417,215 @@ class MetadataMarkPainter extends CustomPainter {
   bool shouldRepaint(covariant MetadataMarkPainter oldDelegate) => false;
 }
 
-class _Projects extends StatelessWidget {
-  const _Projects({required this.controller});
-  final EditorController controller;
+class _HomeHeader extends StatelessWidget {
+  const _HomeHeader({required this.onSettings});
+  final VoidCallback onSettings;
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      const SizedBox(height: 14),
-      const Text(
-        AppBrand.headline,
-        style: TextStyle(
-          fontSize: 32,
-          height: 1.12,
-          letterSpacing: -1,
-          fontWeight: FontWeight.w700,
+  Widget build(BuildContext context) {
+    final colors = AppTheme.of(context);
+    return Row(
+      key: const Key('homeBrandHeader'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(top: 2),
+          child: MetadataMark(size: 48),
         ),
-      ),
-      const SizedBox(height: 14),
-      const Text(
-        'Inspect camera information and create an edited copy on your iPhone. Your original stays untouched.',
-        style: TextStyle(color: _muted, fontSize: 15, height: 1.5),
-      ),
-      const SizedBox(height: 24),
-      _Panel(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const _SectionTitle('01', 'Choose a file'),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              key: const Key('importPhotos'),
-              onPressed: controller.ready && !controller.busy
-                  ? () => controller.importBatch(photos: true)
-                  : null,
-              icon: const Icon(Icons.photo_library_outlined),
-              label: const Text('Import from Photos'),
-            ),
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
-              key: const Key('importFiles'),
-              onPressed: controller.ready && !controller.busy
-                  ? () => controller.importBatch(photos: false)
-                  : null,
-              icon: const Icon(Icons.folder_open_rounded),
-              label: const Text('Import from Files'),
-            ),
-            const SizedBox(height: 14),
-            Text(
-              controller.capabilities == null
-                  ? 'JPEG · HEIC · MP4 · MOV'
-                  : controller.capabilities!.formats
-                        .map((format) => format.toUpperCase())
-                        .join(' · '),
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: _muted, fontSize: 12),
-            ),
-          ],
-        ),
-      ),
-      const SizedBox(height: 18),
-      const _WorkflowNote(),
-      const SizedBox(height: 28),
-      Row(
-        children: [
-          const Expanded(
-            child: Text(
-              'LOCAL PROJECTS',
-              style: TextStyle(
-                fontSize: 12,
-                letterSpacing: 1.5,
-                color: _muted,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          if (controller.sessions.isNotEmpty)
-            TextButton(
-              onPressed: controller.busy
-                  ? null
-                  : () async {
-                      final confirmed = await _confirm(
-                        context,
-                        'Clear local projects?',
-                        'This removes only copies stored by this app. Photos, Files originals and exported copies stay unchanged.',
-                      );
-                      if (confirmed) await controller.clear();
-                    },
-              child: const Text('Clear all'),
-            ),
-        ],
-      ),
-      const SizedBox(height: 10),
-      if (controller.sessions.isNotEmpty)
-        Padding(
-          padding: const EdgeInsets.only(bottom: 14),
-          child: _Panel(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '${controller.batchSelection.length} of ${controller.sessions.length} selected',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 14,
-                          color: _accent,
-                        ),
-                      ),
-                    ),
-                    TextButton(
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                      onPressed: controller.busy
-                          ? null
-                          : () {
-                              final allSelected = controller.sessions.every(
-                                (s) => controller.batchSelection.contains(s.id),
-                              );
-                              for (final s in controller.sessions) {
-                                controller.toggleBatch(s, !allSelected);
-                              }
-                            },
-                      child: Text(
-                        controller.sessions.every(
-                              (s) => controller.batchSelection.contains(s.id),
-                            )
-                            ? 'Deselect all'
-                            : 'Select all',
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                FilledButton.icon(
-                  onPressed:
-                      controller.busy || controller.batchSelection.isEmpty
-                      ? null
-                      : controller.startBatchEditing,
-                  icon: const Icon(Icons.edit_note_rounded, size: 20),
-                  label: const Text('Edit selected files'),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed:
-                            controller.busy || controller.batchSelection.isEmpty
-                            ? null
-                            : () => _shareBatch(context, controller),
-                        icon: const Icon(Icons.ios_share_rounded, size: 16),
-                        label: const Text('Share selected copies'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed:
-                            controller.busy || controller.batchSelection.isEmpty
-                            ? null
-                            : () => _exportBatch(context, controller),
-                        icon: const Icon(
-                          Icons.folder_shared_outlined,
-                          size: 16,
-                        ),
-                        label: const Text('Export to folder'),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                const Center(
-                  child: Text(
-                    'Processed media saves automatically to On My iPhone › Metadata Editor',
-                    style: TextStyle(fontSize: 11, color: _muted),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      if (controller.queue.isNotEmpty)
-        Padding(
-          padding: const EdgeInsets.only(bottom: 14),
-          child: _Panel(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'Batch Queue',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 14,
-                      ),
-                    ),
-                    Text(
-                      '${controller.queueCompletedCount}/${controller.queueTotal} ready',
-                      style: const TextStyle(color: _accent, fontSize: 12),
-                    ),
-                  ],
-                ),
-                if (controller.queueFailedCount > 0) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    '${controller.queueFailedCount} failed or interrupted',
-                    style: const TextStyle(
-                      color: Colors.redAccent,
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 10),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(
-                    value: controller.queueTotal > 0
-                        ? controller.queueCompletedCount / controller.queueTotal
-                        : 0,
-                    minHeight: 6,
-                    backgroundColor: _border,
-                    color: _accent,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                if (controller.queueCompletedCount > 0) ...[
-                  Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton.tonal(
-                          onPressed: controller.busy
-                              ? null
-                              : () => _exportBatch(
-                                  context,
-                                  controller,
-                                  onlyReady: true,
-                                ),
-                          child: const Text('Export ready'),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: controller.busy
-                              ? null
-                              : () => _shareBatch(
-                                  context,
-                                  controller,
-                                  onlyReady: true,
-                                ),
-                          child: const Text('Share ready'),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-                if (controller.queueFailedCount > 0) ...[
-                  if (controller.queueCompletedCount > 0)
-                    const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: controller.busy ? null : controller.retryBatch,
-                      icon: const Icon(Icons.refresh_rounded, size: 16),
-                      label: const Text('Retry unfinished files'),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 10),
-                ExpansionTile(
-                  tilePadding: EdgeInsets.zero,
-                  title: Text(
-                    'Batch: ${controller.queue.where((q) => q.status == "completed").length}/${controller.queue.length} ready',
-                    style: const TextStyle(fontSize: 13),
-                  ),
-                  children: [
-                    for (final item in controller.queue)
-                      ListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        leading: Icon(
-                          item.status == 'completed'
-                              ? Icons.check_circle_outline
-                              : item.status == 'failed' ||
-                                    item.status == 'interrupted'
-                              ? Icons.error_outline
-                              : Icons.hourglass_top_outlined,
-                          size: 18,
-                          color: item.status == 'completed'
-                              ? _accent
-                              : item.status == 'failed' ||
-                                    item.status == 'interrupted'
-                              ? Colors.redAccent
-                              : Colors.white60,
-                        ),
-                        title: Text(
-                          controller.sessions
-                                  .where((s) => s.id == item.sessionId)
-                                  .firstOrNull
-                                  ?.displayName ??
-                              'Local file',
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                        subtitle: Text(
-                          '${item.status}${item.message == null ? '' : ' · ${item.message}'}',
-                          style: const TextStyle(fontSize: 11),
-                        ),
-                      ),
-                    if (controller.queue.any(
-                      (q) => q.status == 'failed' || q.status == 'interrupted',
-                    ))
-                      TextButton(
-                        onPressed: controller.busy
-                            ? null
-                            : controller.retryBatch,
-                        child: const Text('Retry unfinished files'),
-                      ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      if (controller.sessions.isEmpty)
-        const _Panel(
+        const SizedBox(width: 14),
+        Expanded(
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.layers_outlined, color: _muted, size: 28),
-              SizedBox(height: 10),
-              Text('No projects yet'),
-              SizedBox(height: 5),
+              const Text(
+                AppBrand.name,
+                style: TextStyle(
+                  fontSize: 26,
+                  height: 1.15,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.5,
+                ),
+              ),
+              const SizedBox(height: 4),
               Text(
-                'Imported files and processed copies appear here.',
-                style: TextStyle(color: _muted),
-                textAlign: TextAlign.center,
+                'by ${AppBrand.developer}',
+                style: TextStyle(
+                  color: colors.muted,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: -0.2,
+                ),
               ),
             ],
           ),
         ),
-      for (final session in controller.sessions)
-        Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: _Panel(
-            padding: const EdgeInsets.all(4),
-            child: ListTile(
-              enabled: !controller.busy,
-              onTap: () => controller.select(session),
-              leading: Checkbox(
-                value: controller.batchSelection.contains(session.id),
-                onChanged: controller.busy
-                    ? null
-                    : (value) =>
-                          controller.toggleBatch(session, value ?? false),
+        const SizedBox(width: 8),
+        IconButton(
+          key: const Key('openSettings'),
+          tooltip: 'Settings',
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+          style: IconButton.styleFrom(
+            backgroundColor: colors.surface.withValues(alpha: 0.65),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+          ),
+          icon: const Icon(Icons.tune_rounded, size: 23),
+          onPressed: onSettings,
+        ),
+      ],
+    );
+  }
+}
+
+class _ImportHome extends StatelessWidget {
+  const _ImportHome({required this.controller});
+  final EditorController controller;
+
+  Future<void> _chooseSource(BuildContext context) async {
+    final photos = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                key: const Key('importPhotos'),
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Photos'),
+                subtitle: const Text('Choose one or more photos or videos'),
+                onTap: () => Navigator.pop(context, true),
               ),
-              title: Text(
-                session.displayName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+              ListTile(
+                key: const Key('importFiles'),
+                leading: const Icon(Icons.folder_open_rounded),
+                title: const Text('Files'),
+                subtitle: const Text('Choose from your device or iCloud Drive'),
+                onTap: () => Navigator.pop(context, false),
               ),
-              subtitle: Text(
-                '${session.inspection.kind.label} · ${session.inspection.sizeLabel} · ${session.processing == null ? "Original" : "Processed copy"}',
-              ),
-              trailing: IconButton(
-                tooltip: 'Remove ${session.displayName}',
-                icon: const Icon(Icons.delete_outline_rounded),
-                onPressed: controller.busy
-                    ? null
-                    : () async {
-                        final confirmed = await _confirm(
-                          context,
-                          'Remove local project?',
-                          'Only this app’s copies will be deleted. Your original and exported copies stay unchanged.',
-                        );
-                        if (confirmed) await controller.delete(session);
-                      },
+            ],
+          ),
+        ),
+      ),
+    );
+    if (photos != null &&
+        context.mounted &&
+        controller.ready &&
+        !controller.busy) {
+      await controller.importBatch(photos: photos);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: double.infinity,
+          child: Material(
+            color: colors.surface,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+              side: BorderSide(color: colors.border),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              key: const Key('selectMedia'),
+              onTap: controller.ready && !controller.busy
+                  ? () => _chooseSource(context)
+                  : null,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 42,
+                ),
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.add_photo_alternate_outlined,
+                      size: 38,
+                      color: colors.accent,
+                    ),
+                    const SizedBox(height: 18),
+                    const Text(
+                      'Select photos or videos',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 19,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Select multiple for a batch',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 14, color: colors.muted),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
         ),
-    ],
-  );
+      ],
+    );
+  }
 }
 
 class _Panel extends StatelessWidget {
-  const _Panel({required this.child, this.padding = const EdgeInsets.all(20)});
+  const _Panel({required this.child});
   final Widget child;
-  final EdgeInsets padding;
   @override
   Widget build(BuildContext context) => Card(
-    child: Padding(padding: padding, child: child),
-  );
-}
-
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle(this.number, this.title);
-  final String number;
-  final String title;
-  @override
-  Widget build(BuildContext context) => Row(
-    children: [
-      Text(
-        number,
-        style: const TextStyle(
-          color: _accent,
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-      const SizedBox(width: 12),
-      Expanded(
-        child: Text(
-          title,
-          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
-        ),
-      ),
-    ],
+    child: Padding(padding: const EdgeInsets.all(20), child: child),
   );
 }
 
 class WorkflowNote extends StatelessWidget {
   const WorkflowNote({super.key});
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(14),
-    decoration: BoxDecoration(
-      color: const Color(0xFF132720),
-      borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: const Color(0xFF224436)),
-    ),
-    child: const Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'THE PHOTOS WORKFLOW',
-          style: TextStyle(
-            color: Color(0xFF84E4C7),
-            fontSize: 10,
-            letterSpacing: 1.2,
-            fontWeight: FontWeight.w700,
+  Widget build(BuildContext context) {
+    final colors = AppTheme.of(context);
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: dark ? const Color(0xFF132720) : const Color(0xFFEAF5EE),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: dark ? const Color(0xFF224436) : const Color(0xFFBEDAC7),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Using your copy in Apple Photos',
+            style: TextStyle(
+              color: dark ? const Color(0xFF84E4C7) : colors.success,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
           ),
-        ),
-        SizedBox(height: 8),
-        Text(
-          '1  Save the processed copy to Files.\n2  Upload that file at iCloud.com/Photos in Safari.\n3  Let it sync, then check it in Apple Photos.',
-          style: TextStyle(fontSize: 13, height: 1.65),
-        ),
-        SizedBox(height: 8),
-        Text(
-          'Requires iCloud Photos, a browser upload and an internet connection. If the button opens another browser, open Safari manually for the tested upload workflow.',
-          style: TextStyle(color: Color(0xFF90B0A0), fontSize: 11, height: 1.4),
-        ),
-      ],
-    ),
-  );
+          const SizedBox(height: 8),
+          const Text(
+            '1  Save the processed copy to Files.\n2  Upload that file at iCloud.com/Photos in Safari.\n3  Let it sync, then check it in Apple Photos.',
+            style: TextStyle(fontSize: 13, height: 1.65),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Requires iCloud Photos and an internet connection. Use Safari for upload, then check the result in Photos. Source labels and Photos display are controlled by Apple and are not guaranteed.',
+            style: TextStyle(color: colors.muted, fontSize: 11, height: 1.4),
+          ),
+        ],
+      ),
+    );
+  }
 }
-
-typedef _WorkflowNote = WorkflowNote;
 
 class _DiagnosticErrorBanner extends StatelessWidget {
   const _DiagnosticErrorBanner({
@@ -940,112 +642,69 @@ class _DiagnosticErrorBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final simplified = simplifyUserError(rawError);
-    final code = errorCode ?? 'ERR_GENERAL';
-
+    final colors = AppTheme.of(context);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.only(bottom: 12),
       child: Container(
         key: const Key('diagnosticErrorBanner'),
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.fromLTRB(12, 8, 4, 4),
         decoration: BoxDecoration(
-          color: const Color(0xFF221114),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: const Color(0xFFFF453A).withValues(alpha: 0.6),
-            width: 1.2,
-          ),
+          color: colors.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colors.errorBorder.withValues(alpha: 0.6)),
         ),
-        child: Column(
+        child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 7,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFF453A).withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                      color: const Color(0xFFFF453A).withValues(alpha: 0.4),
-                    ),
-                  ),
-                  child: Text(
-                    code,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      color: Color(0xFFFF453A),
-                      letterSpacing: 0.8,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Text(
-                    'Attention Needed',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-                IconButton(
-                  key: const Key('dismissErrorBannerButton'),
-                  tooltip: 'Dismiss message',
-                  onPressed: onDismiss,
-                  icon: const Icon(Icons.close, size: 18, color: _muted),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              simplified,
-              style: const TextStyle(
-                fontSize: 13,
-                color: Color(0xFFE5E5EA),
-                height: 1.45,
+            Padding(
+              padding: const EdgeInsets.only(top: 5, right: 10),
+              child: Icon(
+                Icons.error_outline_rounded,
+                color: colors.error,
+                size: 20,
               ),
             ),
-            if (simplified != rawError)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  rawError,
-                  style: const TextStyle(fontSize: 11, color: _muted),
-                ),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      errorCode == 'ERR_MEDIA_INTEGRITY'
+                          ? 'This copy failed preservation checks.'
+                          : simplifyUserError(rawError),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: colors.text,
+                        fontSize: 13,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    key: const Key('viewSolutionButton'),
+                    onPressed: onViewFix,
+                    style: TextButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      minimumSize: const Size(44, 40),
+                      alignment: Alignment.centerLeft,
+                      foregroundColor: colors.accent,
+                    ),
+                    child: const Text(
+                      'Details',
+                      style: TextStyle(fontSize: 13),
+                    ),
+                  ),
+                ],
               ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                FilledButton.icon(
-                  key: const Key('viewSolutionButton'),
-                  onPressed: onViewFix,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFFFF453A),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 8,
-                    ),
-                    minimumSize: const Size(0, 36),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  icon: const Icon(Icons.lightbulb_outline_rounded, size: 16),
-                  label: const Text(
-                    'View Solution & Steps',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-                  ),
-                ),
-              ],
+            ),
+            IconButton(
+              key: const Key('dismissErrorBannerButton'),
+              tooltip: 'Dismiss error',
+              onPressed: onDismiss,
+              icon: Icon(Icons.close_rounded, size: 18, color: colors.muted),
             ),
           ],
         ),
@@ -1064,9 +723,9 @@ class _Message extends StatelessWidget {
     child: Container(
       padding: const EdgeInsets.fromLTRB(14, 10, 4, 10),
       decoration: BoxDecoration(
-        color: _surface,
+        color: AppTheme.of(context).surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _border),
+        border: Border.all(color: AppTheme.of(context).border),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1125,233 +784,5 @@ class _Progress extends StatelessWidget {
         ],
       ),
     ),
-  );
-}
-
-Future<bool> _confirm(
-  BuildContext context,
-  String title,
-  String message,
-) async =>
-    await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Keep'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Remove'),
-          ),
-        ],
-      ),
-    ) ??
-    false;
-
-Future<void> _exportBatch(
-  BuildContext context,
-  EditorController controller, {
-  bool onlyReady = false,
-}) async {
-  final completedIds = controller.queue
-      .where((q) => q.status == 'completed')
-      .map((q) => q.sessionId)
-      .toSet();
-  final chosen = onlyReady
-      ? controller.sessions.where((s) => completedIds.contains(s.id)).toList()
-      : controller.sessions
-            .where((s) => controller.batchSelection.contains(s.id))
-            .toList();
-  if (chosen.isEmpty) return;
-
-  final readyTargets = chosen
-      .where(
-        (s) => s.processing != null && !s.processing!.integrity.hasMismatch,
-      )
-      .toList();
-
-  if (readyTargets.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'No processed copies ready. Tap "Edit selected files" to apply metadata first.',
-        ),
-      ),
-    );
-    return;
-  }
-
-  var exportOnlyReady = onlyReady;
-  if (!onlyReady && readyTargets.length < chosen.length) {
-    final exportReady = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Export ready copies?'),
-        content: Text(
-          '${readyTargets.length} of ${chosen.length} selected files have processed copies ready.\n\n'
-          'Export the ${readyTargets.length} ready copies now?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text('Export ${readyTargets.length} copies'),
-          ),
-        ],
-      ),
-    );
-    if (exportReady != true) return;
-    exportOnlyReady = true;
-  }
-
-  if (!context.mounted) return;
-  final targets = exportOnlyReady ? readyTargets : chosen;
-  final needs = targets.any(
-    (s) => s.processing?.integrity.needsAcknowledgment ?? false,
-  );
-  var acknowledgment = false;
-  if (needs) {
-    acknowledgment =
-        await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Export with limitations?'),
-            content: SingleChildScrollView(
-              child: Text(
-                targets
-                    .expand(
-                      (s) => s.processing?.integrity.limitations ?? <String>[],
-                    )
-                    .toSet()
-                    .join('\n'),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Accept & export'),
-              ),
-            ],
-          ),
-        ) ??
-        false;
-    if (!acknowledgment) return;
-  }
-  await controller.exportSelectedBatch(
-    acknowledgeIncomplete: acknowledgment,
-    onlyReady: exportOnlyReady,
-  );
-}
-
-Future<void> _shareBatch(
-  BuildContext context,
-  EditorController controller, {
-  bool onlyReady = false,
-}) async {
-  final completedIds = controller.queue
-      .where((q) => q.status == 'completed')
-      .map((q) => q.sessionId)
-      .toSet();
-  final chosen = onlyReady
-      ? controller.sessions.where((s) => completedIds.contains(s.id)).toList()
-      : controller.sessions
-            .where((s) => controller.batchSelection.contains(s.id))
-            .toList();
-  if (chosen.isEmpty) return;
-
-  final readyTargets = chosen
-      .where(
-        (s) => s.processing != null && !s.processing!.integrity.hasMismatch,
-      )
-      .toList();
-
-  if (readyTargets.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'No processed copies ready. Tap "Edit selected files" to apply metadata first.',
-        ),
-      ),
-    );
-    return;
-  }
-
-  var shareOnlyReady = onlyReady;
-  if (!onlyReady && readyTargets.length < chosen.length) {
-    final shareReady = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Share ready copies?'),
-        content: Text(
-          '${readyTargets.length} of ${chosen.length} selected files have processed copies ready.\n\n'
-          'Share the ${readyTargets.length} ready copies now?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text('Share ${readyTargets.length} copies'),
-          ),
-        ],
-      ),
-    );
-    if (shareReady != true) return;
-    shareOnlyReady = true;
-  }
-
-  if (!context.mounted) return;
-  final targets = shareOnlyReady ? readyTargets : chosen;
-  final needs = targets.any(
-    (s) => s.processing?.integrity.needsAcknowledgment ?? false,
-  );
-  var acknowledgment = false;
-  if (needs) {
-    acknowledgment =
-        await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Share with limitations?'),
-            content: SingleChildScrollView(
-              child: Text(
-                targets
-                    .expand(
-                      (s) => s.processing?.integrity.limitations ?? <String>[],
-                    )
-                    .toSet()
-                    .join('\n'),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Accept & share'),
-              ),
-            ],
-          ),
-        ) ??
-        false;
-    if (!acknowledgment) return;
-  }
-  await controller.shareSelectedBatch(
-    acknowledgeIncomplete: acknowledgment,
-    onlyReady: shareOnlyReady,
   );
 }

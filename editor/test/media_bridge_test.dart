@@ -14,6 +14,210 @@ void main() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   tearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
+  test('integrity diagnostics expose only bounded known check labels', () {
+    final error = PlatformException(
+      code: 'integrity',
+      message: 'Copy failed preservation checks.',
+      details: {
+        'failedChecks': [
+          'video_target_iso',
+          'video_samples_track_2',
+          'video_target_iso',
+          'file:///private/clip.mov',
+          'video_samples_track_999',
+          'video_target_user_secret',
+          123,
+        ],
+      },
+    );
+    expect(
+      readableError(error),
+      'Copy failed preservation checks. Checks: Video ISO, Track 2 encoded media.',
+    );
+  });
+
+  test('malformed and oversized integrity diagnostics remain generic', () {
+    for (final details in [
+      {'failedChecks': List.filled(33, 'container')},
+      {'failedChecks': 'private media'},
+      {
+        'failedChecks': ['unknown', 'latitude=10.123'],
+      },
+      null,
+    ]) {
+      expect(
+        readableError(
+          PlatformException(
+            code: 'integrity',
+            message: 'Copy failed preservation checks.',
+            details: details,
+          ),
+        ),
+        'Copy failed preservation checks.',
+      );
+    }
+  });
+
+  test('safe history diagnostics round-trip only known labels', () {
+    final message = readableError(
+      PlatformException(
+        code: 'integrity',
+        message: 'Copy failed preservation checks.',
+        details: {
+          'failedChecks': ['video_target_iso', 'video_samples_track_2'],
+        },
+      ),
+    );
+    expect(safeIntegrityCheckLabels(message), [
+      'Video ISO',
+      'Track 2 encoded media',
+    ]);
+    expect(
+      safeIntegrityCheckLabels(
+        'Untrusted prefix Checks: Video ISO, Video ISO.',
+      ),
+      ['Video ISO'],
+    );
+  });
+
+  test('safe history diagnostics reject arbitrary or malformed summaries', () {
+    for (final message in <String?>[
+      null,
+      'file:///private/user.mov',
+      'Failed Checks: Video ISO, file:///private/user.mov.',
+      'Failed Checks: Video ISO, latitude=10.123.',
+      'Failed Checks: Video ISO.\nprivate file data',
+      'Failed Checks: Video ISO',
+      'Failed Checks: ',
+      'Failed Checks: ${List.filled(9, 'Video ISO').join(', ')}.',
+      '${'x' * 4096} Checks: Video ISO.',
+    ]) {
+      expect(safeIntegrityCheckLabels(message), isEmpty, reason: '$message');
+    }
+  });
+
+  test(
+    'review reserves opaque source IDs and decodes exact native names',
+    () async {
+      MethodCall? received;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        received = call;
+        return {sourceId: 'IMG_4827.HEIC'};
+      });
+      expect(await bridge.reserveOutputNames([sourceId]), {
+        sourceId: 'IMG_4827.HEIC',
+      });
+      expect(received?.method, 'reserveOutputNames');
+      expect(received?.arguments, {
+        'sessionIds': [sourceId],
+      });
+    },
+  );
+
+  test(
+    'review refuses missing, duplicate, unsafe and foreign native names',
+    () async {
+      for (final response in <Object?>[
+        {},
+        {outputId: 'IMG_4827.HEIC'},
+        {sourceId: '../outside.HEIC'},
+        {sourceId: 'IMG_4827.heic'},
+        {sourceId: 4827},
+        {sourceId: 'IMG_4827.HEIC', outputId: 'IMG_4827.HEIC'},
+      ]) {
+        messenger.setMockMethodCallHandler(channel, (_) async => response);
+        final ids = response is Map && response.length == 2
+            ? [sourceId, outputId]
+            : [sourceId];
+        await expectLater(
+          bridge.reserveOutputNames(ids),
+          throwsFormatException,
+        );
+      }
+      await expectLater(bridge.reserveOutputNames([]), throwsFormatException);
+      await expectLater(
+        bridge.reserveOutputNames([sourceId, sourceId]),
+        throwsFormatException,
+      );
+    },
+  );
+
+  test(
+    'support handoff uses a fixed native method without user data',
+    () async {
+      MethodCall? received;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        received = call;
+        return null;
+      });
+      await bridge.openSupportEmail();
+      expect(received?.method, 'openSupportEmail');
+      expect(received?.arguments, isNull);
+      expect(AppBrand.supportEmail, 'vxti.dev@gmail.com');
+      expect(AppBrand.supportSubject, 'Metadata Editor Support');
+    },
+  );
+
+  test(
+    'map picker passes bounded appearance and coordinates to native',
+    () async {
+      MethodCall? received;
+      var calls = 0;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls++;
+        received = call;
+        return {'latitude': 35.779590, 'longitude': -78.638179};
+      });
+      expect(
+        await bridge.openLocationPicker(
+          latitude: 35.7,
+          longitude: -78.6,
+          appearance: 'dark',
+        ),
+        {'latitude': 35.779590, 'longitude': -78.638179},
+      );
+      expect(received?.method, 'openLocationPicker');
+      expect(received?.arguments, {
+        'latitude': 35.7,
+        'longitude': -78.6,
+        'appearance': 'dark',
+      });
+      await bridge.openLocationPicker();
+      expect(received?.arguments, {
+        'latitude': null,
+        'longitude': null,
+        'appearance': 'system',
+      });
+      await expectLater(
+        bridge.openLocationPicker(appearance: 'sepia'),
+        throwsFormatException,
+      );
+      expect(calls, 2);
+    },
+  );
+
+  test(
+    'support handoff propagates the native email unavailable message',
+    () async {
+      messenger.setMockMethodCallHandler(channel, (_) async {
+        throw PlatformException(
+          code: 'email_unavailable',
+          message: 'Install or configure an email app, then try again.',
+        );
+      });
+      await expectLater(
+        bridge.openSupportEmail(),
+        throwsA(
+          isA<PlatformException>().having(
+            (error) => error.code,
+            'code',
+            'email_unavailable',
+          ),
+        ),
+      );
+    },
+  );
+
   test(
     'protocol version mismatch fails before accepting engine capabilities',
     () async {
@@ -43,6 +247,40 @@ void main() {
       'acknowledgeIncomplete': true,
     });
   });
+  test(
+    'batch export and sharing reject malformed completion responses',
+    () async {
+      final operations = <String, Future<bool> Function()>{
+        'exportFilesBatch': () => bridge.exportBatch(const []),
+        'shareFiles': () => bridge.shareFiles(sourceId, outputId, false),
+        'shareFilesBatch': () => bridge.shareBatch(const []),
+      };
+      for (final operation in operations.entries) {
+        for (final response in <Object?>[
+          <String, Object?>{},
+          {'completed': 'false'},
+          {'completed': 1},
+          null,
+        ]) {
+          messenger.setMockMethodCallHandler(channel, (call) async {
+            expect(call.method, operation.key);
+            return response;
+          });
+          await expectLater(operation.value(), throwsFormatException);
+        }
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          expect(call.method, operation.key);
+          return {'completed': false};
+        });
+        expect(await operation.value(), isFalse);
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          expect(call.method, operation.key);
+          return {'completed': true};
+        });
+        expect(await operation.value(), isTrue);
+      }
+    },
+  );
   test(
     'native picker cancellation remains null rather than a fabricated session',
     () async {
@@ -74,6 +312,32 @@ void main() {
       );
     },
   );
+  test('malformed optional output labels fail as protocol format errors', () {
+    final processing = <String, Object?>{
+      'id': outputId,
+      'createdAt': '2026-10-08T12:00:00Z',
+      'patch': {'make': 'Test Make', 'model': 'Test Camera'},
+      'outputInspection': inspectionMap(),
+      'integrity': {
+        'status': 'verified',
+        'checks': [
+          {'name': 'Payload', 'status': 'passed', 'detail': 'Matches.'},
+        ],
+        'limitations': <String>[],
+      },
+    };
+    expect(
+      () => Processing.decode({...processing, 'outputDisplayName': 4827}),
+      throwsFormatException,
+    );
+    expect(
+      () => Processing.decode({
+        ...processing,
+        'autoExportFolder': ['Files'],
+      }),
+      throwsFormatException,
+    );
+  });
   test(
     'unknown check status and empty check lists cannot certify integrity',
     () {
@@ -160,7 +424,19 @@ void main() {
         simplifyUserError(
           'Native metadata processing or independent integrity verification failed.',
         ),
-        contains('select a clean Camera Profile'),
+        contains('preserved'),
+      );
+      expect(
+        simplifyUserError('Integrity checks are incomplete.'),
+        contains('processed copy remains available'),
+      );
+      expect(
+        simplifyUserError('altitude is out of range.'),
+        contains('-100,000m and 100,000m'),
+      );
+      expect(
+        simplifyUserError('Photos permission is required.'),
+        contains('Full Library Access is optional'),
       );
     },
   );

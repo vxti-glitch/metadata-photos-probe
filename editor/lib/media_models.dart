@@ -13,7 +13,7 @@ enum MediaKind {
   String get label => name.toUpperCase();
 }
 
-enum IntegrityStatus { verified, incomplete, mismatch }
+enum IntegrityStatus { verified, warning, incomplete, mismatch }
 
 Map<String, Object?> objectMap(Object? value) {
   if (value is! Map) throw const FormatException('Expected an object.');
@@ -139,10 +139,14 @@ class IntegrityCheck {
   final String name;
   final String status;
   final String detail;
+  String get consumerName =>
+      status == 'warning' && _isAdditionalMetadataCheck(name)
+      ? 'Other file details'
+      : name;
   factory IntegrityCheck.decode(Object? data) {
     final value = objectMap(data);
     final status = requiredString(value, 'status');
-    if (!['passed', 'failed', 'notChecked'].contains(status)) {
+    if (!['passed', 'warning', 'failed', 'notChecked'].contains(status)) {
       throw const FormatException('Invalid integrity check.');
     }
     return IntegrityCheck(
@@ -153,6 +157,18 @@ class IntegrityCheck {
   }
 }
 
+bool _isAdditionalMetadataCheck(String name) =>
+    const {
+      'retained embedded metadata',
+      'retained metadata numeric key',
+      'retained metadata unnamed key',
+      'retained metadata unrecognized key',
+      'retained metadata location tuple',
+    }.contains(name) ||
+    metadataFields.any(
+      (field) => name == 'retained metadata field ${field.key}',
+    );
+
 class IntegrityReport {
   const IntegrityReport(this.status, this.checks, this.limitations);
   final IntegrityStatus status;
@@ -160,7 +176,15 @@ class IntegrityReport {
   final List<String> limitations;
   bool get hasMismatch =>
       status == IntegrityStatus.mismatch ||
-      checks.any((check) => check.status == 'failed');
+      checks.any(
+        (check) =>
+            check.status == 'failed' ||
+            (check.status == 'warning' &&
+                !_isAdditionalMetadataCheck(check.name)),
+      );
+  bool get hasAdditionalDetailsWarning =>
+      status == IntegrityStatus.warning ||
+      checks.any((check) => check.status == 'warning');
   bool get needsAcknowledgment =>
       status == IntegrityStatus.incomplete ||
       limitations.isNotEmpty ||
@@ -174,9 +198,27 @@ class IntegrityReport {
     if (status.length != 1 || checks is! List || checks.isEmpty) {
       throw const FormatException('Invalid integrity report.');
     }
+    final decodedChecks = List<IntegrityCheck>.unmodifiable(
+      checks.map(IntegrityCheck.decode),
+    );
+    final warningChecks = decodedChecks.where(
+      (check) => check.status == 'warning',
+    );
+    if ((warningChecks.isNotEmpty &&
+            status.single == IntegrityStatus.verified) ||
+        warningChecks.any((check) => !_isAdditionalMetadataCheck(check.name)) ||
+        (status.single == IntegrityStatus.warning &&
+            (warningChecks.isEmpty ||
+                decodedChecks.any(
+                  (check) =>
+                      check.status == 'failed' || check.status == 'notChecked',
+                ) ||
+                strings(value['limitations']).isNotEmpty))) {
+      throw const FormatException('Invalid warning report.');
+    }
     return IntegrityReport(
       status.single,
-      List<IntegrityCheck>.unmodifiable(checks.map(IntegrityCheck.decode)),
+      decodedChecks,
       strings(value['limitations']),
     );
   }
@@ -210,6 +252,12 @@ class Processing {
     if (lens != null && lens is! String) {
       throw const FormatException('Invalid lens.');
     }
+    final outputDisplayName = value['outputDisplayName'];
+    final autoExportFolder = value['autoExportFolder'];
+    if ((outputDisplayName != null && outputDisplayName is! String) ||
+        (autoExportFolder != null && autoExportFolder is! String)) {
+      throw const FormatException('Invalid output display information.');
+    }
     return Processing(
       id: identifier(value, 'id'),
       createdAt: timestamp(value, 'createdAt'),
@@ -223,8 +271,8 @@ class Processing {
         lens: lens as String?,
       ),
       metadataPatch: fullPatch,
-      outputDisplayName: value['outputDisplayName'] as String?,
-      autoExportFolder: value['autoExportFolder'] as String?,
+      outputDisplayName: outputDisplayName as String?,
+      autoExportFolder: autoExportFolder as String?,
       inspection: MediaInspection.decode(value['outputInspection']),
       integrity: IntegrityReport.decode(value['integrity']),
     );

@@ -27,3 +27,16 @@ Coined candidates were screened with exact broad searches and store/software sea
 - Independent package: `metadata_editor`; iOS bundle: `com.vxtiglitch.metadataeditor`; channel: `com.vxtiglitch.metadataeditor/media_v1`.
 
 Copy describes real actions and qualified quality results. It does not promise universal losslessness, automatic uploads, removal of Photos library provenance, or full roadmap features in this first milestone.
+
+## October 12, 2026 icon refinement
+
+The existing dark viewfinder identity is retained. The current icon uses a solid
+`#1C1C1E` background, four thicker light corners, evenly spaced metadata rows,
+one strong `#0A84FF` dot and two smaller neutral dots. Small crosshair ticks remain
+subtle. This replaces the stale lavender SVG source so the editable master,
+generated iOS AppIcon/LaunchImage assets and Flutter `MetadataMarkPainter` agree.
+The full app icon remains opaque and square for the system's own icon mask;
+the in-app mark retains its rounded background. Asset dimensions and catalogs
+are unchanged. `python editor/branding/render_icons.py` regenerates the assets;
+`python -m unittest discover -s editor/branding -p test_render_icons.py` checks
+the master, every committed asset and compact-size visibility.

@@ -24,6 +24,29 @@ final class FullMetadataTests: XCTestCase {
         for retired in ["Synthetic description", "iPhone 15 Pro Max back triple camera", "iPhone 15 Pro Max\0"] { XCTAssertNil(output.range(of: Data(retired.utf8))) }
         XCTAssertEqual(try ExifMetadataEditor.inspect(first)["model"], "iPhone 15 Pro Max", "Source bytes remain immutable")
     }
+    func testSubIFDAliasingTargetPayloadIsRefusedBeforeErasure() throws {
+        var bytes = Data(repeating: 0, count: 105)
+        bytes.replaceSubrange(0..<2, with: Data("II".utf8))
+        func put(_ value: UInt32, width: Int, at position: Int) {
+            bytes.replaceSubrange(position..<position + width, with: ExifMetadataEditor.number(value, width: width, little: true))
+        }
+        func entry(_ position: Int, tag: UInt32, type: UInt32, count: UInt32, value: UInt32) {
+            put(tag, width: 2, at: position); put(type, width: 2, at: position + 2)
+            put(count, width: 4, at: position + 4); put(value, width: 4, at: position + 8)
+        }
+        put(42, width: 2, at: 2); put(8, width: 4, at: 4); put(2, width: 2, at: 8)
+        entry(10, tag: 0x010f, type: 2, count: 5, value: 100)
+        entry(22, tag: 0x014a, type: 4, count: 1, value: 50)
+        put(1, width: 2, at: 50)
+        entry(52, tag: 0x013b, type: 2, count: 5, value: 100)
+        bytes.replaceSubrange(100..<105, with: Data("Old!\0".utf8))
+        let original = bytes
+        XCTAssertThrowsError(try ExifMetadataEditor.patch(bytes, patch: MetadataPatch(values: ["make": .string("New")]))) { error in
+            guard case ProbeError.unsupported(let reason) = error else { return XCTFail("Unexpected failure: \(error)") }
+            XCTAssertTrue(reason.contains("SubIFD"))
+        }
+        XCTAssertEqual(bytes, original)
+    }
     func testPrimitiveJSONRoundTripAndUnknownTypeRejection() throws {
         let json = Data("{\"values\":{\"iso\":800,\"make\":\"Apple\"},\"removals\":[\"software\"]}".utf8)
         let patch = try JSONDecoder().decode(MetadataPatch.self, from: json)

@@ -2,6 +2,7 @@ import XCTest
 import Foundation
 import AVFoundation
 import CoreVideo
+import AudioToolbox
 @testable import ProbeCore
 
 final class VideoMetadataWriterTests: XCTestCase {
@@ -22,6 +23,300 @@ final class VideoMetadataWriterTests: XCTestCase {
 
     func testDirectNativeMOVAddsCameraWithoutEngineCleanup() async throws {
         try await assertNativeMOV(includeMetadata: false)
+    }
+
+    func testAVFoundationReadsBothCameraRepresentationsInMOV() async throws {
+        try await assertAVFoundationCameraRepresentations(kind: .mov)
+    }
+
+    func testAVFoundationReadsKeyedCameraRepresentationInMP4() async throws {
+        try await assertAVFoundationCameraRepresentations(kind: .mp4)
+    }
+
+    func testNestedVersionedCameraMetadataMovesToNativeMovieScopeWithoutLosingContent() async throws {
+        for kind in [MediaKind.mov, .mp4] {
+            let source = directory.appendingPathComponent("nested-camera.\(kind.rawValue)")
+            try await makeNativeMOV(source, includeMetadata: false, kind: kind, includeAudio: true)
+            let metadata = try layoutFixtureMetadata()
+            let sibling = box("free", Data("retained user data".utf8))
+            let otherMeta = box("meta", box("hdlr", word(0) + word(0) + Data("mdir".utf8) + Data(repeating: 0, count: 13)))
+            try rewriteFixtureMovie(source, metadata: metadata, nested: true, sibling: sibling + otherMeta)
+            let sourceHash = try WholeFileDigest.sha256(source)
+            let original = try Data(contentsOf: source)
+            let output = directory.appendingPathComponent("normalized-camera.\(kind.rawValue)")
+            let patch = MetadataPatch(values: ["make": .string("Apple"), "model": .string("iPhone 15 Pro Max")])
+            _ = try await VideoMetadataWriter.write(source: source, output: output, patch: patch)
+            let edited = try Data(contentsOf: output)
+            let direct = try onlyDirectCameraMetadata(edited)
+            XCTAssertEqual(Data(direct.prefix(4)), word(33), "Direct metadata begins with the hdlr atom, not full-box flags")
+            let originalChildren = try boxes(Data(metadata.dropFirst(12)))
+            let newChildren = try boxes(direct)
+            for type in ["mhdr", "ctry", "lang", "free"] {
+                let before = try XCTUnwrap(originalChildren.first { $0.type == type })
+                let after = try XCTUnwrap(newChildren.first { $0.type == type })
+                XCTAssertEqual(Data(metadata.dropFirst(12)).subdata(in: before.range), direct.subdata(in: after.range))
+            }
+            // Item 3 is deliberately non-UTF8 with a nonzero locale and a name
+            // child. Its entire raw bytes, not just a decoded string, must survive.
+            let beforeItems = Data(metadata.dropFirst(12)).subdata(in: try XCTUnwrap(originalChildren.first { $0.type == "ilst" }).payload)
+            let afterItems = direct.subdata(in: try XCTUnwrap(newChildren.first { $0.type == "ilst" }).payload)
+            let retainedBefore = try XCTUnwrap(boxes(beforeItems).first { $0.code == 3 })
+            let retainedAfter = try XCTUnwrap(boxes(afterItems).first { $0.code == 3 })
+            XCTAssertEqual(beforeItems.subdata(in: retainedBefore.range), afterItems.subdata(in: retainedAfter.range))
+            let userData = try movieUserData(edited)
+            XCTAssertTrue(userData.range(of: sibling) != nil)
+            XCTAssertTrue(userData.range(of: otherMeta) != nil)
+            XCTAssertEqual(try boxes(userData).filter { $0.type == "meta" }.count, 1, "Only the unrelated namespace remains nested")
+            let asset = AVURLAsset(url: output)
+            let readable = try await asset.load(.isReadable)
+            XCTAssertTrue(readable)
+            let items = try await asset.loadMetadata(for: .quickTimeMetadata)
+            for (identifier, value) in [(AVMetadataIdentifier.quickTimeMetadataMake, "Apple"), (.quickTimeMetadataModel, "iPhone 15 Pro Max")] {
+                let matches = AVMetadataItem.metadataItems(from: items, filteredByIdentifier: identifier)
+                XCTAssertEqual(matches.count, 1)
+                let item = try XCTUnwrap(matches.first)
+                let actual = try await item.load(.stringValue)
+                XCTAssertEqual(actual, value)
+            }
+            XCTAssertEqual(try movieTrackBytes(original), try movieTrackBytes(edited))
+            let beforeInspection = try await MetadataEngine.inspect(source)
+            let afterInspection = try await MetadataEngine.inspect(output)
+            XCTAssertEqual(beforeInspection.metadata["mdta/com.example.retained.counter"], "42")
+            XCTAssertEqual(afterInspection.metadata["mdta/com.example.retained.counter"], "42")
+            XCTAssertNil(beforeInspection.metadata["itsk/%00%00%00%03"])
+            let comparison = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: patch)
+            XCTAssertFalse(comparison.checks.contains { $0.status == .failed }, "\(comparison.checks)")
+            XCTAssertEqual(comparison.checks.filter { $0.name.contains("compressed data") && $0.status == .passed }.count, 2)
+            let repeated = directory.appendingPathComponent("normalized-again.\(kind.rawValue)")
+            _ = try await VideoMetadataWriter.write(source: output, output: repeated, patch: patch)
+            XCTAssertEqual(try onlyDirectCameraMetadata(Data(contentsOf: repeated)), direct)
+            XCTAssertEqual(try WholeFileDigest.sha256(source), sourceHash)
+        }
+    }
+
+    func testDirectVersionedCameraMetadataNormalizesForEditsAndRemovals() async throws {
+        for (remove, nested) in [(false, false), (true, false), (true, true)] {
+            let source = directory.appendingPathComponent("direct-versioned-\(remove)-\(nested).mov")
+            try structuralMovie(userData: Data()).write(to: source)
+            try rewriteFixtureMovie(source, metadata: layoutFixtureMetadata(), nested: nested)
+            let output = directory.appendingPathComponent("direct-normalized-\(remove)-\(nested).mov")
+            let patch = remove ? MetadataPatch(removals: ["make", "model"]) : MetadataPatch(values: ["model": .string("Selected Camera")])
+            _ = try await VideoMetadataWriter.write(source: source, output: output, patch: patch)
+            _ = try onlyDirectCameraMetadata(Data(contentsOf: output))
+            let values = try VideoMetadataWriter.inspect(output)
+            XCTAssertEqual(values["make"], remove ? nil : "Old Maker")
+            XCTAssertEqual(values["model"], remove ? nil : "Selected Camera")
+        }
+    }
+
+    func testIndexedMovieMetadataAliasesRequireUnambiguousDefinitionsAndMatchingValues() throws {
+        let source = directory.appendingPathComponent("indexed-alias.mov")
+        try structuralMovie(userData: Data()).write(to: source)
+        try rewriteFixtureMovie(source, metadata: layoutFixtureMetadata(), nested: true)
+        let aliases = try VideoMetadataWriter.indexedMovieMetadataAliases(source)
+        let index = "itsk/%00%00%00%03"
+        XCTAssertEqual(aliases.count, 3)
+        XCTAssertEqual(aliases[index]?.identity, "mdta/com.example.retained.counter")
+        XCTAssertEqual(aliases[index]?.value, "42")
+        XCTAssertEqual(MetadataEngine.canonicalVideoMetadataIdentity(index, value: "42", aliases: aliases), "mdta/com.example.retained.counter")
+        XCTAssertEqual(MetadataEngine.canonicalVideoMetadataIdentity(index, value: "43", aliases: aliases), index)
+        XCTAssertEqual(MetadataEngine.canonicalVideoMetadataIdentity("itsk/%00%00%00%04", value: "42", aliases: aliases), "itsk/%00%00%00%04")
+        XCTAssertEqual(MetadataEngine.canonicalVideoMetadataIdentity(index, value: "42", aliases: [index: (identity: "other/key", value: "42")]), index)
+        let itemPayload = box("data", word(21) + word(0) + word(42))
+        let item = word(UInt32(itemPayload.count + 8)) + word(3) + itemPayload
+        let competing = box("meta", box("hdlr", word(0) + word(0) + Data("mdir".utf8) + Data(repeating: 0, count: 13)) + box("ilst", item))
+        try rewriteFixtureMovie(source, metadata: layoutFixtureMetadata(), nested: true, sibling: competing)
+        let colliding = try VideoMetadataWriter.indexedMovieMetadataAliases(source)
+        XCTAssertNil(colliding[index], "An overlapping index in a separate namespace is not proven to belong to mdta")
+        XCTAssertNotNil(colliding["itsk/%00%00%00%01"])
+        try rewriteFixtureMovie(source, metadata: layoutFixtureMetadata(counterType: 22), nested: true)
+        XCTAssertNil(try VideoMetadataWriter.indexedMovieMetadataAliases(source)[index], "Unsupported value encoding stays unresolved")
+        try rewriteFixtureMovie(source, metadata: layoutFixtureMetadata(duplicateCounterItem: true), nested: true)
+        XCTAssertNil(try VideoMetadataWriter.indexedMovieMetadataAliases(source)[index], "Duplicate items stay unresolved")
+        try rewriteFixtureMovie(source, metadata: layoutFixtureMetadata(duplicateCounterKey: true), nested: true)
+        XCTAssertNil(try VideoMetadataWriter.indexedMovieMetadataAliases(source)[index], "Duplicate key declarations stay unresolved")
+        try rewriteFixtureMovie(source, metadata: layoutFixtureMetadata(counter: UInt32.max), nested: true)
+        XCTAssertEqual(try VideoMetadataWriter.indexedMovieMetadataAliases(source)[index]?.value, "-1")
+        try rewriteFixtureMovie(source, metadata: layoutFixtureMetadata(), nested: false)
+        XCTAssertEqual(try VideoMetadataWriter.indexedMovieMetadataAliases(source)[index]?.value, "42")
+        let unversioned = box("meta", Data(try layoutFixtureMetadata().dropFirst(12)))
+        try rewriteFixtureMovie(source, metadata: unversioned, nested: false)
+        XCTAssertTrue(try VideoMetadataWriter.indexedMovieMetadataAliases(source).isEmpty, "Native unversioned tables do not produce alias evidence")
+    }
+
+    func testIndexedAliasResolutionDoesNotHideUnselectedMetadataChanges() async throws {
+        let source = directory.appendingPathComponent("retained-counter.mov")
+        try await makeNativeMOV(source, includeMetadata: false, includeAudio: true)
+        try rewriteFixtureMovie(source, metadata: layoutFixtureMetadata(), nested: true)
+        let output = directory.appendingPathComponent("changed-counter.mov")
+        _ = try await VideoMetadataWriter.write(source: source, output: output,
+            patch: MetadataPatch(values: ["make": .string("Apple"), "model": .string("iPhone 15 Pro Max")]))
+        try rewriteFixtureMovie(output, metadata: layoutFixtureMetadata(counter: 43), nested: false)
+        let patch = MetadataPatch(values: ["make": .string("Old Maker"), "model": .string("Old Model")])
+        let comparison = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: patch)
+        XCTAssertTrue(comparison.checks.contains { $0.name == "retained embedded metadata" && $0.status == .failed })
+        XCTAssertTrue(comparison.checks.contains { $0.name == "requested metadata" && $0.status == .passed })
+        XCTAssertEqual(comparison.checks.filter { $0.name.contains("compressed data") && $0.status == .passed }.count, 2)
+    }
+
+    func testUnrelatedEditsKeepNestedVersionedMetadataLayout() async throws {
+        for patch in [MetadataPatch(values: ["movieCreateDate": .string("2026-04-05T06:07:08Z")]), MetadataPatch(removals: ["latitude", "longitude", "altitude"])] {
+            let source = directory.appendingPathComponent(UUID().uuidString + ".mov")
+            try structuralMovie(userData: Data()).write(to: source)
+            try rewriteFixtureMovie(source, metadata: layoutFixtureMetadata(), nested: true)
+            let output = directory.appendingPathComponent(UUID().uuidString + ".mov")
+            _ = try await VideoMetadataWriter.write(source: source, output: output, patch: patch)
+            let userData = try movieUserData(Data(contentsOf: output))
+            let meta = try XCTUnwrap(boxes(userData).first { $0.type == "meta" })
+            XCTAssertEqual(userData.subdata(in: meta.payload).prefix(4), word(0))
+        }
+    }
+
+    func testMultipleMovieCameraContainersRemainAmbiguous() async throws {
+        for duplicateDirect in [false, true] {
+            let source = directory.appendingPathComponent("ambiguous-\(duplicateDirect).mov")
+            try structuralMovie(userData: Data()).write(to: source)
+            let metadata = try layoutFixtureMetadata()
+            try rewriteFixtureMovie(source, metadata: metadata, nested: true,
+                sibling: duplicateDirect ? Data() : metadata, extraDirect: duplicateDirect ? metadata : Data())
+            try await assertRefused(Data(contentsOf: source))
+        }
+    }
+
+    func testCameraMigrationPreservesDirectNonMdtaContainer() async throws {
+        let source = directory.appendingPathComponent("separate-namespace.mov")
+        try structuralMovie(userData: Data()).write(to: source)
+        let other = box("meta", box("hdlr", word(0) + word(0) + Data("mdir".utf8) + Data(repeating: 0, count: 13)))
+        try rewriteFixtureMovie(source, metadata: layoutFixtureMetadata(), nested: true, extraDirect: other)
+        let output = directory.appendingPathComponent("separate-namespace-edited.mov")
+        _ = try await VideoMetadataWriter.write(source: source, output: output,
+            patch: MetadataPatch(values: ["model": .string("Selected Camera")]))
+        let bytes = try Data(contentsOf: output)
+        _ = try onlyDirectCameraMetadata(bytes)
+        let movie = try XCTUnwrap(boxes(bytes).last { $0.type == "moov" })
+        let body = bytes.subdata(in: movie.payload)
+        XCTAssertTrue(try boxes(body).contains { body.subdata(in: $0.range) == other })
+    }
+
+    func testSelectedMovieCopyrightAndDescriptionDoNotTriggerRetainedMetadataFailure() async throws {
+        for kind in [MediaKind.mov, .mp4] {
+            let source = directory.appendingPathComponent("text-source.\(kind.rawValue)")
+            let output = directory.appendingPathComponent("text-edited.\(kind.rawValue)")
+            try await makeNativeMOV(source, includeMetadata: false, kind: kind, includeAudio: true)
+            let patch = MetadataPatch(values: ["copyright": .string("Synthetic owner"),
+                                               "description": .string("Synthetic description")])
+            let result = try await MetadataEngine.processMetadataPatch(source: source, output: output, patch: patch)
+            XCTAssertFalse(result.integrity.checks.contains { $0.status == .failed }, "\(result.integrity.checks)")
+            try patch.validateReadback(try await MetadataEngine.inspect(output))
+        }
+    }
+
+    func testVideoApertureCanonicalizationPreservesRawAndMalformedValues() {
+        XCTAssertEqual(VideoMetadataFields.canonicalValue("F1.78", for: "fNumber"), "1.78")
+        XCTAssertEqual(VideoMetadataFields.canonicalValue("1.78", for: "fNumber"), "1.78")
+        for value in ["F", "FNaN", "Finf", "F-1.78", "Funknown"] {
+            XCTAssertEqual(VideoMetadataFields.canonicalValue(value, for: "fNumber"), value)
+        }
+        XCTAssertNil(VideoMetadataFields.canonicalValue(nil, for: "fNumber"))
+        XCTAssertEqual(VideoMetadataFields.canonicalValue("F1.78", for: "lensModel"), "F1.78")
+    }
+
+    func testSynthetic4KWithAudioPreservesSamplesAndRecordsProcessingTime() async throws {
+        let source = directory.appendingPathComponent("synthetic-4k.mp4"), output = directory.appendingPathComponent("synthetic-4k-edited.mp4")
+        try await makeNativeMOV(source, includeMetadata: true, kind: .mp4, includeAudio: true,
+                                fastStart: true, frameCount: 15, width: 3840, height: 2160)
+        let originalHash = try WholeFileDigest.sha256(source)
+        let start = Date()
+        let result = try await MetadataEngine.processMetadataPatch(source: source, output: output,
+            patch: MetadataPatch(values: ["make": .string("Apple"), "model": .string("Synthetic 4K Camera")]))
+        let encoded = result.integrity.checks.filter { $0.name.contains("compressed data") }
+        XCTAssertEqual(encoded.count, 2)
+        XCTAssertTrue(encoded.allSatisfy { $0.status == .passed })
+        XCTAssertFalse(result.integrity.checks.contains { $0.status == .failed })
+        XCTAssertEqual(try WholeFileDigest.sha256(source), originalHash)
+        print("Synthetic 4K H264/AAC metadata rewrite plus verification: \(Date().timeIntervalSince(start)) seconds; \(result.sourceInspection.byteCount) input bytes; 15 generated frames. This is a host fixture measurement, not a physical-device benchmark.")
+    }
+
+    func testAutomaticProfileOnUntaggedNativeMoviesPreservesEncodedSamples() async throws {
+        // No user fixture is used or uploaded. This covers the first edit of an
+        // ordinary movie with no camera mdta and the full automatic camera plan.
+        for (kind, includeAudio) in [(MediaKind.mov, false), (.mp4, false), (.mov, true), (.mp4, true)] {
+            let suffix = includeAudio ? "audio" : "video"
+            let source = directory.appendingPathComponent("automatic-source-\(suffix).\(kind.rawValue)")
+            try await makeNativeMOV(source, includeMetadata: false, kind: kind, includeAudio: includeAudio, fastStart: includeAudio)
+            let original = try WholeFileDigest.sha256(source)
+            for (index, iso) in [123.0, 65535.0].enumerated() {
+                let output = directory.appendingPathComponent("automatic-edited-\(suffix)-\(index).\(kind.rawValue)")
+                var values: [String: MetadataValue] = [
+                    "make": .string("Apple"), "model": .string("iPhone 15 Pro Max"),
+                    "software": .string("18.6.2"),
+                    "lensModel": .string("iPhone 15 Pro Max back triple camera 6.765mm f/1.78"),
+                    "focalLength35mm": .number(24), "iso": .number(iso),
+                    "exposureTime": .number(index == 0 ? 1.0 / 250 : 1.0 / 1000),
+                    "fNumber": .number(1.78)
+                ]
+                for key in VideoMetadataFields.dateKeys.union(["dateTimeOriginal"]) {
+                    values[key] = .string("2026-04-05T06:07:08-04:00")
+                }
+                let patch = MetadataPatch(values: values)
+                // Keep the writer's diagnostic copy for this synthetic test so
+                // every failing check can identify its layer without bypassing
+                // MetadataEngine's production cleanup and rejection gate.
+                _ = try await VideoMetadataWriter.write(source: source, output: output, patch: patch)
+                let inspected = try await MetadataEngine.inspect(output)
+                try patch.validateReadback(inspected)
+                let raw = try VideoMetadataWriter.inspect(output)
+                XCTAssertEqual(raw[VideoMetadataFields.trackKeys["fNumber"]!], "F1.78")
+                XCTAssertEqual(raw["fNumber"], "1.78")
+                let comparison = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: patch)
+                XCTAssertFalse(comparison.checks.contains { $0.status == .failed }, "Synthetic \(kind) \(suffix): \(comparison.checks)")
+                XCTAssertTrue(comparison.checks.contains { $0.name.contains("compressed data") && $0.status == .passed })
+                let encodedChecks = comparison.checks.filter { $0.name.contains("compressed data") }
+                XCTAssertEqual(encodedChecks.count, includeAudio ? 2 : 1)
+                XCTAssertTrue(encodedChecks.allSatisfy { $0.status == .passed })
+                XCTAssertEqual(try WholeFileDigest.sha256(source), original)
+            }
+        }
+    }
+
+    func testAutomaticProfileOnLongMultiChunkMoviesPreservesEveryAudioAndVideoSample() async throws {
+        for kind in [MediaKind.mov, .mp4] {
+            let source = directory.appendingPathComponent("generated-multichunk-source.\(kind.rawValue)")
+            let output = directory.appendingPathComponent("generated-multichunk-edited.\(kind.rawValue)")
+            try await makeNativeMOV(source, includeMetadata: false, kind: kind, includeAudio: true,
+                fastStart: true, frameCount: 240, audioSampleRate: 44_100, noisyAudio: true)
+            let sourceBytes = try Data(contentsOf: source)
+            let sourceBoxes = try boxes(sourceBytes)
+            let movie = try XCTUnwrap(sourceBoxes.first { $0.type == "moov" })
+            let media = try XCTUnwrap(sourceBoxes.first { $0.type == "mdat" })
+            XCTAssertLessThan(movie.range.lowerBound, media.range.lowerBound, "Fixture must exercise fast-start relocation")
+            let chunkCounts = try movieChunkCounts(sourceBytes)
+            XCTAssertEqual(chunkCounts.count, 2)
+            XCTAssertTrue(chunkCounts.allSatisfy { $0 > 1 }, "Fixture must contain multiple chunks on both tracks: \(chunkCounts)")
+            var values: [String: MetadataValue] = [
+                "make": .string("Apple"), "model": .string("iPhone 15 Pro Max"),
+                "software": .string("18.6.2"),
+                "lensModel": .string("iPhone 15 Pro Max back triple camera 6.765mm f/1.78"),
+                "focalLength35mm": .number(24), "iso": .number(317),
+                "exposureTime": .number(1.0 / 320), "fNumber": .number(1.78)
+            ]
+            for key in VideoMetadataFields.dateKeys.union(["dateTimeOriginal"]) {
+                values[key] = .string("2026-04-05T06:07:08-04:00")
+            }
+            let patch = MetadataPatch(values: values)
+            let report = try await VideoMetadataWriter.write(source: source, output: output, patch: patch)
+            XCTAssertEqual(report.validatedTracks, 2)
+            XCTAssertEqual(report.validatedChunks, chunkCounts.reduce(0, +))
+            let inspected = try await MetadataEngine.inspect(output)
+            try patch.validateReadback(inspected)
+            let comparison = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: patch)
+            XCTAssertFalse(comparison.checks.contains { $0.status == .failed }, "Synthetic long \(kind): \(comparison.checks)")
+            let encoded = comparison.checks.filter { $0.name.contains("compressed data") }
+            XCTAssertEqual(encoded.count, 2)
+            XCTAssertTrue(encoded.allSatisfy { $0.status == .passed })
+            XCTAssertEqual(try Data(contentsOf: source), sourceBytes)
+            XCTAssertEqual(try movieChunkCounts(Data(contentsOf: output)), chunkCounts)
+        }
     }
 
     func testSelfContainedAliasKeepsChunksAndTrackBytesAtOriginalOffsets() async throws {
@@ -96,6 +391,99 @@ final class VideoMetadataWriterTests: XCTestCase {
         XCTAssertEqual(stblData.subdata(in: csgmChildren[1].payload), word(0) + Data([5, 6, 7, 8]))
     }
 
+    func testTrackMetadataInspectorKeepsValuesSeparateAcrossVideoTracks() async throws {
+        let source = directory.appendingPathComponent("two-video-track-source.mov")
+        let output = directory.appendingPathComponent("two-video-track-output.mov")
+        let removed = directory.appendingPathComponent("two-video-track-removed.mov")
+        try structuralMovie(videoTrackCount: 2).write(to: source)
+        _ = try await VideoMetadataWriter.write(source: source, output: output,
+            patch: MetadataPatch(values: ["lensModel": .string("Requested Lens")]))
+
+        let tracks = try VideoMetadataWriter.inspectVideoTrackMetadata(output)
+        XCTAssertEqual(tracks.count, 2)
+        XCTAssertEqual(tracks[0]["com.apple.quicktime.camera.lens_model"], "Requested Lens")
+        XCTAssertEqual(tracks[1]["com.apple.quicktime.camera.lens_model"], "Requested Lens")
+
+        _ = try await VideoMetadataWriter.write(source: output, output: removed,
+            patch: MetadataPatch(removals: ["lensModel"]))
+        let removedTracks = try VideoMetadataWriter.inspectVideoTrackMetadata(removed)
+        XCTAssertEqual(removedTracks.count, 2)
+        let removalStatuses = removedTracks.map {
+            $0["com.apple.quicktime.camera.lens_model"] == nil && $0["lensModel"] == nil ? CheckStatus.passed : .failed
+        }
+        XCTAssertEqual(MediaIntegrity.videoTrackReadbackStatus(removalStatuses, expectedTrackCount: 2), .passed)
+    }
+
+    func testTrackEditPreservesNonMdtaMetaAndRefusesDuplicateMdtaContainers() async throws {
+        let nonMdta = box("meta", word(0) + box("hdlr", word(0) + word(0) + Data("mdir".utf8) + Data(repeating: 0, count: 12)) + box("free", Data([1, 2, 3, 4])))
+        let source = directory.appendingPathComponent("track-non-mdta.mov")
+        let output = directory.appendingPathComponent("track-non-mdta-edited.mov")
+        try structuralMovie(trackMeta: nonMdta).write(to: source)
+        _ = try await VideoMetadataWriter.write(source: source, output: output,
+            patch: MetadataPatch(values: ["lensModel": .string("Requested Lens")]))
+        let edited = try Data(contentsOf: output)
+        let movie = try XCTUnwrap(boxes(edited).last { $0.type == "moov" })
+        let track = try XCTUnwrap(boxes(edited.subdata(in: movie.payload)).first { $0.type == "trak" })
+        XCTAssertTrue(try boxes(edited.subdata(in: movie.payload).subdata(in: track.payload)).contains {
+            $0.type == "meta" && edited.subdata(in: movie.payload).subdata(in: track.payload).subdata(in: $0.range) == nonMdta
+        })
+
+        let seed = directory.appendingPathComponent("track-metadata-seed.mov")
+        let seedSource = directory.appendingPathComponent("track-metadata-seed-source.mov")
+        let duplicateSource = directory.appendingPathComponent("track-metadata-duplicate.mov")
+        // Keep the first fixture immutable. Reusing and overwriting `source` here
+        // can leave URL.resourceValues with its earlier, larger cached file size.
+        try structuralMovie().write(to: seedSource)
+        _ = try await VideoMetadataWriter.write(source: seedSource, output: seed,
+            patch: MetadataPatch(values: ["lensModel": .string("Existing Lens")]))
+        let trackMetadata = try firstTrackMetadataAtom(Data(contentsOf: seed))
+        let duplicateBytes = structuralMovie(trackUserData: trackMetadata, trackMeta: trackMetadata)
+        try duplicateBytes.write(to: duplicateSource)
+        let duplicateOutput = directory.appendingPathComponent("track-metadata-duplicate-output.mov")
+        do {
+            _ = try await VideoMetadataWriter.write(source: duplicateSource, output: duplicateOutput,
+                patch: MetadataPatch(values: ["lensModel": .string("Requested Lens")]))
+            XCTFail("Editing ambiguous track metadata must be refused")
+        } catch ProbeError.unsupported { }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: duplicateOutput.path))
+        XCTAssertEqual(try Data(contentsOf: duplicateSource), duplicateBytes)
+    }
+
+    func testWriterUsesOpenedFileLengthWhenURLHasStaleCachedSize() async throws {
+        let source = directory.appendingPathComponent("stale-size-source.mov")
+        let output = directory.appendingPathComponent("stale-size-output.mov")
+        let handler = box("hdlr", word(0) + word(0) + Data("mdir".utf8) + Data(repeating: 0, count: 12))
+        let retainedMetadata = box("meta", word(0) + handler + box("free", Data(repeating: 0, count: 128)))
+        let largeFixture = structuralMovie(trackMeta: retainedMetadata)
+        let currentFixture = structuralMovie(userData: Data())
+        try largeFixture.write(to: source)
+        let cachedSize = try XCTUnwrap(source.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+        XCTAssertGreaterThan(cachedSize, currentFixture.count)
+
+        // Deliberately replace the file after priming URL's larger cached size.
+        // This reproduces stale URL.resourceValues without mutating a writer input.
+        try currentFixture.write(to: source)
+        XCTAssertEqual(try Data(contentsOf: source), currentFixture)
+        _ = try await VideoMetadataWriter.write(source: source, output: output,
+            patch: MetadataPatch(values: ["model": .string("Fresh File Size")]))
+
+        XCTAssertEqual(try Data(contentsOf: source), currentFixture)
+        XCTAssertEqual(try VideoMetadataWriter.inspect(output)["model"], "Fresh File Size")
+    }
+
+    func testExtendedSizeFtypWorksAndInvalidCompatibleBrandPaddingIsRefused() async throws {
+        let extended = directory.appendingPathComponent("extended-ftyp.mov")
+        let output = directory.appendingPathComponent("extended-ftyp-edited.mov")
+        // Extended ftyp adds eight bytes before mdat, so the chunk must point to
+        // the mdat payload at byte 40 rather than the ordinary fixture's byte 32.
+        try structuralMovie(chunkOffset: 40, extendedFtyp: true).write(to: extended)
+        _ = try await VideoMetadataWriter.write(source: extended, output: output, patch: CameraPatch())
+        XCTAssertTrue(FileManager.default.fileExists(atPath: output.path))
+
+        let malformed = structuralMovie(ftypPayload: Data("qt  ".utf8) + word(0) + Data([0x71]))
+        try await assertRefused(malformed)
+    }
+
     func testMovieWithUnqualifiedSampleTableAtomIsStrictlyRefused() async throws {
         let unqualifiedBox = box("unkn", Data([1, 2, 3, 4]))
         let bytes = structuralMovie(sampleTableExtra: unqualifiedBox)
@@ -151,9 +539,17 @@ final class VideoMetadataWriterTests: XCTestCase {
             let track = try XCTUnwrap(boxes(movieData).first { $0.type == "trak" })
             let trackData = movieData.subdata(in: track.payload)
             let media = try XCTUnwrap(boxes(trackData).first { $0.type == "mdia" })
-            for scope in [movieData, trackData, trackData.subdata(in: media.payload)] {
+            for (scopeIndex, scope) in [movieData, trackData, trackData.subdata(in: media.payload)].enumerated() {
                 let userData = try XCTUnwrap(boxes(scope).first { $0.type == "udta" })
-                XCTAssertEqual(scope.subdata(in: userData.payload), retained)
+                let payload = scope.subdata(in: userData.payload)
+                if index == 0 || scopeIndex > 0 {
+                    XCTAssertEqual(payload, retained)
+                } else {
+                    XCTAssertTrue(payload.contains(retained))
+                    let userBoxes = try boxes(payload)
+                    XCTAssertTrue(userBoxes.contains { $0.type == "©xyz" })
+                    XCTAssertFalse(userBoxes.contains { $0.type == "loci" })
+                }
             }
             let mdat = try XCTUnwrap(boxes(original).first { $0.type == "mdat" })
             XCTAssertEqual(edited.subdata(in: mdat.range), original.subdata(in: mdat.range))
@@ -162,6 +558,79 @@ final class VideoMetadataWriterTests: XCTestCase {
             else { XCTAssertEqual(readback["latitude"], "-12.5"); XCTAssertEqual(readback["longitude"], "44.25"); XCTAssertEqual(readback["altitude"], "-10") }
         }
         XCTAssertEqual(try Data(contentsOf: source), original)
+    }
+
+    func testVideoMetadataWriterSynthesizesDualChannelUserDataAtoms() async throws {
+        let source = directory.appendingPathComponent("dual-channel-source.mov")
+        let output = directory.appendingPathComponent("dual-channel-output.mov")
+        try structuralMovie(userData: Data()).write(to: source)
+
+        let patch = MetadataPatch(values: [
+            "make": .string("Apple"),
+            "model": .string("iPhone 15 Pro Max"),
+            "software": .string("17.5.1"),
+            "lensModel": .string("iPhone 15 Pro Max back triple camera 6.765mm f/1.78"),
+            "latitude": .number(37.7749),
+            "longitude": .number(-122.4194),
+            "altitude": .number(10.0)
+        ])
+        _ = try await VideoMetadataWriter.write(source: source, output: output, patch: patch)
+        let edited = try Data(contentsOf: output)
+        let movie = try XCTUnwrap(boxes(edited).last { $0.type == "moov" })
+        let movieData = edited.subdata(in: movie.payload)
+        let movieBoxes = try boxes(movieData)
+
+        XCTAssertEqual(movieBoxes.first?.type, "mvhd")
+        XCTAssertEqual(movieBoxes.dropFirst().first?.type, "meta")
+
+        let userData = try XCTUnwrap(movieBoxes.first { $0.type == "udta" })
+        let userBoxes = try boxes(movieData.subdata(in: userData.payload))
+        XCTAssertTrue(userBoxes.contains { $0.code == 0xa96d616b || $0.type == "©mak" })
+        XCTAssertTrue(userBoxes.contains { $0.code == 0xa96d6f64 || $0.type == "©mod" })
+        XCTAssertTrue(userBoxes.contains { $0.code == 0xa9737772 || $0.type == "©swr" })
+        XCTAssertTrue(userBoxes.contains { $0.code == 0xa978797a || $0.type == "©xyz" })
+
+        let track = try XCTUnwrap(movieBoxes.first { $0.type == "trak" })
+        let trackData = movieData.subdata(in: track.payload)
+        let trackMetadata = try XCTUnwrap(boxes(trackData).first { $0.type == "meta" })
+        XCTAssertGreaterThan(trackMetadata.range.count, 0)
+        let videoTrackValues = try VideoMetadataWriter.inspectVideoTrackMetadata(output)
+        XCTAssertFalse(videoTrackValues.isEmpty)
+        XCTAssertEqual(videoTrackValues[0]["com.apple.quicktime.camera.lens_model"], "iPhone 15 Pro Max back triple camera 6.765mm f/1.78")
+
+        let inspected = try VideoMetadataWriter.inspect(output)
+        XCTAssertEqual(inspected["make"], "Apple")
+        XCTAssertEqual(inspected["model"], "iPhone 15 Pro Max")
+        XCTAssertEqual(inspected["software"], "17.5.1")
+        XCTAssertEqual(inspected["latitude"], "37.7749")
+        XCTAssertEqual(inspected["longitude"], "-122.4194")
+    }
+
+    func testRemovingCoordinatesMustExplicitlyRemoveExistingAltitude() async throws {
+        let source = directory.appendingPathComponent("gps-tuple-source.mov")
+        let seeded = directory.appendingPathComponent("gps-tuple-seeded.mov")
+        let partial = directory.appendingPathComponent("gps-tuple-partial-removal.mov")
+        let complete = directory.appendingPathComponent("gps-tuple-complete-removal.mov")
+        // GPS write/readback inspects movie and track dates as well; include valid
+        // version-0 date headers even though this fixture starts without metadata.
+        try structuralMovie(userData: Data()).write(to: source)
+        _ = try await VideoMetadataWriter.write(source: source, output: seeded,
+            patch: MetadataPatch(values: ["latitude": .number(12.5), "longitude": .number(44.25), "altitude": .number(10)]))
+
+        do {
+            _ = try await VideoMetadataWriter.write(source: seeded, output: partial,
+                patch: MetadataPatch(removals: ["latitude", "longitude"]))
+            XCTFail("Removing the coordinate pair must not silently erase an untargeted altitude")
+        } catch ProbeError.unsupported { }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: partial.path))
+        XCTAssertEqual(try VideoMetadataWriter.inspect(seeded)["altitude"], "10")
+
+        _ = try await VideoMetadataWriter.write(source: seeded, output: complete,
+            patch: MetadataPatch(removals: ["latitude", "longitude", "altitude"]))
+        let readback = try VideoMetadataWriter.inspect(complete)
+        XCTAssertNil(readback["latitude"])
+        XCTAssertNil(readback["longitude"])
+        XCTAssertNil(readback["altitude"])
     }
 
     func testGPSChangesRefuseTimedMetadataTrackWithoutDeletingSamples() async throws {
@@ -174,6 +643,26 @@ final class VideoMetadataWriterTests: XCTestCase {
         } catch ProbeError.unsupported { }
         XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
         XCTAssertEqual(try Data(contentsOf: source), original)
+    }
+
+    func testOpaqueLegacyLocationRequiresExplicitActionForAllGPSComponents() async throws {
+        let source = directory.appendingPathComponent("opaque-location-source.mov")
+        let partial = directory.appendingPathComponent("opaque-location-partial.mov")
+        let full = directory.appendingPathComponent("opaque-location-full.mov")
+        let original = structuralMovie(userData: box("loci", Data("opaque ISO location with unknown altitude".utf8)))
+        try original.write(to: source)
+
+        do {
+            _ = try await VideoMetadataWriter.write(source: source, output: partial,
+                patch: MetadataPatch(removals: ["latitude", "longitude"]))
+            XCTFail("An opaque ISO location may contain an altitude that must not be silently erased")
+        } catch ProbeError.unsupported { }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: partial.path))
+        XCTAssertEqual(try Data(contentsOf: source), original)
+
+        _ = try await VideoMetadataWriter.write(source: source, output: full,
+            patch: MetadataPatch(removals: ["latitude", "longitude", "altitude"]))
+        XCTAssertNil(try VideoMetadataWriter.inspect(full)["latitude"])
     }
 
     func testAltitudeOnlyISOLocationAndOpaqueXMPRemovalRemainRefused() async throws {
@@ -252,6 +741,51 @@ final class VideoMetadataWriterTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: source), bytes, file: file, line: line)
     }
 
+    private func assertAVFoundationCameraRepresentations(kind: MediaKind) async throws {
+        // Generate disposable, playable fixtures. Read the output through Apple's
+        // parser rather than the writer's own BMFF inspector. This establishes
+        // embedded-tag compatibility, not physical Photos indexing or lens UI.
+        for includeMetadata in [false, true] {
+            let suffix = includeMetadata ? "existing" : "untagged"
+            let source = directory.appendingPathComponent("camera-readback-\(suffix).\(kind.rawValue)")
+            let output = directory.appendingPathComponent("camera-readback-\(suffix)-edited.\(kind.rawValue)")
+            try await makeNativeMOV(source, includeMetadata: includeMetadata, kind: kind, includeAudio: true)
+            let originalDigest = try WholeFileDigest.sha256(source)
+            _ = try await VideoMetadataWriter.write(source: source, output: output,
+                patch: MetadataPatch(values: ["make": .string("Apple"), "model": .string("iPhone 15 Pro Max")]))
+
+            let asset = AVURLAsset(url: output)
+            let readable = try await asset.load(.isReadable)
+            XCTAssertTrue(readable)
+            let formats = try await asset.load(.availableMetadataFormats)
+            if kind == .mov {
+                XCTAssertTrue(formats.contains(.quickTimeUserData), "MOV must expose classic camera tags")
+            }
+            XCTAssertTrue(formats.contains(.quickTimeMetadata), "Keyed camera metadata must remain exposed in \(kind.rawValue)")
+            let userData = try await asset.loadMetadata(for: .quickTimeUserData)
+            let keyedMetadata = try await asset.loadMetadata(for: .quickTimeMetadata)
+            // AVFoundation exposes classic camera user data for MOV, but not
+            // necessarily MP4. Both containers must expose the primary mdta
+            // camera fields through Apple's parser; there is no binary fallback.
+            var expected: [(AVMetadataIdentifier, [AVMetadataItem], String)] = [
+                (.quickTimeMetadataMake, keyedMetadata, "Apple"),
+                (.quickTimeMetadataModel, keyedMetadata, "iPhone 15 Pro Max")
+            ]
+            if kind == .mov {
+                expected += [(.quickTimeUserDataMake, userData, "Apple"),
+                             (.quickTimeUserDataModel, userData, "iPhone 15 Pro Max")]
+            }
+            for (identifier, items, value) in expected {
+                let matches = AVMetadataItem.metadataItems(from: items, filteredByIdentifier: identifier)
+                XCTAssertEqual(matches.count, 1, "Expected one independently readable \(identifier.rawValue) in \(kind.rawValue)")
+                let item = try XCTUnwrap(matches.first)
+                let actual = try await item.load(.stringValue)
+                XCTAssertEqual(actual, value, "Independent readback of \(identifier.rawValue) in \(kind.rawValue)")
+            }
+            XCTAssertEqual(try WholeFileDigest.sha256(source), originalDigest)
+        }
+    }
+
     private func assertNativeMOV(includeMetadata: Bool) async throws {
         let source = directory.appendingPathComponent("direct-source.mov")
         let output = directory.appendingPathComponent("direct-output.mov")
@@ -284,8 +818,11 @@ final class VideoMetadataWriterTests: XCTestCase {
         XCTAssertEqual(try WholeFileDigest.sha256(source), originalDigest)
     }
 
-    private func makeNativeMOV(_ url: URL, includeMetadata: Bool) async throws {
-        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+    private func makeNativeMOV(_ url: URL, includeMetadata: Bool, kind: MediaKind = .mov, includeAudio: Bool = false, fastStart: Bool = false,
+                               frameCount: Int = 3, audioSampleRate: Int = 48_000, noisyAudio: Bool = false,
+                               width: Int = 32, height: Int = 32) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: kind == .mp4 ? .mp4 : .mov)
+        writer.shouldOptimizeForNetworkUse = fastStart
         if includeMetadata {
             writer.metadata = [(.quickTimeMetadataMake, "Source Maker"), (.quickTimeMetadataModel, "Source Movie"),
                 (.quickTimeMetadataTitle, "Retained synthetic title"), (.quickTimeMetadataLocationISO6709, "+12.5000-044.2500/")].map { identifier, value in
@@ -294,54 +831,247 @@ final class VideoMetadataWriterTests: XCTestCase {
             }
         }
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: 32, AVVideoHeightKey: 32])
+            AVVideoWidthKey: width, AVVideoHeightKey: height])
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-            kCVPixelBufferWidthKey as String: 32, kCVPixelBufferHeightKey as String: 32])
+            kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height])
         guard writer.canAdd(input) else { throw ProbeError.writeFailed("Cannot add native MOV fixture input") }
         writer.add(input)
+        let audioInput: AVAssetWriterInput?
+        if includeAudio {
+            let audio = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+                AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: audioSampleRate,
+                AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64_000])
+            guard writer.canAdd(audio) else { throw ProbeError.writeFailed("Cannot add synthetic AAC fixture") }
+            writer.add(audio); audioInput = audio
+        } else { audioInput = nil }
         guard writer.startWriting() else { throw writer.error ?? ProbeError.writeFailed("Cannot start native MOV fixture") }
+        defer {
+            if writer.status == .writing { writer.cancelWriting() }
+        }
         writer.startSession(atSourceTime: .zero)
-        for frame in 0..<3 {
-            let deadline = Date().addingTimeInterval(10)
-            while !input.isReadyForMoreMediaData {
-                guard Date() < deadline, writer.status == .writing else {
-                    writer.cancelWriting(); throw ProbeError.writeFailed("Native MOV fixture stalled")
+        var videoFrame = 0, audioFrame = 0
+        var deadline = Date().addingTimeInterval(10)
+        while videoFrame < frameCount || (audioInput != nil && audioFrame < frameCount) {
+            guard writer.status == .writing else {
+                throw writer.error ?? ProbeError.writeFailed("Synthetic movie writer stopped")
+            }
+            var advanced = false
+            // Each track advances independently. Waiting on video before feeding
+            // ready audio can deadlock the writer's interleaving backpressure.
+            if videoFrame < frameCount && input.isReadyForMoreMediaData {
+                var pixel: CVPixelBuffer?
+                guard CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA, nil, &pixel) == kCVReturnSuccess,
+                      let pixel else { throw ProbeError.writeFailed("Fixture pixel buffer unavailable") }
+                CVPixelBufferLockBaseAddress(pixel, [])
+                if let address = CVPixelBufferGetBaseAddress(pixel) {
+                    memset(address, Int32((videoFrame * 70) % 256), CVPixelBufferGetBytesPerRow(pixel) * height)
                 }
+                CVPixelBufferUnlockBaseAddress(pixel, [])
+                guard adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(videoFrame), timescale: 30)) else {
+                    throw writer.error ?? ProbeError.writeFailed("Cannot append native MOV frame")
+                }
+                videoFrame += 1
+                advanced = true
+                if videoFrame == frameCount { input.markAsFinished() }
+            }
+            if let audioInput, audioFrame < frameCount && audioInput.isReadyForMoreMediaData {
+                let samplesPerFrame = audioSampleRate / 30
+                guard audioInput.append(try syntheticPCM(samples: samplesPerFrame,
+                    sampleRate: audioSampleRate, noisy: noisyAudio, startSample: audioFrame * samplesPerFrame)) else {
+                    throw writer.error ?? ProbeError.writeFailed("Cannot append synthetic PCM fixture")
+                }
+                audioFrame += 1
+                advanced = true
+                if audioFrame == frameCount { audioInput.markAsFinished() }
+            }
+            if advanced {
+                deadline = Date().addingTimeInterval(10)
+            } else {
+                guard Date() < deadline else { throw ProbeError.writeFailed("Synthetic movie fixture stalled") }
                 try await Task.sleep(nanoseconds: 10_000_000)
             }
-            var pixel: CVPixelBuffer?
-            guard CVPixelBufferCreate(kCFAllocatorDefault, 32, 32, kCVPixelFormatType_32BGRA, nil, &pixel) == kCVReturnSuccess,
-                  let pixel else { throw ProbeError.writeFailed("Fixture pixel buffer unavailable") }
-            CVPixelBufferLockBaseAddress(pixel, [])
-            if let address = CVPixelBufferGetBaseAddress(pixel) {
-                memset(address, Int32(frame * 70), CVPixelBufferGetBytesPerRow(pixel) * 32)
-            }
-            CVPixelBufferUnlockBaseAddress(pixel, [])
-            guard adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(frame), timescale: 30)) else {
-                throw writer.error ?? ProbeError.writeFailed("Cannot append native MOV frame")
-            }
         }
-        input.markAsFinished(); await writer.finishWriting()
+        await writer.finishWriting()
         guard writer.status == .completed else { throw writer.error ?? ProbeError.writeFailed("Native MOV fixture unfinished") }
     }
 
-    private struct Box { let type: String; let range: Range<Int>; let payload: Range<Int> }
+    private func syntheticPCM(samples: Int, sampleRate: Int, noisy: Bool, startSample: Int) throws -> CMSampleBuffer {
+        // Encode generated PCM once solely to create the source fixture. The
+        // metadata operation never decodes or re-encodes either media track.
+        let bytesPerSample = 2
+        var description: CMAudioFormatDescription?
+        var stream = AudioStreamBasicDescription(mSampleRate: Double(sampleRate), mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked,
+            mBytesPerPacket: 2, mFramesPerPacket: 1, mBytesPerFrame: 2,
+            mChannelsPerFrame: 1, mBitsPerChannel: 16, mReserved: 0)
+        guard CMAudioFormatDescriptionCreate(allocator: kCFAllocatorDefault, asbd: &stream,
+            layoutSize: 0, layout: nil, magicCookieSize: 0, magicCookie: nil,
+            extensions: nil, formatDescriptionOut: &description) == noErr, let description else {
+            throw ProbeError.writeFailed("Synthetic PCM format unavailable")
+        }
+        var block: CMBlockBuffer?
+        let length = samples * bytesPerSample
+        guard CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil,
+            blockLength: length, blockAllocator: kCFAllocatorDefault, customBlockSource: nil,
+            offsetToData: 0, dataLength: length, flags: 0, blockBufferOut: &block) == noErr,
+            let block else { throw ProbeError.writeFailed("Synthetic PCM block unavailable") }
+        guard CMBlockBufferFillDataBytes(with: 0, blockBuffer: block, offsetIntoDestination: 0,
+            dataLength: length) == noErr else { throw ProbeError.writeFailed("Synthetic PCM initialization failed") }
+        if noisy {
+            // Deterministic generated noise gives AAC variable, nonempty packets
+            // instead of relying solely on short/silence packet controls.
+            var seed: UInt32 = 0x12345678 ^ UInt32(startSample)
+            var pcm = Data(count: length)
+            pcm.withUnsafeMutableBytes { (raw: UnsafeMutableRawBufferPointer) in
+                let values = raw.bindMemory(to: UInt16.self)
+                for index in 0..<samples {
+                    seed = seed &* 1_664_525 &+ 1_013_904_223
+                    values[index] = UInt16(truncatingIfNeeded: seed >> 16).littleEndian
+                }
+            }
+            let copied = pcm.withUnsafeBytes { raw in
+                CMBlockBufferReplaceDataBytes(with: raw.baseAddress!, blockBuffer: block,
+                    offsetIntoDestination: 0, dataLength: length)
+            }
+            guard copied == noErr else { throw ProbeError.writeFailed("Synthetic PCM data copy failed") }
+        }
+        var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: Int32(sampleRate)),
+            presentationTimeStamp: CMTime(value: Int64(startSample), timescale: Int32(sampleRate)),
+            decodeTimeStamp: .invalid)
+        var size = bytesPerSample
+        var sample: CMSampleBuffer?
+        guard CMSampleBufferCreateReady(allocator: kCFAllocatorDefault, dataBuffer: block,
+            formatDescription: description, sampleCount: samples, sampleTimingEntryCount: 1,
+            sampleTimingArray: &timing, sampleSizeEntryCount: 1, sampleSizeArray: &size,
+            sampleBufferOut: &sample) == noErr, let sample else {
+            throw ProbeError.writeFailed("Synthetic PCM sample unavailable")
+        }
+        return sample
+    }
+
+    func testFixtureBoxParserSupportsExtendedAndTerminalBoxSizes() throws {
+        let extended = word(1) + Data("free".utf8) + qword(19) + Data([1, 2, 3])
+        let terminal = word(0) + Data("mdat".utf8) + Data([4, 5])
+        let parsed = try boxes(extended + terminal)
+        XCTAssertEqual(parsed.map(\.type), ["free", "mdat"])
+        XCTAssertEqual(parsed[0].payload, 16..<19)
+        XCTAssertEqual(parsed[1].payload, 27..<29)
+        XCTAssertThrowsError(try boxes(word(1) + Data("free".utf8)))
+        XCTAssertThrowsError(try boxes(word(1) + Data("free".utf8) + qword(UInt64.max)))
+        XCTAssertThrowsError(try boxes(word(1) + Data("free".utf8) + qword(15)))
+    }
+
+    private struct Box { let type: String; let code: UInt32; let range: Range<Int>; let payload: Range<Int> }
+
+    private func layoutFixtureMetadata(counter: UInt32 = 42, counterType: UInt32 = 21,
+                                       duplicateCounterItem: Bool = false, duplicateCounterKey: Bool = false) throws -> Data {
+        var definitions = ["com.apple.quicktime.make", "com.apple.quicktime.model", "com.example.retained.counter"]
+        if duplicateCounterKey { definitions.append("com.example.retained.counter") }
+        var keys = word(0) + word(UInt32(definitions.count))
+        for key in definitions { keys += word(UInt32(key.utf8.count + 8)) + Data("mdta".utf8) + Data(key.utf8) }
+        func item(_ index: UInt32, _ payload: Data) -> Data { word(UInt32(payload.count + 8)) + word(index) + payload }
+        let retained = box("name", Data("Retained label".utf8)) + box("data", word(counterType) + word(0x01020304) + word(counter))
+        var items = item(1, box("data", word(1) + word(0) + Data("Old Maker".utf8)))
+            + item(2, box("data", word(1) + word(0) + Data("Old Model".utf8))) + item(3, retained)
+        if duplicateCounterItem { items.append(item(3, retained)) }
+        let hdlr = box("hdlr", word(0) + word(0) + Data("mdta".utf8) + Data(repeating: 0, count: 13))
+        return box("meta", word(0) + hdlr + box("keys", keys) + box("ilst", items)
+            + box("mhdr", word(0)) + box("ctry", word(1)) + box("lang", word(2)) + box("free", Data([1, 3, 5, 7])))
+    }
+
+    /// Change only a disposable generated fixture's movie header. Keeping the
+    /// original header as free space leaves every absolute chunk offset valid.
+    private func rewriteFixtureMovie(_ url: URL, metadata: Data, nested: Bool, sibling: Data = Data(), extraDirect: Data = Data()) throws {
+        var bytes = try Data(contentsOf: url)
+        let movie = try XCTUnwrap(boxes(bytes).last { $0.type == "moov" })
+        let body = bytes.subdata(in: movie.payload)
+        var replacement = Data()
+        for child in try boxes(body) where child.type != "meta" && child.type != "udta" {
+            replacement.append(body.subdata(in: child.range))
+        }
+        replacement.append(nested ? box("udta", metadata + sibling) : metadata + (sibling.isEmpty ? Data() : box("udta", sibling)))
+        replacement.append(extraDirect)
+        bytes.replaceSubrange(movie.range.lowerBound + 4..<movie.range.lowerBound + 8, with: Data("free".utf8))
+        bytes.replaceSubrange(movie.payload, with: Data(repeating: 0, count: movie.payload.count))
+        bytes.append(box("moov", replacement))
+        try bytes.write(to: url)
+    }
+
+    private func onlyDirectCameraMetadata(_ bytes: Data) throws -> Data {
+        let movie = try XCTUnwrap(boxes(bytes).last { $0.type == "moov" })
+        let body = bytes.subdata(in: movie.payload)
+        let metadata = try boxes(body).filter { child in
+            guard child.type == "meta" else { return false }
+            let payload = body.subdata(in: child.payload)
+            let contents = payload.prefix(4) == word(0) ? Data(payload.dropFirst(4)) : payload
+            guard let handler = try boxes(contents).first(where: { $0.type == "hdlr" }) else { return false }
+            let data = contents.subdata(in: handler.payload)
+            return data.count >= 12 && data.subdata(in: 8..<12) == Data("mdta".utf8)
+        }
+        XCTAssertEqual(metadata.count, 1)
+        let item = try XCTUnwrap(metadata.first)
+        let payload = body.subdata(in: item.payload)
+        XCTAssertEqual(try boxes(payload).first?.type, "hdlr", "Camera metadata is direct and unversioned")
+        return payload
+    }
+
+    private func movieTrackBytes(_ bytes: Data) throws -> [Data] {
+        let movie = try XCTUnwrap(boxes(bytes).last { $0.type == "moov" })
+        let body = bytes.subdata(in: movie.payload)
+        return try boxes(body).filter { $0.type == "trak" }.map { body.subdata(in: $0.range) }
+    }
     private func boxes(_ data: Data) throws -> [Box] {
         var result = [Box](), offset = 0
         while offset < data.count {
             guard offset <= data.count - 8 else { throw ProbeError.malformed("Test box header truncated") }
-            let length = Int(data[offset..<offset+4].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) })
-            guard length >= 8, length <= data.count - offset else { throw ProbeError.malformed("Test box bounds invalid") }
-            result.append(Box(type: String(decoding: data[offset+4..<offset+8], as: UTF8.self),
-                range: offset..<offset+length, payload: offset+8..<offset+length))
+            let declared = data[offset..<offset+4].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+            let code = data[offset+4..<offset+8].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+            var header = 8
+            let length: Int
+            if declared == 1 {
+                guard data.count - offset >= 16 else { throw ProbeError.malformed("Extended test box header truncated") }
+                let extended = data[offset+8..<offset+16].reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
+                guard extended <= UInt64(data.count - offset) else { throw ProbeError.malformed("Extended test box exceeds bounds") }
+                header = 16
+                length = Int(extended)
+            } else {
+                length = declared == 0 ? data.count - offset : Int(declared)
+            }
+            guard length >= header, length <= data.count - offset else { throw ProbeError.malformed("Test box bounds invalid") }
+            let type = String(data: Data(data[offset+4..<offset+8]), encoding: .isoLatin1)
+                ?? String(decoding: data[offset+4..<offset+8], as: UTF8.self)
+            result.append(Box(type: type, code: code, range: offset..<offset+length, payload: offset+header..<offset+length))
             offset += length
+        }
+        return result
+    }
+
+    private func movieChunkCounts(_ bytes: Data) throws -> [Int] {
+        let movie = try XCTUnwrap(boxes(bytes).first { $0.type == "moov" })
+        let movieData = bytes.subdata(in: movie.payload)
+        var result = [Int]()
+        for track in try boxes(movieData) where track.type == "trak" {
+            let trackData = movieData.subdata(in: track.payload)
+            let mdia = try XCTUnwrap(boxes(trackData).first { $0.type == "mdia" })
+            let mdiaData = trackData.subdata(in: mdia.payload)
+            let minf = try XCTUnwrap(boxes(mdiaData).first { $0.type == "minf" })
+            let minfData = mdiaData.subdata(in: minf.payload)
+            let stbl = try XCTUnwrap(boxes(minfData).first { $0.type == "stbl" })
+            let tableData = minfData.subdata(in: stbl.payload)
+            let offset = try XCTUnwrap(boxes(tableData).first { $0.type == "stco" || $0.type == "co64" })
+            let payload = tableData.subdata(in: offset.payload)
+            guard payload.count >= 8 else { throw ProbeError.malformed("Fixture offset table truncated") }
+            result.append(Int(payload[4..<8].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }))
         }
         return result
     }
 
     private func word(_ value: UInt32) -> Data {
         Data([UInt8(value >> 24), UInt8((value >> 16) & 255), UInt8((value >> 8) & 255), UInt8(value & 255)])
+    }
+    private func qword(_ value: UInt64) -> Data {
+        Data((0..<8).map { UInt8((value >> ((7 - $0) * 8)) & 255) })
     }
     private func box(_ type: String, _ payload: Data) -> Data { word(UInt32(payload.count + 8)) + Data(type.utf8) + payload }
 
@@ -352,11 +1082,25 @@ final class VideoMetadataWriterTests: XCTestCase {
         return children.subdata(in: userData.payload)
     }
 
+    private func firstTrackMetadataAtom(_ data: Data) throws -> Data {
+        let movie = try XCTUnwrap(boxes(data).last { $0.type == "moov" })
+        let moviePayload = data.subdata(in: movie.payload)
+        let movieChildren = try boxes(moviePayload)
+        guard let track = movieChildren.first(where: { $0.type == "trak" }) else { throw ProbeError.malformed("No test track") }
+        let trackPayload = moviePayload.subdata(in: track.payload)
+        guard let metadata = try boxes(trackPayload).first(where: { $0.type == "meta" }) else { throw ProbeError.malformed("No test track metadata") }
+        return trackPayload.subdata(in: metadata.range)
+    }
+
     private func structuralMovie(referenceType: String = "url ", referencePayload: Data? = nil,
                                  chunkOffset: UInt32 = 32, sampleSize: UInt32 = 4, sampleCount: UInt32 = 1,
                                  userData: Data? = nil, trackUserData: Data? = nil, mediaUserData: Data? = nil,
-                                 mediaHandler: String = "vide", sampleTableExtra: Data = Data()) -> Data {
-        let ftyp = box("ftyp", Data("qt  ".utf8) + word(0) + Data("qt  ".utf8) + word(0))
+                                 mediaHandler: String = "vide", sampleTableExtra: Data = Data(), videoTrackCount: Int = 1,
+                                 trackMeta: Data? = nil, ftypPayload: Data? = nil, extendedFtyp: Bool = false) -> Data {
+        let brands = ftypPayload ?? (Data("qt  ".utf8) + word(0) + Data("qt  ".utf8) + word(0))
+        let ftyp = extendedFtyp
+            ? word(1) + Data("ftyp".utf8) + qword(UInt64(brands.count + 16)) + brands
+            : box("ftyp", brands)
         let mdat = box("mdat", Data([1,2,3,4]))
         let dref = box("dref", word(0) + word(1) + box(referenceType, referencePayload ?? word(1)))
         let sample = box("avc1", Data(repeating: 0, count: 6) + Data([0,1]))
@@ -370,9 +1114,10 @@ final class VideoMetadataWriterTests: XCTestCase {
         // metadata reader. These remain structural controls, not playable media.
         let hasMetadata = userData != nil || trackUserData != nil || mediaUserData != nil
         let dates = hasMetadata ? Data(repeating: 0, count: 12) : Data()
-        let handler = hasMetadata ? box("hdlr", word(0) + word(0) + Data(mediaHandler.utf8) + Data(repeating: 0, count: 12)) : Data()
+        let handler = box("hdlr", word(0) + word(0) + Data(mediaHandler.utf8) + Data(repeating: 0, count: 12))
         let media = minf + handler + (mediaUserData.map { box("udta", $0) } ?? Data())
-        let track = box("trak", box("tkhd", dates) + box("mdia", media) + (trackUserData.map { box("udta", $0) } ?? Data()))
-        return ftyp + mdat + box("moov", box("mvhd", dates) + track + (userData.map { box("udta", $0) } ?? Data()))
+        let track = box("trak", box("tkhd", dates) + box("mdia", media) + (trackUserData.map { box("udta", $0) } ?? Data()) + (trackMeta ?? Data()))
+        let tracks = (0..<max(1, videoTrackCount)).reduce(into: Data()) { result, _ in result.append(track) }
+        return ftyp + mdat + box("moov", box("mvhd", dates) + tracks + (userData.map { box("udta", $0) } ?? Data()))
     }
 }

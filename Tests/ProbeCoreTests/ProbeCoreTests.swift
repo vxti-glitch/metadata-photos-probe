@@ -21,6 +21,28 @@ final class ProbeCoreTests: XCTestCase {
         XCTAssertEqual(try WholeFileDigest.sha256(url), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
     }
 
+    func testReadOnlyImportedMovieCanBeEditedWithoutChangingSourcePermissions() async throws {
+        for kind in [MediaKind.mp4, .mov] {
+            let source = folder.appendingPathComponent("readonly-source.\(kind.rawValue)")
+            let output = folder.appendingPathComponent("readonly-output.\(kind.rawValue)")
+            try await makeVideo(source, kind: kind)
+            try FileManager.default.setAttributes([.posixPermissions: 0o400], ofItemAtPath: source.path)
+            let sourceHash = try WholeFileDigest.sha256(source)
+            let inherited = folder.appendingPathComponent("unmodified-copy.\(kind.rawValue)")
+            try FileManager.default.copyItem(at: source, to: inherited)
+            let inheritedPermissions = try FileManager.default.attributesOfItem(atPath: inherited.path)[.posixPermissions] as? NSNumber
+            XCTAssertEqual(inheritedPermissions?.intValue, 0o400, "Copying an imported source retains its read-only mode")
+            let result = try await MetadataEngine.processMetadataPatch(source: source, output: output,
+                patch: MetadataPatch(values: ["make": .string("Apple"), "model": .string("Readonly fixture")]))
+            XCTAssertEqual(result.outputInspection.metadata["make"], "Apple")
+            XCTAssertEqual(result.outputInspection.metadata["model"], "Readonly fixture")
+            XCTAssertFalse(result.integrity.checks.contains { $0.status == .failed })
+            XCTAssertEqual(try WholeFileDigest.sha256(source), sourceHash)
+            let permissions = try FileManager.default.attributesOfItem(atPath: source.path)[.posixPermissions] as? NSNumber
+            XCTAssertEqual(permissions?.intValue, 0o400)
+        }
+    }
+
     func testPatchRejectsEmptyControlsAndOversizedInput() {
         for invalid in ["", " \n", "a\0b", String(repeating: "é", count: 129)] {
             XCTAssertThrowsError(try CameraPatch(make: invalid, model: "Valid").validate())
@@ -71,6 +93,27 @@ final class ProbeCoreTests: XCTestCase {
         let inventory = try BoxInventory.read(url)
         XCTAssertEqual(inventory.types, ["mdat"])
         XCTAssertEqual(inventory.payloadHashes, ["ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"])
+        let structure = try BoxInventory.read(url, hashMediaPayload: false)
+        XCTAssertEqual(structure.types, inventory.types)
+        XCTAssertTrue(structure.payloadHashes.isEmpty, "Structural inspection must not scan media payloads")
+    }
+
+    func testVideoBrandDetectionHandlesExtendedFTYPAndFullBrandList() throws {
+        let url = folder.appendingPathComponent("brands.mp4")
+        func size(_ n: UInt64, width: Int) -> Data {
+            Data((0..<width).map { UInt8((n >> ((width - 1 - $0) * 8)) & 255) })
+        }
+        let payload = Data("test".utf8) + Data(repeating: 0, count: 4) + Data("isom".utf8)
+        try (size(1, width: 4) + Data("ftyp".utf8) + size(UInt64(payload.count + 16), width: 8) + payload).write(to: url)
+        XCTAssertEqual(try MetadataEngine.videoKind(url), .mp4)
+        let longPayload = Data("test".utf8) + Data(repeating: 0, count: 4) + Data(String(repeating: "test", count: 1100).utf8) + Data("qt  ".utf8)
+        try (size(UInt64(longPayload.count + 8), width: 4) + Data("ftyp".utf8) + longPayload).write(to: url)
+        XCTAssertEqual(try MetadataEngine.videoKind(url), .mov)
+        for bytes in [size(12, width: 4) + Data("ftypisom".utf8), size(40, width: 4) + Data("ftyp".utf8) + payload,
+                      size(21, width: 4) + Data("ftyp".utf8) + payload + Data([0])] {
+            try bytes.write(to: url)
+            XCTAssertThrowsError(try MetadataEngine.videoKind(url))
+        }
     }
 
     func testTimeComparisonNormalizesRationalTimesWithoutFloatingPoint() {
@@ -196,6 +239,14 @@ final class ProbeCoreTests: XCTestCase {
         XCTAssertEqual(result.status, .verified)
         XCTAssertEqual(result.checks.first { $0.name == "exact complete file bytes" }?.status, .passed)
         XCTAssertTrue(result.limitations.isEmpty)
+
+        let pngSource = folder.appendingPathComponent("source.png"), pngOutput = folder.appendingPathComponent("unchanged.png")
+        try makeImage(pngSource, type: UTType.png.identifier, orientation: 6)
+        try FileManager.default.copyItem(at: pngSource, to: pngOutput)
+        let pngResult = try await MediaIntegrity.compare(source: pngSource, output: pngOutput)
+        XCTAssertEqual(pngResult.status, .verified, "An exact no-op copy proves the complete PNG bytes, including opaque EXIF")
+        XCTAssertEqual(pngResult.checks.first { $0.name == "exact complete file bytes" }?.status, .passed)
+        XCTAssertTrue(pngResult.limitations.isEmpty)
     }
 
     func testKnownTrackLossAndDurationChangeFailBeforeOpaqueSampleQualification() {
@@ -211,6 +262,40 @@ final class ProbeCoreTests: XCTestCase {
         XCTAssertEqual(MediaIntegrity.videoStructureChecks(source: source, output: changedType).first?.status, .failed)
         let shorter = inspection("2", "vide,soun", "1/2@0")
         XCTAssertEqual(MediaIntegrity.videoStructureChecks(source: source, output: shorter).last?.status, .failed)
+    }
+
+    func testVideoFingerprintResiliencePreservesCancellationAndIncompleteDetail() throws {
+        XCTAssertThrowsError(try MediaIntegrity.videoFingerprintFailureDetail(
+            CancellationError(), taskIsCancelled: false
+        )) { XCTAssertTrue($0 is CancellationError) }
+
+        // AVAssetReader can report an underlying framework error after its task
+        // has been canceled. That must also abort instead of becoming exportable
+        // incomplete evidence.
+        XCTAssertThrowsError(try MediaIntegrity.videoFingerprintFailureDetail(
+            ProbeError.malformed("reader stopped"), taskIsCancelled: true
+        )) { XCTAssertTrue($0 is CancellationError) }
+
+        let readerError = ProbeError.unsupported("Compressed reader unavailable")
+        XCTAssertEqual(
+            try MediaIntegrity.videoFingerprintFailureDetail(readerError, taskIsCancelled: false),
+            readerError.localizedDescription
+        )
+        let privateError = NSError(domain: NSCocoaErrorDomain, code: 257,
+            userInfo: [NSLocalizedDescriptionKey: "Cannot read /private/synthetic/source.mp4 at +12.34-056.78/"])
+        let safeDetail = try MediaIntegrity.videoFingerprintFailureDetail(privateError, taskIsCancelled: false)
+        XCTAssertTrue(safeDetail.contains(NSCocoaErrorDomain))
+        XCTAssertTrue(safeDetail.contains("257"))
+        XCTAssertFalse(safeDetail.contains("/private"))
+        XCTAssertFalse(safeDetail.contains("+12.34"))
+    }
+
+    func testTrackScopedMetadataRequiresEveryVideoTrackToReadBack() {
+        XCTAssertEqual(MediaIntegrity.videoTrackReadbackStatus([.passed, .passed], expectedTrackCount: 2), .passed)
+        XCTAssertEqual(MediaIntegrity.videoTrackReadbackStatus([.passed, .failed], expectedTrackCount: 2), .failed)
+        XCTAssertEqual(MediaIntegrity.videoTrackReadbackStatus([.passed, .notChecked], expectedTrackCount: 2), .notChecked)
+        XCTAssertEqual(MediaIntegrity.videoTrackReadbackStatus([.passed], expectedTrackCount: 2), .notChecked)
+        XCTAssertEqual(MediaIntegrity.videoTrackReadbackStatus([], expectedTrackCount: 0), .notChecked)
     }
 
     func testIntegrityExcludesOnlyAnExplicitlyRequestedLensAndChecksItsValue() async throws {
@@ -311,9 +396,103 @@ final class ProbeCoreTests: XCTestCase {
             try patch.validateReadback(result.outputInspection)
             XCTAssertEqual(result.outputInspection.kind, kind); XCTAssertEqual(result.outputInspection.structure, result.sourceInspection.structure)
             XCTAssertFalse(result.integrity.checks.contains { $0.status == .failed }, "\(kind): \(result.integrity.checks)")
+            if kind == .png {
+                XCTAssertEqual(result.integrity.status, .incomplete, "PNG non-eXIf byte equality does not qualify opaque TIFF metadata")
+                XCTAssertTrue(result.integrity.limitations.contains { $0.contains("Opaque PNG eXIf/TIFF") })
+            }
             XCTAssertEqual(try WholeFileDigest.sha256(source), original)
         }
     }
+    func testFullPatchRejectsUnrequestedMetadataAndLocationChanges() async throws {
+        let source = folder.appendingPathComponent("strict-source.jpg")
+        try makeImage(source, type: UTType.jpeg.identifier, orientation: 1)
+        let expected = MetadataPatch(values: ["iso": .number(800)])
+        for (name, unexpected) in [
+            ("exposure", MetadataPatch(values: ["iso": .number(800), "fNumber": .number(4)])),
+            ("gps", MetadataPatch(values: ["iso": .number(800), "latitude": .number(12.5), "longitude": .number(44.25)]))
+        ] {
+            let output = folder.appendingPathComponent("strict-\(name).jpg")
+            try StillContainerMetadata.write(source: source, output: output, kind: .jpeg, patch: unexpected)
+            let report = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: expected)
+            XCTAssertEqual(report.checks.first { $0.name == "requested metadata" }?.status, .passed)
+            XCTAssertEqual(report.status, .mismatch, "Known non-target changes must never become acknowledgment-exportable.")
+            XCTAssertEqual(report.checks.first { $0.name == "retained embedded metadata" }?.status, .failed)
+            XCTAssertEqual(report.checks.first { $0.name == "ImageIO non-target properties" }?.status, .failed)
+            let editorReport = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: expected,
+                                                                       integrityPolicy: .allowAdditionalMetadataChanges)
+            XCTAssertEqual(editorReport.status, .mismatch, "The editor exception must not bypass independent image properties or location.")
+            XCTAssertEqual(editorReport.checks.first { $0.name == "retained embedded metadata" }?.status, .warning)
+            XCTAssertEqual(editorReport.checks.first { $0.name == "ImageIO non-target properties" }?.status, .failed)
+            if name == "gps" {
+                XCTAssertEqual(editorReport.checks.first { $0.name == "exposed embedded location" }?.status, .failed)
+                XCTAssertEqual(report.checks.first { $0.name == "exposed embedded location" }?.status, .failed)
+            }
+        }
+    }
+
+    func testSelectedMovieDateDoesNotExemptOtherHeaderDates() async throws {
+        let source = folder.appendingPathComponent("date-isolation.mov"), output = folder.appendingPathComponent("date-drift.mov")
+        try await makeVideo(source, kind: .mov)
+        let expected = MetadataPatch(values: ["movieCreateDate": .string("2026-04-05T06:07:08Z")])
+        let valid = folder.appendingPathComponent("date-valid.mov")
+        _ = try await VideoMetadataWriter.write(source: source, output: valid, patch: expected)
+        let validReport = try await MediaIntegrity.compareMetadata(source: source, output: valid, patch: expected)
+        XCTAssertNotEqual(validReport.status, .mismatch)
+        _ = try await VideoMetadataWriter.write(source: source, output: output, patch: MetadataPatch(values: [
+            "movieCreateDate": .string("2026-04-05T06:07:08Z"),
+            "trackModifyDate": .string("2001-01-01T00:00:00Z")
+        ]))
+        let report = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: expected)
+        XCTAssertEqual(report.checks.first { $0.name == "requested metadata" }?.status, .passed)
+        XCTAssertEqual(report.checks.first { $0.name == "retained embedded metadata" }?.status, .failed)
+        XCTAssertEqual(report.status, .mismatch)
+    }
+
+    func testEditorPolicyAllowsAdditionalMovieMetadataButKeepsRequestedReadbackBlocking() async throws {
+        let source = folder.appendingPathComponent("warning-source.mov")
+        let output = folder.appendingPathComponent("warning-copy.mov")
+        try await makeVideo(source, kind: .mov)
+        let expected = MetadataPatch(values: ["movieCreateDate": .string("2026-04-05T06:07:08Z")])
+        _ = try await VideoMetadataWriter.write(source: source, output: output, patch: MetadataPatch(values: [
+            "movieCreateDate": .string("2026-04-05T06:07:08Z"),
+            "trackModifyDate": .string("2001-01-01T00:00:00Z")
+        ]))
+        let strict = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: expected)
+        XCTAssertEqual(strict.status, .mismatch)
+        let editor = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: expected,
+                                                             integrityPolicy: .allowAdditionalMetadataChanges)
+        XCTAssertNotEqual(editor.status, .mismatch)
+        XCTAssertNotEqual(editor.status, .verified)
+        XCTAssertEqual(editor.checks.first { $0.name == "retained embedded metadata" }?.status, .warning)
+        XCTAssertTrue(editor.checks.contains { $0.name.contains("compressed data / timing / format") && $0.status == .passed })
+        let wrongTarget = try await MediaIntegrity.compareMetadata(source: source, output: output,
+            patch: MetadataPatch(values: ["movieCreateDate": .string("2002-01-01T00:00:00Z")]),
+            integrityPolicy: .allowAdditionalMetadataChanges)
+        XCTAssertEqual(wrongTarget.status, .mismatch)
+        XCTAssertEqual(wrongTarget.checks.first { $0.name == "requested metadata" }?.status, .failed)
+    }
+
+    func testMapCoordinateEditDoesNotExemptUnselectedAltitude() async throws {
+        let original = folder.appendingPathComponent("altitude-original.mov")
+        let source = folder.appendingPathComponent("altitude-source.mov"), output = folder.appendingPathComponent("altitude-drift.mov")
+        try await makeVideo(original, kind: .mov)
+        _ = try await VideoMetadataWriter.write(source: original, output: source, patch: MetadataPatch(values: [
+            "latitude": .number(12.5), "longitude": .number(44.25), "altitude": .number(10)
+        ]))
+        let expected = MetadataPatch(values: ["latitude": .number(35), "longitude": .number(-78)])
+        let valid = folder.appendingPathComponent("altitude-valid.mov")
+        _ = try await VideoMetadataWriter.write(source: source, output: valid, patch: expected)
+        let validReport = try await MediaIntegrity.compareMetadata(source: source, output: valid, patch: expected)
+        XCTAssertNotEqual(validReport.status, .mismatch)
+        _ = try await VideoMetadataWriter.write(source: source, output: output, patch: MetadataPatch(values: [
+            "latitude": .number(35), "longitude": .number(-78), "altitude": .number(100)
+        ]))
+        let report = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: expected)
+        XCTAssertEqual(report.checks.first { $0.name == "requested metadata" }?.status, .passed)
+        XCTAssertEqual(report.checks.first { $0.name == "retained embedded metadata" }?.status, .failed)
+        XCTAssertEqual(report.status, .mismatch)
+    }
+
     func testMovieFullProfileLensLocationDatesAndSelectedRemovalPreserveSamples() async throws {
         for kind in [MediaKind.mp4, .mov] {
             let source = folder.appendingPathComponent("full-video.\(kind.rawValue)"), output = folder.appendingPathComponent("full-edited.\(kind.rawValue)"), removed = folder.appendingPathComponent("full-removed.\(kind.rawValue)")
