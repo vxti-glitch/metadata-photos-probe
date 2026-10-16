@@ -205,6 +205,20 @@ public enum VideoMetadataWriter {
         return try VideoBMFF.inspectedMovie(VideoBMFF.atoms(data)[0])
     }
 
+    /// AVFoundation can expose a full-box mdta item's numeric index in
+    /// the iTunes keyspace. Resolve only identities proven by this file's key
+    /// table and scalar bytes; callers must also match the AVFoundation value.
+    static func indexedMovieMetadataAliases(_ url: URL) throws -> [String: (identity: String, value: String)] {
+        let input = try FileHandle(forReadingFrom: url); defer { try? input.close() }
+        let size = try input.seekToEnd(), top = try VideoBMFF.fileAtoms(input, length: size)
+        let movies = top.filter { $0.type == VideoBMFF.code("moov") }
+        guard movies.count == 1, let movie = movies.first, movie.size <= VideoBMFF.maxMovieBytes else {
+            throw ProbeError.unsupported("Bounded unique movie header required")
+        }
+        let data = try VideoBMFF.read(input, at: movie.offset, count: Int(movie.size))
+        return try VideoBMFF.indexedMetadataAliases(VideoBMFF.atoms(data)[0])
+    }
+
     /// Returns mdta values independently for each video track. The aggregate
     /// inspector is useful for ordinary readback, but cannot prove that every
     /// video track carries a requested track-scoped value.
@@ -469,6 +483,76 @@ private enum VideoBMFF {
             try only(children, ["hdlr", "keys", "ilst", "mhdr", "ctry", "lang", "free"])
         }
         return (Data(body.prefix(prefixLength)), children)
+    }
+
+    static func indexedMetadataAliases(_ movie: Atom) throws -> [String: (identity: String, value: String)] {
+        var containers: [(atom: Atom, nested: Bool)] = []
+        for child in try atoms(movie.payload) {
+            if child.type == code("meta") { containers.append((child, false)) }
+            if child.type == code("udta") {
+                for entry in try atoms(child.payload) where entry.type == code("meta") { containers.append((entry, true)) }
+            }
+        }
+        let candidates = containers.indices.filter { (try? handler(containers[$0].atom)) == code("mdta") }
+        guard candidates.count == 1, let candidate = candidates.first else { return [:] }
+        let parts = try metadataChildren(containers[candidate].atom)
+        guard parts.prefix == number(0) else { return [:] }
+        // Even unknown namespaces can expose iTunes indexes. Never assign one
+        // of their values to the mdta key table merely because an index matches.
+        var competingIndexes = Set<UInt32>()
+        for index in containers.indices where index != candidate {
+            let other = try metadataChildren(containers[index].atom)
+            for list in other.children where list.type == code("ilst") {
+                competingIndexes.formUnion(try atoms(list.payload).map(\.type))
+            }
+        }
+        let keys = try unique(parts.children, "keys").payload
+        guard try u32(keys, 0) == 0 else { return [:] }
+        let count = Int(try u32(keys, 4))
+        guard count <= 4096 else { return [:] }
+        var definitions: [(namespace: UInt32, key: Data)] = [], cursor = 8
+        for _ in 0..<count {
+            let length = Int(try u32(keys, cursor)), namespace = try u32(keys, cursor + 4)
+            guard length >= 8, length <= keys.count - cursor else { throw ProbeError.malformed("Metadata key size invalid") }
+            definitions.append((namespace, keys.subdata(in: cursor + 8..<cursor + length)))
+            cursor += length
+        }
+        guard cursor == keys.count else { throw ProbeError.malformed("Metadata keys have trailing data") }
+        let items = try atoms(unique(parts.children, "ilst").payload)
+        let itemCounts = items.reduce(into: [UInt32: Int]()) { $0[$1.type, default: 0] += 1 }
+        let definitionCounts = definitions.reduce(into: [Data: Int]()) { $0[number($1.namespace) + $1.key, default: 0] += 1 }
+        var result: [String: (identity: String, value: String)] = [:]
+        let safeKeyCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+        for item in items {
+            guard item.type > 0, item.type <= UInt32(count), !competingIndexes.contains(item.type),
+                  itemCounts[item.type] == 1 else { continue }
+            let definition = definitions[Int(item.type) - 1]
+            guard definition.namespace == code("mdta"),
+                  definitionCounts[number(definition.namespace) + definition.key] == 1,
+                  let key = String(data: definition.key, encoding: .utf8), !key.isEmpty,
+                  key.unicodeScalars.allSatisfy({ $0.isASCII && safeKeyCharacters.contains($0) }) else { continue }
+            let values = try atoms(item.payload).filter { $0.type == code("data") }
+            guard values.count == 1, let value = values.first, let scalar = try indexedScalar(value.payload) else { continue }
+            let alias = "itsk/" + number(item.type).map { String(format: "%%%02X", $0) }.joined()
+            result[alias] = ("mdta/" + key, scalar)
+        }
+        return result
+    }
+
+    private static func indexedScalar(_ payload: Data) throws -> String? {
+        guard payload.count >= 8 else { return nil }
+        let type = try u32(payload, 0)
+        let bytes = payload.dropFirst(8)
+        if type == 1 {
+            guard let value = String(data: bytes, encoding: .utf8), !value.contains("\0") else { return nil }
+            return value
+        }
+        if type == 21, (1...8).contains(bytes.count) {
+            var bits = bytes.reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
+            if bytes.count < 8, let first = bytes.first, first & 0x80 != 0 { bits |= UInt64.max << (bytes.count * 8) }
+            return String(Int64(bitPattern: bits))
+        }
+        return nil
     }
     static func userDataTextAtom(_ typeCode: UInt32, text: String) throws -> Data {
         let utf8 = Data(text.utf8)

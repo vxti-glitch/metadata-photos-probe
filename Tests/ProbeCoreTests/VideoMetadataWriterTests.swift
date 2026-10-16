@@ -79,15 +79,11 @@ final class VideoMetadataWriterTests: XCTestCase {
                 XCTAssertEqual(actual, value)
             }
             XCTAssertEqual(try movieTrackBytes(original), try movieTrackBytes(edited))
-            // These files and every metadata value were generated in this test.
-            // Keep diagnostics here, never in the production inspector or on
-            // imported media, so CI can identify parser-exposure differences.
             let beforeInspection = try await MetadataEngine.inspect(source)
             let afterInspection = try await MetadataEngine.inspect(output)
-            for key in Set(beforeInspection.metadata.keys).union(afterInspection.metadata.keys).sorted()
-                where beforeInspection.metadata[key] != afterInspection.metadata[key] {
-                print("Synthetic camera layout \(kind.rawValue) changed \(key): \(String(describing: beforeInspection.metadata[key])) -> \(String(describing: afterInspection.metadata[key]))")
-            }
+            XCTAssertEqual(beforeInspection.metadata["mdta/com.example.retained.counter"], "42")
+            XCTAssertEqual(afterInspection.metadata["mdta/com.example.retained.counter"], "42")
+            XCTAssertNil(beforeInspection.metadata["itsk/%00%00%00%03"])
             let comparison = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: patch)
             XCTAssertFalse(comparison.checks.contains { $0.status == .failed }, "\(comparison.checks)")
             XCTAssertEqual(comparison.checks.filter { $0.name.contains("compressed data") && $0.status == .passed }.count, 2)
@@ -111,6 +107,56 @@ final class VideoMetadataWriterTests: XCTestCase {
             XCTAssertEqual(values["make"], remove ? nil : "Old Maker")
             XCTAssertEqual(values["model"], remove ? nil : "Selected Camera")
         }
+    }
+
+    func testIndexedMovieMetadataAliasesRequireUnambiguousDefinitionsAndMatchingValues() throws {
+        let source = directory.appendingPathComponent("indexed-alias.mov")
+        try structuralMovie(userData: Data()).write(to: source)
+        try rewriteFixtureMovie(source, metadata: layoutFixtureMetadata(), nested: true)
+        let aliases = try VideoMetadataWriter.indexedMovieMetadataAliases(source)
+        let index = "itsk/%00%00%00%03"
+        XCTAssertEqual(aliases.count, 3)
+        XCTAssertEqual(aliases[index]?.identity, "mdta/com.example.retained.counter")
+        XCTAssertEqual(aliases[index]?.value, "42")
+        XCTAssertEqual(MetadataEngine.canonicalVideoMetadataIdentity(index, value: "42", aliases: aliases), "mdta/com.example.retained.counter")
+        XCTAssertEqual(MetadataEngine.canonicalVideoMetadataIdentity(index, value: "43", aliases: aliases), index)
+        XCTAssertEqual(MetadataEngine.canonicalVideoMetadataIdentity("itsk/%00%00%00%04", value: "42", aliases: aliases), "itsk/%00%00%00%04")
+        XCTAssertEqual(MetadataEngine.canonicalVideoMetadataIdentity(index, value: "42", aliases: [index: (identity: "other/key", value: "42")]), index)
+        let itemPayload = box("data", word(21) + word(0) + word(42))
+        let item = word(UInt32(itemPayload.count + 8)) + word(3) + itemPayload
+        let competing = box("meta", box("hdlr", word(0) + word(0) + Data("mdir".utf8) + Data(repeating: 0, count: 13)) + box("ilst", item))
+        try rewriteFixtureMovie(source, metadata: layoutFixtureMetadata(), nested: true, sibling: competing)
+        let colliding = try VideoMetadataWriter.indexedMovieMetadataAliases(source)
+        XCTAssertNil(colliding[index], "An overlapping index in a separate namespace is not proven to belong to mdta")
+        XCTAssertNotNil(colliding["itsk/%00%00%00%01"])
+        try rewriteFixtureMovie(source, metadata: layoutFixtureMetadata(counterType: 22), nested: true)
+        XCTAssertNil(try VideoMetadataWriter.indexedMovieMetadataAliases(source)[index], "Unsupported value encoding stays unresolved")
+        try rewriteFixtureMovie(source, metadata: layoutFixtureMetadata(duplicateCounterItem: true), nested: true)
+        XCTAssertNil(try VideoMetadataWriter.indexedMovieMetadataAliases(source)[index], "Duplicate items stay unresolved")
+        try rewriteFixtureMovie(source, metadata: layoutFixtureMetadata(duplicateCounterKey: true), nested: true)
+        XCTAssertNil(try VideoMetadataWriter.indexedMovieMetadataAliases(source)[index], "Duplicate key declarations stay unresolved")
+        try rewriteFixtureMovie(source, metadata: layoutFixtureMetadata(counter: UInt32.max), nested: true)
+        XCTAssertEqual(try VideoMetadataWriter.indexedMovieMetadataAliases(source)[index]?.value, "-1")
+        try rewriteFixtureMovie(source, metadata: layoutFixtureMetadata(), nested: false)
+        XCTAssertEqual(try VideoMetadataWriter.indexedMovieMetadataAliases(source)[index]?.value, "42")
+        let unversioned = box("meta", Data(try layoutFixtureMetadata().dropFirst(12)))
+        try rewriteFixtureMovie(source, metadata: unversioned, nested: false)
+        XCTAssertTrue(try VideoMetadataWriter.indexedMovieMetadataAliases(source).isEmpty, "Native unversioned tables do not produce alias evidence")
+    }
+
+    func testIndexedAliasResolutionDoesNotHideUnselectedMetadataChanges() async throws {
+        let source = directory.appendingPathComponent("retained-counter.mov")
+        try await makeNativeMOV(source, includeMetadata: false, includeAudio: true)
+        try rewriteFixtureMovie(source, metadata: layoutFixtureMetadata(), nested: true)
+        let output = directory.appendingPathComponent("changed-counter.mov")
+        _ = try await VideoMetadataWriter.write(source: source, output: output,
+            patch: MetadataPatch(values: ["make": .string("Apple"), "model": .string("iPhone 15 Pro Max")]))
+        try rewriteFixtureMovie(output, metadata: layoutFixtureMetadata(counter: 43), nested: false)
+        let patch = MetadataPatch(values: ["make": .string("Old Maker"), "model": .string("Old Model")])
+        let comparison = try await MediaIntegrity.compareMetadata(source: source, output: output, patch: patch)
+        XCTAssertTrue(comparison.checks.contains { $0.name == "retained embedded metadata" && $0.status == .failed })
+        XCTAssertTrue(comparison.checks.contains { $0.name == "requested metadata" && $0.status == .passed })
+        XCTAssertEqual(comparison.checks.filter { $0.name.contains("compressed data") && $0.status == .passed }.count, 2)
     }
 
     func testUnrelatedEditsKeepNestedVersionedMetadataLayout() async throws {
@@ -918,14 +964,17 @@ final class VideoMetadataWriterTests: XCTestCase {
 
     private struct Box { let type: String; let code: UInt32; let range: Range<Int>; let payload: Range<Int> }
 
-    private func layoutFixtureMetadata() throws -> Data {
-        let definitions = ["com.apple.quicktime.make", "com.apple.quicktime.model", "com.example.retained.counter"]
+    private func layoutFixtureMetadata(counter: UInt32 = 42, counterType: UInt32 = 21,
+                                       duplicateCounterItem: Bool = false, duplicateCounterKey: Bool = false) throws -> Data {
+        var definitions = ["com.apple.quicktime.make", "com.apple.quicktime.model", "com.example.retained.counter"]
+        if duplicateCounterKey { definitions.append("com.example.retained.counter") }
         var keys = word(0) + word(UInt32(definitions.count))
         for key in definitions { keys += word(UInt32(key.utf8.count + 8)) + Data("mdta".utf8) + Data(key.utf8) }
         func item(_ index: UInt32, _ payload: Data) -> Data { word(UInt32(payload.count + 8)) + word(index) + payload }
-        let retained = box("name", Data("Retained label".utf8)) + box("data", word(21) + word(0x01020304) + word(42))
-        let items = item(1, box("data", word(1) + word(0) + Data("Old Maker".utf8)))
+        let retained = box("name", Data("Retained label".utf8)) + box("data", word(counterType) + word(0x01020304) + word(counter))
+        var items = item(1, box("data", word(1) + word(0) + Data("Old Maker".utf8)))
             + item(2, box("data", word(1) + word(0) + Data("Old Model".utf8))) + item(3, retained)
+        if duplicateCounterItem { items.append(item(3, retained)) }
         let hdlr = box("hdlr", word(0) + word(0) + Data("mdta".utf8) + Data(repeating: 0, count: 13))
         return box("meta", word(0) + hdlr + box("keys", keys) + box("ilst", items)
             + box("mhdr", word(0)) + box("ctry", word(1)) + box("lang", word(2)) + box("free", Data([1, 3, 5, 7])))

@@ -12,6 +12,8 @@ The processed-video Photos screenshot showed "No camera information" while showi
 
 The new candidate addresses the layout of movie-level keyed metadata: a direct `moov/meta` box with the unversioned QuickTime layout, and consistent treatment of existing direct or nested keyed metadata. A reader accepting metadata written in another placement is not proof that Photos will present the same camera identity. Native-reader and synthetic fixture results must be taken from the final CI run; the expected improvement in Photos remains unverified until the owner tests this candidate.
 
+The synthetic Mac regression exposed another distinction: Apple's reader labels nested indexed entries as `itsk/<index>` but normalized entries as `mdta/<declared key>`. Inspection resolves an indexed identity only when a bounded, unambiguous original key table and supported raw scalar corroborate the exact independently read value. Conflicting containers, unknown types, mismatches and real unselected value changes remain detectable; the integrity policy is unchanged.
+
 The change must preserve encoded video and audio samples, tracks, codec, dimensions, timing and real HDR information. It must not re-encode a file or invent HEVC/Dolby Vision labels to resemble an unrelated native recording. Existing hard media-integrity checks and the approved retained-metadata warning policy remain in force.
 
 User-supplied videos and their private filenames, GPS and metadata remain local. No private samples belong in Git, CI, release packages or listing media. Regressions use synthetic fixtures.

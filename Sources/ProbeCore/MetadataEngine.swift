@@ -69,9 +69,16 @@ public enum MetadataEngine {
         let duration = try await asset.load(.duration)
         let metadataFormats = try await asset.load(.availableMetadataFormats)
         var metadata = [String: String]()
+        let indexedAliases = (try? VideoMetadataWriter.indexedMovieMetadataAliases(url)) ?? [:]
+        var resolvedIdentities = Set<String>()
         for item in try await containerMetadata(asset) {
             if let value = try await item.load(.stringValue) {
-                let identity = try metadataIdentity(identifier: item.identifier, key: item.key, keySpace: item.keySpace)
+                let rawIdentity = try metadataIdentity(identifier: item.identifier, key: item.key, keySpace: item.keySpace)
+                let identity = canonicalVideoMetadataIdentity(rawIdentity, value: value, aliases: indexedAliases)
+                if identity != rawIdentity { resolvedIdentities.insert(identity) }
+                if resolvedIdentities.contains(identity), let prior = metadata[identity], prior != value {
+                    throw ProbeError.unsupported("Conflicting indexed movie metadata values")
+                }
                 metadata[identity] = value
                 if item.identifier == .quickTimeMetadataMake { metadata["make"] = value }
                 if item.identifier == .quickTimeMetadataModel { metadata["model"] = value }
@@ -197,6 +204,14 @@ public enum MetadataEngine {
             return keySpace.rawValue + "/" + String(describing: key)
         }
         return String(describing: key)
+    }
+
+    /// Resolve only identities corroborated by the original container's unique
+    /// key table and scalar bytes. Always keep Apple's independently read value.
+    static func canonicalVideoMetadataIdentity(_ identity: String, value: String,
+        aliases: [String: (identity: String, value: String)]) -> String {
+        guard let evidence = aliases[identity], evidence.identity.hasPrefix("mdta/"), evidence.value == value else { return identity }
+        return evidence.identity
     }
 
     /// Read each advertised keyspace, including QuickTime mdta. Common metadata is
