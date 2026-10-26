@@ -4,6 +4,7 @@ import 'app_brand.dart';
 import 'app_theme.dart';
 import 'editor_controller.dart';
 import 'media_models.dart';
+import 'license_gate.dart';
 
 /// A normal grouped Settings destination that keeps the editor mounted beneath it.
 class SettingsDestination extends StatelessWidget {
@@ -700,7 +701,7 @@ class AppInformationSettingsPage extends StatelessWidget {
     controller: controller,
     builder: (context) => [
       SettingsGroup(
-        children: const [
+        children: [
           SettingsItem(
             title: AppBrand.name,
             subtitle: 'by ${AppBrand.developer}',
@@ -713,7 +714,8 @@ class AppInformationSettingsPage extends StatelessWidget {
           SettingsItem(title: 'Native engine', subtitle: AppBrand.engineCore),
           SettingsItem(
             title: 'Local processing',
-            subtitle: 'Media processing stays on your device. Zlarp verifies your license online.',
+            subtitle:
+                'Media processing stays on your device. ${ZlarpLicenseGate.providerName(context)} verifies your license online.',
           ),
         ],
       ),

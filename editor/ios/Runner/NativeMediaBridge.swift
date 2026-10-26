@@ -33,7 +33,7 @@ final class NativeOperationGate {
 final class NativeMediaBridge: NSObject {
     // A fixed destination keeps arbitrary mail recipients, attachments and body
     // content out of the bridge. Spaces are percent encoded for mailto handlers.
-    static let supportEmailURL = URL(string: "mailto:vxti.dev@gmail.com?subject=Metadata%20Editor%20Support")!
+    static let supportEmailURL = URL(string: "mailto:support@aurelarchive.win?subject=Metadata%20Editor%20Support")!
     private let channel: FlutterMethodChannel
     private let store: NativeSessionStore
     private let gate = NativeOperationGate()
@@ -223,7 +223,7 @@ final class NativeMediaBridge: NSObject {
                 guard !gate.busy else { throw NativeMediaError.busy }
                 UIApplication.shared.open(Self.supportEmailURL, options: [:]) { opened in
                     result(opened ? nil : FlutterError(code: "email_unavailable",
-                        message: "No email app could open. Install or configure an email app, then try again, or email vxti.dev@gmail.com with the subject Metadata Editor Support.", details: nil))
+                        message: "No email app could open. Install or configure an email app, then try again, or email support@aurelarchive.win with the subject Metadata Editor Support.", details: nil))
                 }
             case "openLocationPicker":
                 guard !gate.busy else { throw NativeMediaError.busy }

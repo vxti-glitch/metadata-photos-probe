@@ -153,7 +153,7 @@ void main() {
       await bridge.openSupportEmail();
       expect(received?.method, 'openSupportEmail');
       expect(received?.arguments, isNull);
-      expect(AppBrand.supportEmail, 'vxti.dev@gmail.com');
+      expect(AppBrand.supportEmail, 'support@aurelarchive.win');
       expect(AppBrand.supportSubject, 'Metadata Editor Support');
     },
   );

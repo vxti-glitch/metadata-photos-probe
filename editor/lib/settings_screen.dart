@@ -24,12 +24,13 @@ class SettingsScreen extends StatelessWidget {
   final VoidCallback? onBack;
 
   Future<void> _license(BuildContext context) async {
+    final provider = ZlarpLicenseGate.providerName(context);
     final change = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Zlarp license'),
-        content: const Text(
-          'Your license is active. You can remove the saved key from this device to use a different one. This does not cancel your subscription or reset your device limit on Zlarp.',
+        title: Text('$provider license'),
+        content: Text(
+          'Your license is active. You can remove the saved key from this device to use a different one. This does not cancel your subscription or reset your device limit on $provider.',
         ),
         actions: [
           TextButton(
@@ -286,7 +287,9 @@ class SettingsScreen extends StatelessWidget {
                         onTap: () => _legal(
                           context,
                           'Privacy Policy',
-                          LegalDocuments.privacyPolicy,
+                          LegalDocuments.privacyForProvider(
+                            ZlarpLicenseGate.providerName(context),
+                          ),
                         ),
                       ),
                       SettingsItem(
@@ -296,7 +299,9 @@ class SettingsScreen extends StatelessWidget {
                         onTap: () => _legal(
                           context,
                           'Terms of Use',
-                          LegalDocuments.termsOfUse,
+                          LegalDocuments.termsForProvider(
+                            ZlarpLicenseGate.providerName(context),
+                          ),
                         ),
                       ),
                     ],

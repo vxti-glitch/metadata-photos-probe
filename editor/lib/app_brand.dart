@@ -9,9 +9,9 @@ abstract final class AppBrand {
   static const bridgeChannel = 'com.vxtiglitch.metadataeditor/media_v1';
   static const version = '1.0.11';
   static const buildNumber = '22';
-  static const developer = 'vxti';
-  static const websiteUrl = 'https://zlarp.com';
-  static const supportEmail = 'vxti.dev@gmail.com';
+  static const developer = 'Aurel Archive';
+  static const websiteUrl = 'https://aurelarchive.win';
+  static const supportEmail = 'support@aurelarchive.win';
   static const supportSubject = '$name Support';
   static const engineCore = 'ProbeCore v0.4';
 }

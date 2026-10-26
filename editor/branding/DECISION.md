@@ -40,3 +40,10 @@ the in-app mark retains its rounded background. Asset dimensions and catalogs
 are unchanged. `python editor/branding/render_icons.py` regenerates the assets;
 `python -m unittest discover -s editor/branding -p test_render_icons.py` checks
 the master, every committed asset and compact-size visibility.
+
+
+## Aurel Archive palette update — October 25, 2026
+
+The owner requested the Aurel Archive grayscale palette: #252525, #CFCFCF, #7D7D7D and #545454, with white and neutral derived surfaces. This supersedes the earlier blue/accent palette in the historical notes above. Both Flutter appearances, the in-app mark, iOS icons and launch background now use this identity; semantic warning, error and success colors remain distinguishable. The developer label and public support/website contacts use Aurel Archive. App name, version/build and native licensing remain unchanged.
+
+Website preview images are 1170 × 2532 renders of actual Flutter widgets with the existing test bridge, not physical-device captures. No iOS installation package or device validation was produced by this palette update.

@@ -1,23 +1,6 @@
-name: Flutter and Swift metadata editor
+name: Aurel sandbox licensing verification
 
 on:
-  push:
-    branches: ["**"]
-    paths:
-      - 'editor/**'
-      - 'Sources/**'
-      - 'Tests/**'
-      - 'Package.swift'
-      - 'scripts/**'
-      - '.github/workflows/ios-editor.yml'
-  pull_request:
-    paths:
-      - 'editor/**'
-      - 'Sources/**'
-      - 'Tests/**'
-      - 'Package.swift'
-      - 'scripts/**'
-      - '.github/workflows/ios-editor.yml'
   workflow_dispatch:
 
 permissions:
@@ -44,7 +27,7 @@ jobs:
           key: editor-flutter-${{ runner.os }}-${{ runner.arch }}-5fc346839b5d0eef006ed8404392afb4dfae428d-v1
       - name: Test, launch simulator and compile arm64 device archive
         shell: bash
-        run: bash scripts/build-editor-macos.sh
+        run: bash scripts/build-aurel-ci.sh
       - name: Preserve XCTest JSON diagnostics after any build result
         if: always()
         shell: bash
