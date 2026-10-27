@@ -293,14 +293,14 @@ class _EditorHomeState extends State<EditorHome> {
                           colors:
                               Theme.of(context).brightness == Brightness.dark
                               ? const [
-                                  Color(0xFF10243C),
-                                  Color(0xFF0F1120),
-                                  Color(0xFF000000),
+                                  Color(0xFF545454),
+                                  Color(0xFF303030),
+                                  Color(0xFF252525),
                                 ]
                               : const [
-                                  Color(0xFFE0EDFF),
-                                  Color(0xFFEBEBF8),
-                                  Color(0xFFF2F2F7),
+                                  Color(0xFFCFCFCF),
+                                  Color(0xFFFFFFFF),
+                                  Color(0xFFFFFFFF),
                                 ],
                         ),
                       ),
@@ -346,10 +346,10 @@ class MetadataMarkPainter extends CustomPainter {
         const Rect.fromLTWH(0, 0, 32, 32),
         const Radius.circular(8),
       ),
-      Paint()..color = const Color(0xFF1C1C1E),
+      Paint()..color = const Color(0xFF252525),
     );
     final stroke = Paint()
-      ..color = const Color(0xFFF5F5F7)
+      ..color = const Color(0xFFFFFFFF)
       ..strokeWidth = 1.8
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round
@@ -373,7 +373,7 @@ class MetadataMarkPainter extends CustomPainter {
 
     // Crosshairs
     final crossPaint = Paint()
-      ..color = const Color(0xFF48484A)
+      ..color = const Color(0xFF545454)
       ..strokeWidth = 0.8
       ..strokeCap = StrokeCap.round;
     canvas.drawLine(const Offset(16, 3), const Offset(16, 4.5), crossPaint);
@@ -387,26 +387,26 @@ class MetadataMarkPainter extends CustomPainter {
       ..strokeWidth = 1.65
       ..strokeCap = StrokeCap.round;
 
-    // One strong blue dot anchors evenly spaced rows.
-    final dotPaint = Paint()..color = const Color(0xFF0A84FF);
+    // One bright dot anchors evenly spaced rows.
+    final dotPaint = Paint()..color = const Color(0xFFCFCFCF);
     canvas.drawCircle(const Offset(10, 10), 1.35, dotPaint);
     canvas.drawLine(const Offset(13, 10), const Offset(23, 10), linePaint);
 
     // Line 2
     final line2Paint = Paint()
-      ..color = const Color(0xFFD1D1D6)
+      ..color = const Color(0xFFCFCFCF)
       ..strokeWidth = 1.65
       ..strokeCap = StrokeCap.round;
-    final dot2Paint = Paint()..color = const Color(0xFF636366);
+    final dot2Paint = Paint()..color = const Color(0xFF7D7D7D);
     canvas.drawCircle(const Offset(10, 16), 0.8, dot2Paint);
     canvas.drawLine(const Offset(13, 16), const Offset(20, 16), line2Paint);
 
     // Line 3
     final line3Paint = Paint()
-      ..color = const Color(0xFF8E8E93)
+      ..color = const Color(0xFF7D7D7D)
       ..strokeWidth = 1.65
       ..strokeCap = StrokeCap.round;
-    final dot3Paint = Paint()..color = const Color(0xFF48484A);
+    final dot3Paint = Paint()..color = const Color(0xFF545454);
     canvas.drawCircle(const Offset(10, 22), 0.8, dot3Paint);
     canvas.drawLine(const Offset(13, 22), const Offset(17, 22), line3Paint);
 
@@ -590,15 +590,12 @@ class WorkflowNote extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = AppTheme.of(context);
-    final dark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: dark ? const Color(0xFF132720) : const Color(0xFFEAF5EE),
+        color: colors.surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: dark ? const Color(0xFF224436) : const Color(0xFFBEDAC7),
-        ),
+        border: Border.all(color: colors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -606,7 +603,7 @@ class WorkflowNote extends StatelessWidget {
           Text(
             'Using your copy in Apple Photos',
             style: TextStyle(
-              color: dark ? const Color(0xFF84E4C7) : colors.success,
+              color: colors.text,
               fontSize: 14,
               fontWeight: FontWeight.w600,
             ),

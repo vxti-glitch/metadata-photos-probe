@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AurelLicenseEndpoint</key>
+	<string>https://puxccjoofzlgxkssmfva.supabase.co/functions/v1/aurel-licenses/verify</string>
+	<key>AurelLicenseIssuer</key>
+	<string>aurel-archive-test</string>
+	<key>AurelLicensePublicKey</key>
+	<string>r3CMZr6wV0FOjcIZ35lSABdfsZ7k2TOZr9ubg8Qqvg8=</string>
+</dict>
+</plist>

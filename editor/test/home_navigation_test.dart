@@ -132,8 +132,8 @@ void main() {
         expect(
           gradient.colors.first,
           appearance == 'dark'
-              ? const Color(0xFF10243C)
-              : const Color(0xFFE0EDFF),
+              ? const Color(0xFF545454)
+              : const Color(0xFFCFCFCF),
         );
         await tap(tester, 'openSettings');
         expect(find.byKey(const Key('homeGlow')).hitTestable(), findsNothing);

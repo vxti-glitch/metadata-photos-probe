@@ -10,6 +10,58 @@ enum ZlarpLicenseConfiguration {
     static let publicKey = Data(base64Encoded: "V/bkaVCVHW97GQW9ACZIcOh0MJTBx+qY56gpYenjkyk=")!
 }
 
+/// Public provider configuration only. A partially configured Aurel build never falls back to Zlarp.
+struct LicenseProviderConfiguration {
+    let endpoint: URL
+    let issuer: String
+    let publicKey: Data
+    let keychainService: String
+    let providerName: String
+    let environment: String?
+
+    static let zlarp = LicenseProviderConfiguration(
+        endpoint: ZlarpLicenseConfiguration.endpoint, issuer: "zlarp",
+        publicKey: ZlarpLicenseConfiguration.publicKey,
+        keychainService: "com.vxtiglitch.metadataeditor.zlarp", providerName: "Zlarp", environment: nil)
+    static let current: LicenseProviderConfiguration? = try? resolve(Bundle.main.infoDictionary ?? [:])
+
+    static func resolve(_ info: [String: Any]) throws -> LicenseProviderConfiguration {
+        let names = ["AurelLicenseEndpoint", "AurelLicenseIssuer", "AurelLicensePublicKey", "AurelLicenseEnvironment"]
+        guard names.contains(where: { info[$0] != nil }) else { return .zlarp }
+        guard let endpointText = info[names[0]] as? String,
+              let endpoint = URL(string: endpointText),
+              let issuer = info[names[1]] as? String,
+              let keyText = info[names[2]] as? String,
+              let publicKey = Data(base64Encoded: keyText), publicKey.count == 32 else {
+            throw LicenseFailure.invalidConfiguration
+        }
+        let environment: String
+        switch (endpointText, issuer) {
+        case ("https://puxccjoofzlgxkssmfva.supabase.co/functions/v1/aurel-licenses/verify", "aurel-archive-test"):
+            // Retain the existing three-field test build and its public pin.
+            guard info[names[3]] == nil || info[names[3]] as? String == "test" else {
+                throw LicenseFailure.invalidConfiguration
+            }
+            environment = "test"
+        case ("https://puxccjoofzlgxkssmfva.supabase.co/functions/v1/aurel-licenses-live/verify", "aurel-archive-live"):
+            // Live builds are explicit. An empty template, test pin or mixed tuple is never usable.
+            guard info[names[3]] as? String == "live",
+                  publicKey != Data(repeating: 0, count: 32),
+                  publicKey.base64EncodedString() == keyText,
+                  publicKey != Data(base64Encoded: "r3CMZr6wV0FOjcIZ35lSABdfsZ7k2TOZr9ubg8Qqvg8=") else {
+                throw LicenseFailure.invalidConfiguration
+            }
+            environment = "live"
+        default:
+            throw LicenseFailure.invalidConfiguration
+        }
+        _ = try Curve25519.Signing.PublicKey(rawRepresentation: publicKey)
+        return LicenseProviderConfiguration(endpoint: endpoint, issuer: issuer, publicKey: publicKey,
+            keychainService: "com.vxtiglitch.metadataeditor.aurel.\(environment)",
+            providerName: "Aurel Archive", environment: environment)
+    }
+}
+
 protocol ZlarpLicenseStorage {
     func load() throws -> Data?
     func save(_ data: Data) throws
@@ -17,9 +69,11 @@ protocol ZlarpLicenseStorage {
 }
 
 struct ZlarpKeychainStorage: ZlarpLicenseStorage {
+    let service: String
+    init(service: String = "com.vxtiglitch.metadataeditor.zlarp") { self.service = service }
     private var query: [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: "com.vxtiglitch.metadataeditor.zlarp",
+         kSecAttrService as String: service,
          kSecAttrAccount as String: "license-v1",
          kSecAttrSynchronizable as String: false]
     }
@@ -48,7 +102,7 @@ struct ZlarpKeychainStorage: ZlarpLicenseStorage {
     }
 }
 
-enum LicenseFailure: Error { case storage, invalidToken, invalidResponse }
+enum LicenseFailure: Error { case storage, invalidToken, invalidResponse, invalidConfiguration }
 
 private final class ZlarpNoRedirectDelegate: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask,
@@ -72,15 +126,17 @@ final class ZlarpLicenseService {
     private let transport: Transport
     private let now: () -> Date
     private let publicKey: Data
+    private let configuration: LicenseProviderConfiguration?
     private var record: Record?
     private var reason = "activation_required"
     private var retryUntil: Date?
     private var refreshing = false
     private var generation = UUID()
 
-    init(storage: ZlarpLicenseStorage = ZlarpKeychainStorage(),
+    init(storage: ZlarpLicenseStorage? = nil,
+         configuration: LicenseProviderConfiguration? = LicenseProviderConfiguration.current,
          now: @escaping () -> Date = Date.init,
-         publicKey: Data = ZlarpLicenseConfiguration.publicKey,
+         publicKey: Data? = nil,
          transport: @escaping Transport = { request in
              let session = URLSession(configuration: .ephemeral, delegate: ZlarpNoRedirectDelegate(), delegateQueue: nil)
              defer { session.invalidateAndCancel() }
@@ -88,9 +144,12 @@ final class ZlarpLicenseService {
              guard let http = response as? HTTPURLResponse else { throw LicenseFailure.invalidResponse }
              return (data, http)
          }) {
-        self.storage = storage; self.now = now; self.publicKey = publicKey; self.transport = transport
+        let selectedStorage = storage ?? ZlarpKeychainStorage(service: configuration?.keychainService ?? "com.vxtiglitch.metadataeditor.invalid")
+        self.storage = selectedStorage; self.configuration = configuration
+        self.now = now; self.publicKey = publicKey ?? configuration?.publicKey ?? Data(); self.transport = transport
+        guard configuration != nil else { reason = "configuration_invalid"; return }
         do {
-            if let data = try storage.load() {
+            if let data = try selectedStorage.load() {
                 record = try JSONDecoder().decode(Record.self, from: data)
                 guard let device = record?.device, UUID(uuidString: device) != nil else { throw LicenseFailure.storage }
             } else {
@@ -104,6 +163,7 @@ final class ZlarpLicenseService {
     var status: [String: Any] {
         let expiry = validExpiry()
         var result: [String: Any] = ["allowed": expiry != nil,
+                                    "providerName": configuration?.providerName ?? "Aurel Archive",
                                     "reason": expiry != nil ? (reason == "offline" ? "offline" : "active") :
                                         (record?.token != nil ? "expired" : reason)]
         if let expiry { result["expiresAt"] = expiry }
@@ -121,6 +181,7 @@ final class ZlarpLicenseService {
     }
 
     func refresh(key: String? = nil) async -> [String: Any] {
+        guard let configuration else { reason = "configuration_invalid"; return status }
         guard !refreshing else {
             if key != nil {
                 _ = clear()
@@ -132,6 +193,14 @@ final class ZlarpLicenseService {
         if let key {
             let clean = key.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !clean.isEmpty, clean.utf8.count <= 256 else { _ = clear(); reason = "invalid_key"; return status }
+            if configuration.environment == "live" {
+                // Reject keys from the test/Zlarp editions before storing or transmitting them.
+                let parts = clean.split(separator: ".", omittingEmptySubsequences: false)
+                guard parts.count == 3, parts[0] == "AAL1", UUID(uuidString: String(parts[1])) != nil,
+                      parts[2].count == 64, parts[2].allSatisfy({ $0.isASCII && $0.isHexDigit }) else {
+                    _ = clear(); reason = "invalid_key"; return status
+                }
+            }
             if clean != record?.key {
                 // Invalidate the previous account before submitting another key.
                 // Server backoff applies to this client even when the key changes.
@@ -146,7 +215,7 @@ final class ZlarpLicenseService {
         defer { refreshing = false }
         let current = generation
         let nonce = UUID().uuidString
-        var request = URLRequest(url: ZlarpLicenseConfiguration.endpoint)
+        var request = URLRequest(url: configuration.endpoint)
         request.httpMethod = "POST"; request.timeoutInterval = 20
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -222,11 +291,14 @@ final class ZlarpLicenseService {
               let header = try JSONSerialization.jsonObject(with: headerData) as? [String: Any],
               header["alg"] as? String == "EdDSA", header["crit"] == nil,
               let claims = try JSONSerialization.jsonObject(with: claimsData) as? [String: Any],
-              claims["iss"] as? String == "zlarp", claims["aud"] as? String == ZlarpLicenseConfiguration.app,
+              claims["iss"] as? String == configuration?.issuer, claims["aud"] as? String == ZlarpLicenseConfiguration.app,
               claims["dev"] as? String == device, claims["nonce"] as? String == nonce,
               claims["ent"] as? String == "active",
               let exp = claims["exp"] as? NSNumber, CFGetTypeID(exp) != CFBooleanGetTypeID(),
               exp.doubleValue.isFinite, exp.doubleValue > now().timeIntervalSince1970 else { throw LicenseFailure.invalidToken }
+        if let environment = configuration?.environment {
+            guard claims["env"] as? String == environment else { throw LicenseFailure.invalidToken }
+        }
         let key = try Curve25519.Signing.PublicKey(rawRepresentation: publicKey)
         guard key.isValidSignature(signature, for: Data("\(parts[0]).\(parts[1])".utf8)) else { throw LicenseFailure.invalidToken }
         if let raw = claims["nbf"] {

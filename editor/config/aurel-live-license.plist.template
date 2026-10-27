@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>AurelLicenseEndpoint</key><string>https://puxccjoofzlgxkssmfva.supabase.co/functions/v1/aurel-licenses-live/verify</string>
+  <key>AurelLicenseIssuer</key><string>aurel-archive-live</string>
+  <key>AurelLicenseEnvironment</key><string>live</string>
+  <!-- Deliberately unusable until a real, reviewed production public pin exists. -->
+  <key>AurelLicensePublicKey</key><string></string>
+</dict></plist>

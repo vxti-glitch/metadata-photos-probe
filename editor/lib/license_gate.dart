@@ -11,8 +11,10 @@ class LicenseAccess {
     required this.reason,
     this.expiresAt,
     this.retryAfterSeconds,
+    this.providerName = 'Zlarp',
   });
 
+  final String providerName;
   final bool allowed;
   final String reason;
   final DateTime? expiresAt;
@@ -44,6 +46,9 @@ class NativeLicenseBridge implements LicenseBridge {
     final retry = result?['retryAfterSeconds'];
     return LicenseAccess(
       allowed: result?['allowed'] == true,
+      providerName: result?['providerName'] == 'Aurel Archive'
+          ? 'Aurel Archive'
+          : 'Zlarp',
       reason: result?['reason'] is String
           ? result!['reason'] as String
           : 'unavailable',
@@ -86,6 +91,13 @@ class ZlarpLicenseGate extends StatefulWidget {
 
   final Widget child;
   final LicenseBridge bridge;
+
+  static String providerName(BuildContext context) =>
+      context
+          .findAncestorStateOfType<_ZlarpLicenseGateState>()
+          ?._access
+          ?.providerName ??
+      'Zlarp';
 
   static bool available(BuildContext context) =>
       context.findAncestorStateOfType<_ZlarpLicenseGateState>() != null;
@@ -247,9 +259,9 @@ class _ZlarpLicenseGateState extends State<ZlarpLicenseGate>
       case 'inactive':
       case 'not_entitled':
       case 'license_not_active':
-        return 'This license is not active. Check your key or contact Zlarp.';
+        return 'This license is not active. Check your key or contact ${_access?.providerName ?? 'Zlarp'}.';
       case 'device_limit':
-        return 'This license has reached its device limit. Manage your devices with Zlarp.';
+        return 'This license has reached its device limit. Manage your devices with ${_access?.providerName ?? 'Zlarp'}.';
       case 'expired':
         return 'Your license needs to be verified again.';
       case 'rate_limited':
@@ -263,10 +275,12 @@ class _ZlarpLicenseGateState extends State<ZlarpLicenseGate>
       case 'temporarily_unavailable':
       case 'connection_required':
         return 'Unable to verify your license. Connect to the internet and retry.';
+      case 'configuration_invalid':
+        return 'This app build is not configured for license activation. Contact support.';
       case 'secure_storage_unavailable':
         return 'Your license could not be saved securely. Restart the app and retry.';
       default:
-        return 'Enter the license key from your Zlarp purchase to open the app.';
+        return 'Enter the license key from your ${_access?.providerName ?? 'Zlarp'} purchase to open the app.';
     }
   }
 

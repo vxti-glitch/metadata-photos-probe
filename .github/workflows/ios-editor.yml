@@ -19,6 +19,15 @@ on:
       - 'scripts/**'
       - '.github/workflows/ios-editor.yml'
   workflow_dispatch:
+    inputs:
+      build_variant:
+        description: 'Explicit app provider configuration (default preserves Zlarp)'
+        required: true
+        default: standard
+        type: choice
+        options:
+          - standard
+          - aurel-live
 
 permissions:
   contents: read
@@ -43,8 +52,20 @@ jobs:
           path: .tools/flutter-3.47.6
           key: editor-flutter-${{ runner.os }}-${{ runner.arch }}-5fc346839b5d0eef006ed8404392afb4dfae428d-v1
       - name: Test, launch simulator and compile arm64 device archive
+        if: inputs.build_variant != 'aurel-live'
         shell: bash
         run: bash scripts/build-editor-macos.sh
+      - name: Test and compile the isolated Aurel production app
+        if: inputs.build_variant == 'aurel-live'
+        shell: bash
+        env:
+          # Public Ed25519 verification pin only. Private signing material stays in Supabase.
+          AUREL_LIVE_PUBLIC_KEY: EX8KiRD6OWR2qRNRK6ZiwErsaWoGpcAX2LK+m9K8VNE=
+          AUREL_LIVE_LEGAL_REVIEWED_VERSION: aurel-live-2026-10-26
+        run: |
+          python3 editor/config/test_aurel_live_config.py
+          bash editor/config/build-aurel-live.sh --live
+          python3 editor/config/verify-aurel-live-ipa.py build/editor
       - name: Preserve XCTest JSON diagnostics after any build result
         if: always()
         shell: bash
@@ -61,8 +82,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: editor-unsigned-${{ github.run_number }}-${{ github.run_attempt }}
-          retention-days: 14
+          name: editor-${{ inputs.build_variant || 'standard' }}-unsigned-${{ github.run_number }}-${{ github.run_attempt }}
+          retention-days: ${{ inputs.build_variant == 'aurel-live' && 1 || 14 }}
           if-no-files-found: error
           path: |
             build/editor/evidence/

@@ -78,7 +78,7 @@ void main() {
     (tester) async {
       await pumpSettings(tester);
       expect(find.text(AppBrand.name), findsOneWidget);
-      expect(find.text('by vxti'), findsOneWidget);
+      expect(find.text('by Aurel Archive'), findsOneWidget);
       expect(find.text('Version ${AppBrand.version}'), findsOneWidget);
       expect(find.byType(MetadataMark), findsOneWidget);
       expect(find.byIcon(Icons.local_fire_department), findsNothing);
@@ -141,7 +141,7 @@ void main() {
     'Failed email handoff is actionable and preserves selected drafts',
     (tester) async {
       const message =
-          'No email app could open. Install or configure an email app, then try again, or email vxti.dev@gmail.com with the subject Metadata Editor Support.';
+          'No email app could open. Install or configure an email app, then try again, or email support@aurelarchive.win with the subject Metadata Editor Support.';
       bridge.supportEmailFailure = PlatformException(
         code: 'email_unavailable',
         message: message,

@@ -183,7 +183,7 @@ class EditorController extends ChangeNotifier {
       EditorOperation.exporting => 'Choose where to save the processed copy…',
       EditorOperation.deleting => 'Removing app-owned copies…',
       EditorOperation.openingBrowser => 'Opening iCloud Photos…',
-      EditorOperation.openingWebsite => 'Opening the Zlarp website…',
+      EditorOperation.openingWebsite => 'Opening the Aurel Archive website…',
       EditorOperation.openingEmail => 'Opening your email app…',
       null => '',
     };

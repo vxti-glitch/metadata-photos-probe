@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import plistlib
+import re
 import struct
 import subprocess
 import tempfile
@@ -246,8 +247,12 @@ class EditorPackagingTests(unittest.TestCase):
     def test_mark_svg_and_brand_theme_color(self):
         svg_path = package.ROOT / "editor/branding/mark.svg"
         svg_content = svg_path.read_text(encoding="utf-8")
-        self.assertIn("#0A84FF", svg_content.upper())
-        self.assertIn("#1C1C1E", svg_content.upper())
+        self.assertIn("#252525", svg_content.upper())
+        self.assertIn("#FFFFFF", svg_content.upper())
+        colors = set(re.findall(r"#[0-9A-F]{6}", svg_content.upper()))
+        self.assertTrue(colors.issubset({"#252525", "#FFFFFF", "#545454", "#CFCFCF", "#7D7D7D"}),
+                        f"The Aurel mark must retain its neutral palette: {colors}")
+        self.assertNotIn("#0A84FF", svg_content.upper(), "Legacy blue branding must not return")
         self.assertNotIn("#84E4C7", svg_content.upper(), "Legacy green theme must not be in mark.svg")
 
     def test_native_bridge_and_store_contracts(self):
@@ -265,11 +270,18 @@ class EditorPackagingTests(unittest.TestCase):
 
     def test_photos_workflow_card_uses_shared_readable_light_and_dark_styles(self):
         app_dart = (package.ROOT / "editor/lib/editor_app.dart").read_text(encoding="utf-8")
-        self.assertIn("0xFF132720", app_dart, "WorkflowNote background must be #132720")
-        self.assertIn("0xFF224436", app_dart, "WorkflowNote border must be #224436")
-        self.assertIn("0xFF84E4C7", app_dart, "WorkflowNote accent must be #84E4C7")
-        self.assertIn("0xFFEAF5EE", app_dart, "Light WorkflowNote must have its own readable surface")
-        self.assertIn("Theme.of(context).brightness == Brightness.dark", app_dart)
+        card = app_dart.split("class WorkflowNote extends", 1)[1].split("class _DiagnosticErrorBanner", 1)[0]
+        for role in ("AppTheme.of(context)", "color: colors.surface", "color: colors.border",
+                     "color: colors.text", "color: colors.muted"):
+            self.assertIn(role, card, "WorkflowNote must use the shared adaptive neutral roles")
+        self.assertNotIn("Color(0x", card, "WorkflowNote must not hard-code a stale tinted palette")
+        theme = (package.ROOT / "editor/lib/app_theme.dart").read_text(encoding="utf-8")
+        for mode, expected in (("light", {"surface": "FFFFFF", "text": "252525", "muted": "545454"}),
+                               ("dark", {"surface": "303030", "text": "FFFFFF", "muted": "CFCFCF"})):
+            values = theme.split(f"static const {mode} = AppTheme._(", 1)[1].split(");", 1)[0]
+            for role, color in expected.items():
+                self.assertIn(f"{role}: Color(0xFF{color})", values)
+        self.assertIn("Theme.of(context).brightness == Brightness.dark", theme)
         form_dart = (package.ROOT / "editor/lib/metadata_form.dart").read_text(encoding="utf-8")
         self.assertIn("import 'editor_app.dart' show WorkflowNote;", form_dart)
         self.assertIn("WorkflowNote()", form_dart, "Post-processing guidance must reuse the qualified shared card")

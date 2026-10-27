@@ -1117,7 +1117,7 @@ void main() {
         'Writing metadata and checking media integrity…',
       );
       controller.operation = EditorOperation.openingWebsite;
-      expect(controller.progressLabel, 'Opening the Zlarp website…');
+      expect(controller.progressLabel, 'Opening the Aurel Archive website…');
       controller.operation = EditorOperation.openingBrowser;
       expect(controller.progressLabel, 'Opening iCloud Photos…');
     },

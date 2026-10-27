@@ -92,10 +92,10 @@ class RunnerTests: XCTestCase {
 
   func testSupportEmailHasOnlyTheFixedRecipientAndPercentEncodedSubject() throws {
     let url = NativeMediaBridge.supportEmailURL
-    XCTAssertEqual(url.absoluteString, "mailto:vxti.dev@gmail.com?subject=Metadata%20Editor%20Support")
+    XCTAssertEqual(url.absoluteString, "mailto:support@aurelarchive.win?subject=Metadata%20Editor%20Support")
     let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
     XCTAssertEqual(components.scheme, "mailto")
-    XCTAssertEqual(components.path, "vxti.dev@gmail.com")
+    XCTAssertEqual(components.path, "support@aurelarchive.win")
     XCTAssertNil(components.host)
     XCTAssertNil(components.fragment)
     XCTAssertEqual(components.queryItems, [URLQueryItem(name: "subject", value: "Metadata Editor Support")])

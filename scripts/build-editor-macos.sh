@@ -1,7 +1,17 @@
 #!/bin/bash
 set -euo pipefail
+task_variant_args=()
+if [[ "${AUREL_BUILD_VARIANT:-}" == live ]]; then
+  [[ "${AUREL_LIVE_LEGAL_REVIEWED_VERSION:-}" == aurel-live-2026-10-26 ]] || { printf '%s\n' 'Live legal review is required before building.' >&2; exit 1; }
+  task_variant_args=(--dart-define=AUREL_LICENSE_ENV=live)
+elif [[ -n "${AUREL_BUILD_VARIANT:-}" ]]; then
+  printf '%s\n' 'Unknown Aurel build variant.' >&2; exit 1
+fi
 task_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$task_root"
+if [[ "${AUREL_BUILD_VARIANT:-}" == live ]]; then
+  python3 editor/config/configure-aurel-live.py --live --check editor/ios/Runner/Info.plist
+fi
 [[ "$(uname -s)" == Darwin ]] || { printf '%s\n' 'Flutter iOS compilation requires macOS and Xcode.' >&2; exit 1; }
 task_build="$task_root/build/editor"
 mkdir -p "$task_build/evidence"
@@ -54,7 +64,7 @@ cd "$task_root/editor"
 "$task_flutter" --suppress-analytics analyze --fatal-infos 2>&1 | tee "$task_build/evidence/flutter-analysis.log"
 "$task_flutter" --suppress-analytics test --reporter expanded 2>&1 | tee "$task_build/evidence/flutter-tests.log"
 # Generates the current Flutter framework and local plugin package before Xcode resolves it.
-"$task_flutter" --suppress-analytics build ios --simulator --debug --config-only --no-codesign 2>&1 | tee "$task_build/evidence/flutter-ios-configuration.log"
+"$task_flutter" --suppress-analytics build ios --simulator --debug --config-only --no-codesign ${task_variant_args[@]+"${task_variant_args[@]}"} 2>&1 | tee "$task_build/evidence/flutter-ios-configuration.log"
 ruby "$task_root/scripts/editor-sync-project.rb" 2>&1 | tee "$task_build/evidence/project-sync.log"
 task_destination="$(python3 "$task_root/scripts/select-simulator.py" 2>"$task_build/evidence/simulator.txt")"
 cat "$task_build/evidence/simulator.txt"
@@ -85,7 +95,7 @@ printf '%s\n' "$task_launch" | tee "$task_build/evidence/simulator-launch.txt"
 sleep 5
 xcrun simctl spawn "$task_simulator_id" launchctl list | grep -F com.vxtiglitch.metadataeditor > "$task_build/evidence/simulator-running.txt"
 xcrun simctl io "$task_simulator_id" screenshot "$task_build/evidence/simulator-editor.png"
-"$task_flutter" --suppress-analytics build ipa --release --no-codesign 2>&1 | tee "$task_build/evidence/unsigned-archive.log"
+"$task_flutter" --suppress-analytics build ipa --release --no-codesign ${task_variant_args[@]+"${task_variant_args[@]}"} 2>&1 | tee "$task_build/evidence/unsigned-archive.log"
 cd "$task_root"
 python3 scripts/editor-package.py --archive editor/build/ios/archive/Runner.xcarchive --output build/editor
 git archive --format=zip --output="$task_build/Metadata-Editor-source.zip" HEAD
