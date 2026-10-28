@@ -28,6 +28,7 @@ on:
         options:
           - standard
           - aurel-live
+          - aurel-keychain-diagnosis
 
 permissions:
   contents: read
@@ -38,6 +39,7 @@ concurrency:
 
 jobs:
   verify:
+    if: inputs.build_variant != 'aurel-keychain-diagnosis'
     name: Test Flutter and Swift; archive unsigned editor
     runs-on: macos-15
     timeout-minutes: 80
@@ -91,3 +93,22 @@ jobs:
             build/editor/*.zip
             build/editor/*.json
             build/editor/NativeTests.xcresult/
+  keychain-diagnosis:
+    if: inputs.build_variant == 'aurel-keychain-diagnosis'
+    name: Compare actual Keychain access before and after simulator signing
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Run synthetic actual-storage diagnosis
+        run: bash scripts/diagnose-keychain-macos.sh
+      - name: Preserve bounded Keychain diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aurel-keychain-diagnosis-${{ github.run_number }}-${{ github.run_attempt }}
+          retention-days: 1
+          if-no-files-found: error
+          path: build/keychain-evidence/

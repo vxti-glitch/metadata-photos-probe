@@ -68,6 +68,14 @@ protocol ZlarpLicenseStorage {
     func delete() throws
 }
 
+/// Bounded support diagnostics only. Never includes query attributes, stored bytes or credentials.
+struct LicenseStorageFailure: Error {
+    enum Operation: String { case load, update, add, delete }
+    let operation: Operation
+    let status: OSStatus
+    var supportCode: String { "KC-\(operation.rawValue):\(status)" }
+}
+
 struct ZlarpKeychainStorage: ZlarpLicenseStorage {
     let service: String
     init(service: String = "com.vxtiglitch.metadataeditor.zlarp") { self.service = service }
@@ -84,7 +92,8 @@ struct ZlarpKeychainStorage: ZlarpLicenseStorage {
         var result: CFTypeRef?
         let code = SecItemCopyMatching(lookup as CFDictionary, &result)
         if code == errSecItemNotFound { return nil }
-        guard code == errSecSuccess, let data = result as? Data else { throw LicenseFailure.storage }
+        guard code == errSecSuccess else { throw LicenseStorageFailure(operation: .load, status: code) }
+        guard let data = result as? Data else { throw LicenseFailure.storage }
         return data
     }
     func save(_ data: Data) throws {
@@ -93,12 +102,15 @@ struct ZlarpKeychainStorage: ZlarpLicenseStorage {
             var item = query
             item[kSecValueData as String] = data
             item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else { throw LicenseFailure.storage }
-        } else if code != errSecSuccess { throw LicenseFailure.storage }
+            let added = SecItemAdd(item as CFDictionary, nil)
+            guard added == errSecSuccess else { throw LicenseStorageFailure(operation: .add, status: added) }
+        } else if code != errSecSuccess { throw LicenseStorageFailure(operation: .update, status: code) }
     }
     func delete() throws {
         let code = SecItemDelete(query as CFDictionary)
-        guard code == errSecSuccess || code == errSecItemNotFound else { throw LicenseFailure.storage }
+        guard code == errSecSuccess || code == errSecItemNotFound else {
+            throw LicenseStorageFailure(operation: .delete, status: code)
+        }
     }
 }
 
@@ -129,6 +141,7 @@ final class ZlarpLicenseService {
     private let configuration: LicenseProviderConfiguration?
     private var record: Record?
     private var reason = "activation_required"
+    private var storageSupportCode: String?
     private var retryUntil: Date?
     private var refreshing = false
     private var generation = UUID()
@@ -156,7 +169,7 @@ final class ZlarpLicenseService {
                 record = Record(device: UUID().uuidString, lastSeen: now().timeIntervalSince1970)
                 try persist()
             }
-        } catch { record = nil; reason = "secure_storage_unavailable" }
+        } catch { storageFailed(error) }
     }
 
     var allowsAccess: Bool { validExpiry() != nil }
@@ -168,6 +181,7 @@ final class ZlarpLicenseService {
                                         (record?.token != nil ? "expired" : reason)]
         if let expiry { result["expiresAt"] = expiry }
         if let retryUntil { result["retryAfterSeconds"] = max(0, retryUntil.timeIntervalSince(now())) }
+        if let storageSupportCode { result["storageSupportCode"] = storageSupportCode }
         return result
     }
 
@@ -176,7 +190,7 @@ final class ZlarpLicenseService {
         // Keep the stable per-install device identity across account changes.
         record?.key = nil; record?.token = nil; record?.nonce = nil
         reason = "activation_required"
-        do { try persist() } catch { record = nil; reason = "secure_storage_unavailable" }
+        do { try persist() } catch { storageFailed(error) }
         return status
     }
 
@@ -206,7 +220,7 @@ final class ZlarpLicenseService {
                 // Server backoff applies to this client even when the key changes.
                 generation = UUID()
                 record?.key = clean; record?.token = nil; record?.nonce = nil
-                do { try persist() } catch { record = nil; reason = "secure_storage_unavailable"; return status }
+                do { try persist() } catch { storageFailed(error); return status }
             }
         }
         guard let key = record?.key, let device = record?.device else { reason = "activation_required"; return status }
@@ -259,7 +273,7 @@ final class ZlarpLicenseService {
         } catch {
             guard current == generation else { return status }
             do { try invalidate(reason: "verification_failed") }
-            catch { record = nil; reason = "secure_storage_unavailable" }
+            catch { storageFailed(error) }
         }
         return status
     }
@@ -267,10 +281,16 @@ final class ZlarpLicenseService {
     private func persist() throws {
         guard let record else { throw LicenseFailure.storage }
         try storage.save(JSONEncoder().encode(record))
+        storageSupportCode = nil
+    }
+    private func storageFailed(_ error: Error) {
+        record = nil
+        reason = "secure_storage_unavailable"
+        storageSupportCode = (error as? LicenseStorageFailure)?.supportCode
     }
     private func invalidate(reason: String) throws {
         record?.token = nil; record?.nonce = nil; self.reason = reason
-        do { try persist() } catch { record = nil; self.reason = "secure_storage_unavailable"; throw error }
+        do { try persist() } catch { storageFailed(error); throw error }
     }
     private func validExpiry() -> Double? {
         guard let saved = record, saved.key != nil, let token = saved.token, let nonce = saved.nonce else { return nil }
@@ -279,7 +299,7 @@ final class ZlarpLicenseService {
               let expiry = try? verify(token: token, device: saved.device, nonce: nonce) else { return nil }
         if instant - (saved.lastSeen ?? 0) >= 60 {
             record?.lastSeen = instant
-            do { try persist() } catch { record = nil; reason = "secure_storage_unavailable"; return nil }
+            do { try persist() } catch { storageFailed(error); return nil }
         }
         return expiry
     }

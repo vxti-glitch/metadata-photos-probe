@@ -232,6 +232,61 @@ void main() {
     expect(find.textContaining('Unable to verify'), findsOneWidget);
   });
 
+  testWidgets('storage error stays locked and support code is optional', (
+    tester,
+  ) async {
+    final bridge = FakeLicenseBridge()
+      ..access = const LicenseAccess(
+        allowed: false,
+        reason: 'secure_storage_unavailable',
+        storageSupportCode: 'KC-add:-34018',
+      );
+    await showGate(tester, bridge);
+    expect(find.text('Protected editor'), findsNothing);
+    expect(
+      find.textContaining('could not access secure storage'),
+      findsOneWidget,
+    );
+    expect(find.text('Support details'), findsOneWidget);
+    expect(find.text('Support code: KC-add:-34018'), findsNothing);
+    await tester.tap(find.text('Support details'));
+    await tester.pumpAndSettle();
+    expect(find.text('Support code: KC-add:-34018'), findsOneWidget);
+  });
+
+  testWidgets(
+    'native support diagnostics accept only bounded operation and OSStatus',
+    (tester) async {
+      const channel = MethodChannel('com.vxtiglitch.metadataeditor/license_v1');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      for (final code in [
+        'KC-load:-34018',
+        'KC-delete:0',
+        'private-key-text',
+        'KC-add:-34018\nsecret',
+        'KC-load:1\n',
+        'KC-load:12345678901',
+      ]) {
+        messenger.setMockMethodCallHandler(
+          channel,
+          (call) async => {
+            'allowed': false,
+            'reason': 'secure_storage_unavailable',
+            'storageSupportCode': code,
+          },
+        );
+        final result = await const NativeLicenseBridge().status();
+        expect(
+          result.storageSupportCode,
+          code == 'KC-load:-34018' || code == 'KC-delete:0' ? code : null,
+        );
+        expect(result.allowed, isFalse);
+      }
+      messenger.setMockMethodCallHandler(channel, null);
+    },
+  );
+
   testWidgets(
     'background hides editor; expired resume status cannot reopen it',
     (tester) async {

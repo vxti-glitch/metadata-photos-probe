@@ -12,9 +12,11 @@ class LicenseAccess {
     this.expiresAt,
     this.retryAfterSeconds,
     this.providerName = 'Zlarp',
+    this.storageSupportCode,
   });
 
   final String providerName;
+  final String? storageSupportCode;
   final bool allowed;
   final String reason;
   final DateTime? expiresAt;
@@ -36,6 +38,9 @@ class NativeLicenseBridge implements LicenseBridge {
   static const _channel = MethodChannel(
     'com.vxtiglitch.metadataeditor/license_v1',
   );
+  static final _supportCodePattern = RegExp(
+    r'^KC-(load|update|add|delete):-?[0-9]{1,10}$',
+  );
 
   Future<LicenseAccess> _read(String method, [String? key]) async {
     final result = await _channel.invokeMapMethod<String, dynamic>(
@@ -44,6 +49,7 @@ class NativeLicenseBridge implements LicenseBridge {
     );
     final seconds = result?['expiresAt'];
     final retry = result?['retryAfterSeconds'];
+    final support = result?['storageSupportCode'];
     return LicenseAccess(
       allowed: result?['allowed'] == true,
       providerName: result?['providerName'] == 'Aurel Archive'
@@ -52,6 +58,11 @@ class NativeLicenseBridge implements LicenseBridge {
       reason: result?['reason'] is String
           ? result!['reason'] as String
           : 'unavailable',
+      storageSupportCode:
+          support is String &&
+              _supportCodePattern.stringMatch(support) == support
+          ? support
+          : null,
       expiresAt:
           seconds is num &&
               seconds.isFinite &&
@@ -278,7 +289,7 @@ class _ZlarpLicenseGateState extends State<ZlarpLicenseGate>
       case 'configuration_invalid':
         return 'This app build is not configured for license activation. Contact support.';
       case 'secure_storage_unavailable':
-        return 'Your license could not be saved securely. Restart the app and retry.';
+        return 'The app could not access secure storage. Restart it and try again. If this continues, contact support.';
       default:
         return 'Enter the license key from your ${_access?.providerName ?? 'Zlarp'} purchase to open the app.';
     }
@@ -336,6 +347,23 @@ class _ZlarpLicenseGateState extends State<ZlarpLicenseGate>
                                 ),
                               ),
                               const SizedBox(height: 28),
+                              if (!_busy &&
+                                  _access?.reason ==
+                                      'secure_storage_unavailable' &&
+                                  _access?.storageSupportCode != null)
+                                ExpansionTile(
+                                  title: const Text('Support details'),
+                                  children: [
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                        bottom: 12,
+                                      ),
+                                      child: SelectableText(
+                                        'Support code: ${_access!.storageSupportCode}',
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               if (_busy)
                                 const Center(child: CircularProgressIndicator())
                               else ...[

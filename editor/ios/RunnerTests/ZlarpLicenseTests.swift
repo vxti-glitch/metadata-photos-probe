@@ -13,6 +13,21 @@ private final class MemoryLicenseStorage: ZlarpLicenseStorage {
 
 @MainActor
 final class ZlarpLicenseTests: XCTestCase {
+    func testStorageSupportCodeContainsOnlyOperationAndOSStatus() throws {
+        final class FailingStorage: ZlarpLicenseStorage {
+            func load() throws -> Data? { throw LicenseStorageFailure(operation: .load, status: -34018) }
+            func save(_ data: Data) throws { XCTFail("Must not write after failed load") }
+            func delete() throws { XCTFail("Must not delete after failed load") }
+        }
+        let service = ZlarpLicenseService(storage: FailingStorage(), configuration: .zlarp)
+        let state = service.status
+        XCTAssertFalse(service.allowsAccess)
+        XCTAssertEqual(state["reason"] as? String, "secure_storage_unavailable")
+        XCTAssertEqual(state["storageSupportCode"] as? String, "KC-load:-34018")
+        XCTAssertNil(state["key"]); XCTAssertNil(state["token"]); XCTAssertNil(state["device"])
+        XCTAssertEqual(Set(state.keys), Set(["allowed", "providerName", "reason", "storageSupportCode"]))
+    }
+
     private let clock = Date(timeIntervalSince1970: 2_000_000_000)
     private func response(_ status: Int = 200, headers: [String: String] = [:]) -> HTTPURLResponse {
         HTTPURLResponse(url: ZlarpLicenseConfiguration.endpoint, statusCode: status, httpVersion: nil, headerFields: headers)!
