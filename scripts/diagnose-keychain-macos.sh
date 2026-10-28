@@ -21,24 +21,33 @@ python3 - "$task_app/Info.plist" "$task_work/entitlements.plist" <<'PY'
 from pathlib import Path
 import plistlib,sys
 identifier='com.aurel.ci.keychain-probe'
-Path(sys.argv[1]).write_bytes(plistlib.dumps({'CFBundleIdentifier':identifier,'CFBundleExecutable':'KeychainProbe','CFBundleName':'KeychainProbe','CFBundlePackageType':'APPL','CFBundleVersion':'1','CFBundleShortVersionString':'1.0','MinimumOSVersion':'15.0','LSRequiresIPhoneOS':True,'UILaunchScreen':{}}))
+Path(sys.argv[1]).write_bytes(plistlib.dumps({'CFBundleIdentifier':identifier,'CFBundleExecutable':'KeychainProbe','CFBundleName':'KeychainProbe','CFBundlePackageType':'APPL','CFBundleVersion':'1','CFBundleShortVersionString':'1.0','MinimumOSVersion':'15.0','LSRequiresIPhoneOS':True,'UILaunchScreen':{},'UISupportedInterfaceOrientations':['UIInterfaceOrientationPortrait']}))
 Path(sys.argv[2]).write_bytes(plistlib.dumps({'application-identifier':'CIKEYCHAIN.'+identifier,'com.apple.developer.team-identifier':'CIKEYCHAIN','get-task-allow':True,'keychain-access-groups':['CIKEYCHAIN.'+identifier]}))
 PY
 task_arch="$(uname -m)"
 [[ "$task_arch" == arm64 || "$task_arch" == x86_64 ]] || exit 1
-xcrun --sdk iphonesimulator swiftc -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" \
-  -target "$task_arch-apple-ios15.0-simulator" \
-  "$task_root/editor/ios/Runner/ZlarpLicenseService.swift" "$task_root/editor/config/KeychainProbe.swift" \
-  -o "$task_app/KeychainProbe"
-codesign --remove-signature "$task_app" 2>/dev/null || true
-for task_mode in unsigned signed; do
-  if [[ "$task_mode" == signed ]]; then
-    codesign --force --sign - --timestamp=none --generate-entitlement-der --entitlements "$task_work/entitlements.plist" "$task_app"
+for task_mode in unsigned simulated-entitlements; do
+  task_link_args=()
+  if [[ "$task_mode" == simulated-entitlements ]]; then
+    # Match Xcode's simulator-only entitlement delivery. Restricted iPhone
+    # entitlements do not belong in this ad-hoc host code-signature control.
+    task_link_args=(-Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker "$task_work/entitlements.plist")
+  fi
+  xcrun --sdk iphonesimulator swiftc -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" \
+    -target "$task_arch-apple-ios15.0-simulator" \
+    "$task_root/editor/ios/Runner/ZlarpLicenseService.swift" "$task_root/editor/config/KeychainProbe.swift" \
+    ${task_link_args[@]+"${task_link_args[@]}"} -o "$task_app/KeychainProbe"
+  if [[ "$task_mode" == simulated-entitlements ]]; then
+    codesign --force --sign - --timestamp=none "$task_app"
+  else
+    codesign --remove-signature "$task_app" 2>/dev/null || true
   fi
   # Do not let the launch service reuse the previous mode's installed identity.
   xcrun simctl uninstall "$task_simulator" com.aurel.ci.keychain-probe 2>/dev/null || true
   codesign --display --entitlements :- "$task_app" > "$task_output/$task_mode-entitlements.plist" 2> "$task_output/$task_mode-signature.txt" || true
   codesign --verify --strict --verbose=4 "$task_app" > "$task_output/$task_mode-verify.txt" 2>&1 || true
+  xcrun otool -l "$task_app/KeychainProbe" > "$task_output/$task_mode-mach-o.txt"
+  xcrun otool -s __TEXT __entitlements "$task_app/KeychainProbe" > "$task_output/$task_mode-embedded-entitlements.txt" 2>&1 || true
   xcrun simctl install "$task_simulator" "$task_app"
   task_container="$(xcrun simctl get_app_container "$task_simulator" com.aurel.ci.keychain-probe data)"
   rm -f "$task_container/Documents/keychain-probe.json"
@@ -62,9 +71,9 @@ from pathlib import Path
 import json,sys
 root=Path(sys.argv[1])
 unsigned=json.loads((root/'unsigned-result.json').read_text())
-signed=json.loads((root/'signed-result.json').read_text())
-result={'unsigned':unsigned,'ad_hoc_simulator_signed':signed,'production_storage_implementation':'ZlarpKeychainStorage','physical_device_tested':False,'production_ipa_modified':False}
+signed=json.loads((root/'simulated-entitlements-result.json').read_text())
+result={'unsigned':unsigned,'simulator_entitlements_control':signed,'production_storage_implementation':'ZlarpKeychainStorage','physical_device_tested':False,'production_ipa_modified':False}
 (root/'comparison.json').write_text(json.dumps(result,indent=2)+'\n')
 if not signed.get('passed'):
-    raise SystemExit('Signed simulator synthetic Keychain round-trip failed; inspect measured OSStatus.')
+    raise SystemExit('Simulator-entitlement synthetic Keychain round-trip failed; inspect measured OSStatus or launch failure.')
 PY
