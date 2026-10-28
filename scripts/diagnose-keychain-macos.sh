@@ -22,7 +22,7 @@ from pathlib import Path
 import plistlib,sys
 identifier='com.aurel.ci.keychain-probe'
 Path(sys.argv[1]).write_bytes(plistlib.dumps({'CFBundleIdentifier':identifier,'CFBundleExecutable':'KeychainProbe','CFBundleName':'KeychainProbe','CFBundlePackageType':'APPL','CFBundleVersion':'1','CFBundleShortVersionString':'1.0','MinimumOSVersion':'15.0','LSRequiresIPhoneOS':True,'UILaunchScreen':{}}))
-Path(sys.argv[2]).write_bytes(plistlib.dumps({'application-identifier':'CIKEYCHAIN.'+identifier,'keychain-access-groups':['CIKEYCHAIN.'+identifier]}))
+Path(sys.argv[2]).write_bytes(plistlib.dumps({'application-identifier':'CIKEYCHAIN.'+identifier,'com.apple.developer.team-identifier':'CIKEYCHAIN','get-task-allow':True,'keychain-access-groups':['CIKEYCHAIN.'+identifier]}))
 PY
 task_arch="$(uname -m)"
 [[ "$task_arch" == arm64 || "$task_arch" == x86_64 ]] || exit 1
@@ -33,13 +33,21 @@ xcrun --sdk iphonesimulator swiftc -sdk "$(xcrun --sdk iphonesimulator --show-sd
 codesign --remove-signature "$task_app" 2>/dev/null || true
 for task_mode in unsigned signed; do
   if [[ "$task_mode" == signed ]]; then
-    codesign --force --sign - --entitlements "$task_work/entitlements.plist" "$task_app"
+    codesign --force --sign - --timestamp=none --generate-entitlement-der --entitlements "$task_work/entitlements.plist" "$task_app"
   fi
+  # Do not let the launch service reuse the previous mode's installed identity.
+  xcrun simctl uninstall "$task_simulator" com.aurel.ci.keychain-probe 2>/dev/null || true
   codesign --display --entitlements :- "$task_app" > "$task_output/$task_mode-entitlements.plist" 2> "$task_output/$task_mode-signature.txt" || true
+  codesign --verify --strict --verbose=4 "$task_app" > "$task_output/$task_mode-verify.txt" 2>&1 || true
   xcrun simctl install "$task_simulator" "$task_app"
   task_container="$(xcrun simctl get_app_container "$task_simulator" com.aurel.ci.keychain-probe data)"
   rm -f "$task_container/Documents/keychain-probe.json"
-  xcrun simctl launch "$task_simulator" com.aurel.ci.keychain-probe
+  if ! xcrun simctl launch "$task_simulator" com.aurel.ci.keychain-probe > "$task_output/$task_mode-launch.txt" 2>&1; then
+    xcrun simctl spawn "$task_simulator" log show --last 3m --style compact --predicate 'eventMessage CONTAINS "com.aurel.ci.keychain-probe" OR process == "KeychainProbe"' > "$task_output/$task_mode-launch-diagnostics.txt" 2>&1 || true
+    printf '{"passed":false,"stage":"launch","contains_real_credentials":false}\n' > "$task_output/$task_mode-result.json"
+    [[ "$task_mode" == unsigned ]] && continue
+    exit 1
+  fi
   for task_attempt in $(seq 1 20); do
     [[ -f "$task_container/Documents/keychain-probe.json" ]] && break
     sleep 1
