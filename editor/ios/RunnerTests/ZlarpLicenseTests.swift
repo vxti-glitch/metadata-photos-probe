@@ -13,6 +13,32 @@ private final class MemoryLicenseStorage: ZlarpLicenseStorage {
 
 @MainActor
 final class ZlarpLicenseTests: XCTestCase {
+    func testRealKeychainRoundTripAndServiceRecordReopen() throws {
+        // Exercise the real Security API in a synthetic namespace. A missing
+        // simulator entitlement must fail here instead of hiding behind a mock.
+        let storage = ZlarpKeychainStorage(service: "com.aurel.ci.storage-test.\(UUID().uuidString)")
+        defer { try? storage.delete() }
+        XCTAssertNil(try storage.load())
+        let first = Data("synthetic-first".utf8), second = Data("synthetic-second".utf8)
+        try storage.save(first)
+        XCTAssertEqual(try storage.load(), first)
+        try storage.save(second)
+        let reopened = ZlarpKeychainStorage(service: storage.service)
+        XCTAssertEqual(try reopened.load(), second)
+        try reopened.delete()
+        XCTAssertNil(try storage.load())
+        let service = ZlarpLicenseService(storage: storage, configuration: .zlarp)
+        XCTAssertEqual(service.status["reason"] as? String, "activation_required")
+        let record = try XCTUnwrap(storage.load())
+        let restored = ZlarpLicenseService(storage: reopened, configuration: .zlarp)
+        XCTAssertEqual(restored.status["reason"] as? String, "activation_required")
+        XCTAssertEqual(try reopened.load(), record)
+        XCTAssertFalse(service.allowsAccess)
+        XCTAssertFalse(restored.allowsAccess)
+        try reopened.delete()
+        XCTAssertNil(try reopened.load())
+    }
+
     func testStorageSupportCodeContainsOnlyOperationAndOSStatus() throws {
         final class FailingStorage: ZlarpLicenseStorage {
             func load() throws -> Data? { throw LicenseStorageFailure(operation: .load, status: -34018) }

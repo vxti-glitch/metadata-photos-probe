@@ -66,6 +66,28 @@ cd "$task_root/editor"
 # Generates the current Flutter framework and local plugin package before Xcode resolves it.
 "$task_flutter" --suppress-analytics build ios --simulator --debug --config-only --no-codesign ${task_variant_args[@]+"${task_variant_args[@]}"} 2>&1 | tee "$task_build/evidence/flutter-ios-configuration.log"
 ruby "$task_root/scripts/editor-sync-project.rb" 2>&1 | tee "$task_build/evidence/project-sync.log"
+
+# Simulator Keychain access needs Xcode's simulated app entitlements. The old
+# CODE_SIGNING_ALLOWED=NO test host omitted them and returned -34018. Configure
+# only Runner/Debug/iphonesimulator; never add synthetic signing to a device IPA.
+task_simulator_entitlements="$task_build/evidence/simulator-license.entitlements"
+python3 - "$task_simulator_entitlements" <<'PY'
+import plistlib,sys
+with open(sys.argv[1], 'wb') as stream:
+    plistlib.dump({'application-identifier':'CIKEYCHAIN.com.vxtiglitch.metadataeditor',
+                  'com.apple.developer.team-identifier':'CIKEYCHAIN',
+                  'keychain-access-groups':['CIKEYCHAIN.com.vxtiglitch.metadataeditor'],
+                  'get-task-allow':True}, stream)
+PY
+ruby -rxcodeproj - "$task_root/editor/ios/Runner.xcodeproj" "$task_simulator_entitlements" <<'RUBY'
+project = Xcodeproj::Project.open(ARGV.fetch(0))
+runner = project.targets.find { |target| target.name == 'Runner' }
+raise 'Runner target missing; cannot configure simulator Keychain tests.' unless runner
+runner.build_configurations.select { |configuration| configuration.name == 'Debug' }.each do |configuration|
+  configuration.build_settings['CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]'] = ARGV.fetch(1)
+end
+project.save
+RUBY
 task_destination="$(python3 "$task_root/scripts/select-simulator.py" 2>"$task_build/evidence/simulator.txt")"
 cat "$task_build/evidence/simulator.txt"
 # Hosted tests share one Flutter app process. Serial execution avoids simulator clones and
@@ -74,7 +96,7 @@ set +e
 xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner -configuration Debug \
   -destination "$task_destination" -derivedDataPath "$task_build/DerivedData" \
   -resultBundlePath "$task_build/NativeTests.xcresult" -parallel-testing-enabled NO test \
-  CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$task_build/evidence/native-tests.log"
+  CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO 2>&1 | tee "$task_build/evidence/native-tests.log"
 task_native_status=${PIPESTATUS[0]}
 set -e
 printf '%s\n' "$task_native_status" > "$task_build/evidence/native-test-exit.txt"
@@ -84,17 +106,27 @@ python3 "$task_root/scripts/editor-test-results.py" --result "$task_build/Native
 task_simulator_id="${task_destination##*id=}"
 task_simulator_app="$task_build/DerivedData/Build/Products/Debug-iphonesimulator/Runner.app"
 [[ -d "$task_simulator_app" ]] || { printf '%s\n' 'Simulator test build did not produce the editor app.' >&2; exit 1; }
+codesign --verify --strict "$task_simulator_app"
+xcrun otool -s __TEXT __entitlements "$task_simulator_app/Runner" > "$task_build/evidence/simulator-embedded-entitlements.txt"
 if ! xcrun simctl list devices booted | grep -Fq "$task_simulator_id"; then
   xcrun simctl boot "$task_simulator_id"
 fi
 xcrun simctl bootstatus "$task_simulator_id" -b
 xcrun simctl install "$task_simulator_id" "$task_simulator_app"
+# XCTest can leave Runner running; startup evidence needs a fresh process.
+xcrun simctl terminate "$task_simulator_id" com.vxtiglitch.metadataeditor >/dev/null 2>&1 || true
 task_launch="$(xcrun simctl launch "$task_simulator_id" com.vxtiglitch.metadataeditor)"
 printf '%s\n' "$task_launch" | tee "$task_build/evidence/simulator-launch.txt"
 # Allow first-frame rendering; a screenshot documents simulator UI, never Photos provenance.
 sleep 5
 xcrun simctl spawn "$task_simulator_id" launchctl list | grep -F com.vxtiglitch.metadataeditor > "$task_build/evidence/simulator-running.txt"
 xcrun simctl io "$task_simulator_id" screenshot "$task_build/evidence/simulator-editor.png"
+# Reopen the actual app to check startup against its persisted default record.
+# This is simulator startup evidence, not licensed or physical-device acceptance.
+xcrun simctl terminate "$task_simulator_id" com.vxtiglitch.metadataeditor
+xcrun simctl launch "$task_simulator_id" com.vxtiglitch.metadataeditor | tee "$task_build/evidence/simulator-relaunch.txt"
+sleep 5
+xcrun simctl io "$task_simulator_id" screenshot "$task_build/evidence/simulator-editor-reopened.png"
 "$task_flutter" --suppress-analytics build ipa --release --no-codesign ${task_variant_args[@]+"${task_variant_args[@]}"} 2>&1 | tee "$task_build/evidence/unsigned-archive.log"
 cd "$task_root"
 python3 scripts/editor-package.py --archive editor/build/ios/archive/Runner.xcarchive --output build/editor
